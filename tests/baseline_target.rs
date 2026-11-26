@@ -574,3 +574,28 @@ fn a_parameter_list_of_4_1_is_named_for_what_its_slot_does() {
         ]
     );
 }
+
+/// A dictionary literal's `)` may stand on a later line, after a comment
+/// or a blank line, and KDB-X reads each as the dictionary (#2742) - but
+/// not at the left margin, where q starts another statement: `g` is '(.
+#[test]
+fn a_dictionary_literal_closed_on_a_later_line_is_one_for_an_older_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text =
+        "d:([a:1;\n  b:2]\n  )\ne:([a:1] / note\n )\nf:([a:1])\ng:([a:1]\n)\nh:([a:1]\n\n   )\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let args = ["--isolated", "--select", "QK", "--target-version", "4.0"];
+    let (_, found, err) = run(d, &[&args[..], &["a.q"]].concat());
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    assert_eq!(
+        qk(&found),
+        vec![
+            pair("QK001", 1),
+            pair("QK001", 4),
+            pair("QK001", 6),
+            pair("QK001", 9)
+        ],
+        "{err}"
+    );
+}

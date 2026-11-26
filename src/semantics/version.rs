@@ -234,10 +234,16 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 let Some(close) = matching(code, i + 1, b'[', b']').map(|e| e - 1) else {
                     continue;
                 };
-                let after = code[close + 1..].trim_start_matches([' ', '\t']);
+                // The `)` may stand on a later line, after a comment the
+                // code view has blanked, but not at the left margin, where
+                // q starts another statement (#2742).
+                let after = code[close + 1..].trim_start();
+                let end = code.len() - after.len();
                 let inner = code[i + 2..close].trim();
-                if after.starts_with(')') && !inner.is_empty() {
-                    let end = close + 1 + (code[close + 1..].len() - after.len());
+                if after.starts_with(')')
+                    && !inner.is_empty()
+                    && !code[..end].ends_with(['\n', '\r'])
+                {
                     out.push(Finding::at(
                         path,
                         source,
