@@ -59,6 +59,23 @@ test("qStudio's <serverlist> XML: kdb servers only, entities read, the password 
   assert.ok(!JSON.stringify(read).includes("hunter2"));
 });
 
+test("a qStudio line's IPv6 host is read in brackets or bare, its colons not the port's (#3114)", () => {
+  const read = readQStudioLines(
+    ["hdb@[::1]:5001", "rdb@::1:5002", "ok@host:5003", "desk/tp@[fe80::1]:5004:me:se:cret", "fx/[2001:db8::2]:5005", "KDB#[::1]:5006", "u@2001:db8::3:5007:bob:pw", "pg@POSTGRES#[::1]:5432", "bad@[::1]", "worse@::1:port"].join("\n"),
+  );
+  assert.deepStrictEqual(read.processes, [
+    { label: "hdb", host: "::1", port: 5001, tags: [] },
+    { label: "rdb", host: "::1", port: 5002, tags: [] },
+    { label: "ok", host: "host", port: 5003, tags: [] },
+    { label: "tp", host: "fe80::1", port: 5004, user: "me", tags: ["desk"] },
+    { label: "[2001:db8::2]:5005", host: "2001:db8::2", port: 5005, tags: ["fx"] },
+    { label: "::1:5006", host: "::1", port: 5006, tags: [] },
+    { label: "u", host: "2001:db8::3", port: 5007, user: "bob", tags: [] },
+  ]);
+  assert.deepStrictEqual(read.skipped, ["pg: a POSTGRES connection, not kdb", "bad: no host:port", "worse: A port is a whole number."]);
+  assert.ok(!JSON.stringify(read).includes("cret") && !JSON.stringify(read).includes("pw"));
+});
+
 test("a > inside a qStudio XML attribute is the attribute's, not the tag's end (#3100)", () => {
   const xml = `<serverlist>
     <ServerConfig name="a>b" host="h1" port="5001" jdbcType="KDB"/>
