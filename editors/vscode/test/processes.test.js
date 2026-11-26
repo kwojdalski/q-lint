@@ -136,6 +136,19 @@ test("an import that moves a process to another host or user forgets its passwor
   assert.deepStrictEqual(passwordsToForget(reached, reached), []);
 });
 
+// Only the tunnel or TLS changed, the refusal named an address edit to the
+// address already in use (#2372).
+test("what a process was edited in since it was connected is named", () => {
+  const { editedSince } = require("../out/processes.js");
+  const was = { label: "p", host: "127.0.0.1", port: 54013, user: "bob", tags: [] };
+  assert.strictEqual(editedSince(was, { ...was, ssh: "bastion.example" }), "its SSH tunnel was set to bastion.example");
+  assert.strictEqual(editedSince({ ...was, ssh: "jump" }, was), "its SSH tunnel was cleared");
+  assert.strictEqual(editedSince(was, { ...was, tls: true }), "its TLS was turned on");
+  assert.strictEqual(editedSince(was, { ...was, user: "carol" }), "its user was changed to carol");
+  assert.strictEqual(editedSince(was, { ...was, port: 6000, tls: true }), "it was edited to 127.0.0.1:6000 and its TLS was turned on");
+  assert.strictEqual(editedSince(was, was), "");
+});
+
 test("an import that takes away TLS, a tunnel or a guarded tag says what (#1269)", () => {
   const { protectionsRemoved, withProtections } = require("../out/processes.js");
   const guard = ["prod", "prd", "production"];
