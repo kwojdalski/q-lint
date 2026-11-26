@@ -13,6 +13,7 @@ function fakeLive(label) {
     calls: 0,
     activeLabel: () => label,
     onDidChange: () => ({ dispose() {} }),
+    onDidFree: () => ({ dispose() {} }),
     borrow: (use) =>
       use({
         call: async () => {
@@ -94,6 +95,27 @@ test("a refresh put off by a running query is made when the query is done (#1077
   for (const l of listeners) l("queried");
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(live.calls, 1);
+});
+
+test("a refresh put off by a background read is made when the read is done, with no query run (#3020)", async () => {
+  stub.reset();
+  const notebook = { notebookType: "q-lint-notebook" };
+  vscode.window.activeNotebookEditor = { notebook };
+  const live = fakeLive("rdb");
+  const freed = [];
+  live.onDidFree = (l) => (freed.push(l), { dispose() {} });
+  const free = live.borrow;
+  live.borrow = () => undefined; // the heartbeat's beat is out
+  const runs = [];
+  const api = registerNotebookVariables(stub.newContext(), live, () => "rdb", (l) => (runs.push(l), { dispose() {} }));
+  runs[0](notebook);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(live.calls, 0);
+  live.borrow = free;
+  for (const l of freed) l();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(live.calls, 1);
+  assert.deepStrictEqual(api.variables().map((v) => v.name), ["t", "f"]);
 });
 
 test("q-lint.notebookActive follows the active editor with the view off, for Restart and Run All (#1402)", async () => {

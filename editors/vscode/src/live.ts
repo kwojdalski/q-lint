@@ -710,6 +710,12 @@ export class Live {
   /// nobody sent it now, so a query sent meanwhile waits for it as it waits
   /// for a background read, and is not refused for it (#3029).
   private yielding: Promise<unknown> | undefined;
+  private readonly freed = new EventEmitter<void>();
+  /// Fired when a background read (`borrow`) has ended and left the
+  /// connection free. A view that skipped its own read for one - the
+  /// heartbeat's first beat goes out as the connection opens, ahead of the
+  /// views' - makes it now, as a query's end has it make one (#3020).
+  readonly onDidFree = this.freed.event;
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
@@ -827,6 +833,7 @@ export class Live {
       c(WATCH.start, (code?: string, every?: number) => this.watch(code, every)),
       c(WATCH.stop, () => this.stopWatching()),
       this.changed,
+      this.freed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.processes.tagColors")) {
@@ -1274,6 +1281,13 @@ export class Live {
     const settled: Promise<unknown> = call.catch(() => {}).finally(() => {
       if (this.borrowed === settled) {
         this.borrowed = undefined;
+        // A turn on, so that a query that waited for it is sent first: the
+        // connection is then busy, and its end is what the views hear.
+        setTimeout(() => {
+          if (this.connection === connection && connection.isOpen && !connection.isBusy && !this.disposed) {
+            this.freed.fire();
+          }
+        }, 0);
       }
     });
     this.borrowed = settled;

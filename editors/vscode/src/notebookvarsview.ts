@@ -221,6 +221,13 @@ function startView(
         whenShown();
       }
     }),
+    // Put off for a background read, the heartbeat's, which no event ends (#3020).
+    live.onDidFree(() => {
+      if (deferred) {
+        deferred = false;
+        whenShown();
+      }
+    }),
   ];
   return {
     provider,

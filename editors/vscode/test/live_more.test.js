@@ -236,6 +236,22 @@ test("renaming the connected process keeps the Process Explorer", async (t) => {
   assert.strictEqual(explorer.rows().length, 1);
 });
 
+// With the heartbeat on, its first beat goes out as the connection opens,
+// ahead of the explorer's read, which was skipped as if a query ran and
+// owed to the next event: the explorer stayed empty until a query was run.
+test("the Process Explorer reads a process connected to with the heartbeat on, once the first beat is answered (#3020)", async (t) => {
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const gathered = { rows: [{ ns: ".", name: "x", kind: "variable", type: -7, count: 1, cols: [], keys: [], params: [], partitioned: false }], spaces: [{ ns: ".", total: 1 }], more: 0 };
+  const q = await fakeQ((message) => (message.includes("`rows`spaces`more") ? gathered : OK));
+  t.after(() => q.close());
+  const { context, live } = await setUp(t, [proc("p", q.port)]);
+  stub.config.user["connection.heartbeat.enable"] = true;
+  const explorer = new ProcessExplorer(context, live);
+  assert.strictEqual(await live.connectTo("p"), true);
+  for (let i = 0; i < 100 && explorer.rows().length === 0; i++) await sleep(10);
+  assert.strictEqual(explorer.rows().length, 1);
+});
+
 // Live completion inserted a name as it is listed. A name q cannot parse -
 // one made with `set` from a symbol, `café` or `a b` - went in raw, which
 // q reads as something else (`a b` is `a` applied to `b`) or refuses.

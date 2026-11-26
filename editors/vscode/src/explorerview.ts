@@ -141,6 +141,13 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
           void this.refresh();
         }
       }),
+      // A refresh skipped for a background read - the heartbeat's - not a
+      // query: no event ends that, so the read's end pays it (#3020).
+      live.onDidFree(() => {
+        if (this.owed) {
+          void this.refresh();
+        }
+      }),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.query.unwrapped") && this.modeChanged()) {
           void this.refresh();
