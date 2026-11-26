@@ -431,6 +431,14 @@ test("a double-clicked cell asks to drill down from it, and carries its menu con
   const body = page.body.all((e) => e.tagName === "TBODY")[0];
   body.fire("dblclick", { target: cell });
   assert.deepStrictEqual(page.posted.at(-1), { type: "drill", id: "s.1", column: 0, row: 2 });
+  // With the run it drew, which a watched query's next run changes under the same id (#2504).
+  page.send({ ...result("s.1", 3), run: 7 });
+  page.body.all((e) => e.tagName === "TBODY")[0].fire("dblclick", { target: page.rows()[1].children[0] });
+  assert.deepStrictEqual(page.posted.at(-1), { type: "drill", id: "s.1", run: 7, column: 0, row: 1 });
+  const copy = page.body.all((e) => e.tagName === "BUTTON" && e.textContent === "Copy as CSV")[0];
+  copy.fire("click");
+  assert.deepStrictEqual([page.posted.at(-1).type, page.posted.at(-1).run], ["copy", 7]);
+  page.send(result("s.1", 3));
   page.send({ ...result("s.2", 3), features: { drilldown: false, editCells: false } });
   const off = page.rows()[0].children[0];
   assert.strictEqual(off.attributes?.["data-vscode-context"], undefined);

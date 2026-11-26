@@ -745,12 +745,12 @@
     const copy = el("button", "", "Copy as CSV");
     copy.title = "The rows shown, in the order shown, as the cells show them";
     copy.addEventListener("click", function () {
-      vscode.postMessage({ type: "copy", id: result.id, rows: rows });
+      vscode.postMessage({ type: "copy", id: result.id, run: result.run, rows: rows });
     });
     const exporter = el("button", "", "Export to CSV");
     exporter.title = "Save the rows shown, in the order shown, to a CSV file";
     exporter.addEventListener("click", function () {
-      vscode.postMessage({ type: "export", id: result.id, rows: rows });
+      vscode.postMessage({ type: "export", id: result.id, run: result.run, rows: rows });
     });
     const extras = [];
     if (result.more) {
@@ -800,7 +800,7 @@
       const send = el("button", "", "Send to...");
       send.title = "Insert the rows shown, and the chart if you like, into a q notebook, or append them to a Markdown report";
       send.addEventListener("click", function () {
-        vscode.postMessage({ type: "send", id: result.id, rows: rows });
+        vscode.postMessage({ type: "send", id: result.id, run: result.run, rows: rows });
       });
       tail.push(send);
     }
@@ -808,7 +808,7 @@
       const as = el("button", "", "Export as...");
       as.title = "Save the rows shown as Excel, Parquet, JSON, Markdown, q or HTML";
       as.addEventListener("click", function () {
-        vscode.postMessage({ type: "exportAs", id: result.id, rows: rows });
+        vscode.postMessage({ type: "exportAs", id: result.id, run: result.run, rows: rows });
       });
       tail.push(as);
     }
@@ -1054,6 +1054,10 @@
           rendered();
         });
         th.addEventListener("dragend", function () { dragFrom = null; });
+      }
+      // A width is kept by name: one of two columns of a name is not resized
+      // by itself, so neither is offered the edge to drag (#2508).
+      if (feature("columnLayout") && !LOOK.repeatedName(grid, i)) {
         const handle = el("span", "resize");
         handle.title = "Drag to resize the column";
         handle.addEventListener("mousedown", function (event) {
@@ -1112,7 +1116,7 @@
         const td = event.target && event.target.closest ? event.target.closest("td[data-r]") : event.target;
         const r = td && td.getAttribute ? td.getAttribute("data-r") : null;
         if (r !== null) {
-          vscode.postMessage({ type: "drill", id: result.id, column: Number(td.getAttribute("data-c")), row: Number(r) });
+          vscode.postMessage({ type: "drill", id: result.id, run: result.run, column: Number(td.getAttribute("data-c")), row: Number(r) });
         }
       });
     }

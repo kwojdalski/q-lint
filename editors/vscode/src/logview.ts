@@ -593,7 +593,7 @@ export class LogViewer {
       return;
     }
     const validateInput = (v: string) => (validBound(v) ? undefined : "A time of day (12:30, 12:30:15.5) or a date and time (2026.11.21D12:30:00, 2026-11-21 12:30); empty for none.");
-    const prompt = "A time of day applies to every day in the log; a date and time to that moment. Empty: no bound.";
+    const prompt = "A time of day applies to every day in the log; a date and time to that moment; a date alone to that whole day. Empty: no bound.";
     const from = await window.showInputBox({ title: "Show entries from", prompt, value: view.filter.from ?? "", validateInput });
     if (from === undefined) {
       return;

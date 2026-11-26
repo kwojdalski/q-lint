@@ -10,7 +10,8 @@
 // so a timestamp and a level word near the start are read where they are,
 // and an error is q's own: `'type` (PeachQ) or `'2026.11.21T20:41:03.930
 // type` (KDB-X), followed by indented backtrace lines. An indented or blank
-// line continues the entry before it.
+// line continues the entry before it, and so after a TorQ line does any
+// line with no TorQ form and no time: the rest of a multi-line message.
 
 export const LOG_SCHEME = "q-log";
 export const LOG_COMMANDS = {
@@ -249,10 +250,15 @@ export interface Filter {
 export const NO_FILTER: Filter = { levels: [], processes: [] };
 
 /// `bound` (a time or time of day, as typed) compared with `time`: -1 if
-/// `time` is before it, 0 at, 1 after; undefined if it cannot be read.
+/// `time` is before it, 0 at, 1 after; undefined if it cannot be read. A
+/// date alone is that whole day: `time` is at it anywhere from its midnight
+/// to the next, so "to 2026.11.21" keeps the 21st (#2418).
 function compare(time: number, bound: string): number | undefined {
   const full = timeOf(bound);
   if (full !== undefined) {
+    if (/^\d{4}[.-]\d{2}[.-]\d{2}$/.test(bound.trim())) {
+      return time < full ? -1 : time < full + 86400000 ? 0 : 1;
+    }
     return Math.sign(time - full);
   }
   const day = timeOfDay(bound);
@@ -323,7 +329,11 @@ export class EntryBuilder {
 
   push(line: string): void {
     const p = parseLine(line);
-    if (p.kind === "cont" && this.current !== undefined) {
+    // `.lg.format` writes a message's newlines as they are, so in a TorQ
+    // entry a line of no TorQ form and no time of its own - a trailing
+    // "rolled back", a `'type` - is still that message (#2419).
+    const torqOpen = this.current !== undefined && this.current.kind.startsWith("torq");
+    if ((p.kind === "cont" || (torqOpen && p.kind === "q" && p.time === undefined)) && this.current !== undefined) {
       this.current.lines.push(line);
       return;
     }

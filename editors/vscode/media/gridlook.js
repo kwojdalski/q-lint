@@ -414,17 +414,31 @@
 
   /// The order of names after moving the column drawn at `from` to `to`
   /// (places among those drawn); the hidden keep their place after them.
+  /// A column moved past another of its name is not moved: an order of
+  /// names draws those in the grid's order, so the other would move
+  /// instead (#2508).
   function moveColumn(grid, layout, from, to) {
     const shown = displayColumns(grid, layout);
     const all = displayColumns(grid, { order: layout && layout.order });
+    const names = function (places) { return places.map(function (i) { return grid.columns[i].name; }); };
     if (from < 0 || from >= shown.length || to < 0 || to >= shown.length || from === to) {
-      return all.map(function (i) { return grid.columns[i].name; });
+      return names(all);
     }
     const moved = shown.slice();
     const [c] = moved.splice(from, 1);
     moved.splice(to, 0, c);
     const rest = all.filter(function (i) { return moved.indexOf(i) < 0; });
-    return moved.concat(rest).map(function (i) { return grid.columns[i].name; });
+    const order = moved.concat(rest);
+    const drawn = displayColumns(grid, { order: names(order) });
+    return drawn.every(function (i, k) { return i === order[k]; }) ? names(order) : names(all);
+  }
+
+  /// Whether another column of the grid has the name of its column `i`:
+  /// a layout keeps a width and an order by name, so that column can be
+  /// neither resized nor moved past the other by itself (#2508).
+  function repeatedName(grid, i) {
+    const name = grid.columns[i].name;
+    return grid.columns.some(function (c, k) { return k !== i && c.name === name; });
   }
 
   /// How far from the left each frozen column sits, as CSS: the widths of
@@ -570,6 +584,7 @@
     barBackground: barBackground,
     displayColumns: displayColumns,
     moveColumn: moveColumn,
+    repeatedName: repeatedName,
     frozenOffsets: frozenOffsets,
     correlation: correlation,
     correlationPairs: correlationPairs,

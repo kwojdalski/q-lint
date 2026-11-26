@@ -46,10 +46,18 @@ async function fakeQ(answer = () => null, delay = 0) {
         }
         sent.push(read);
         const value = answer(read);
-        if (value !== undefined) {
-          const out = serialize(value);
-          out.writeUInt8(2, 1);
-          socket.write(out);
+        // A promise is answered when it settles: a query still running.
+        const write = (v) => {
+          if (v !== undefined && socket.writable) {
+            const out = serialize(v);
+            out.writeUInt8(2, 1);
+            socket.write(out);
+          }
+        };
+        if (value !== null && typeof value?.then === "function") {
+          void value.then(write);
+        } else {
+          write(value);
         }
       }
     });
@@ -275,6 +283,39 @@ test("renaming the connected process keeps its results its own: paging and drill
   await live.runOnProcess("1+1", shown.process, { what: "drill-down query" });
   assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "error"), []);
   assert.ok(a.sent.length > sent);
+});
+
+test("a query still running when its process is renamed lands under the new label (#2568)", async (t) => {
+  let release;
+  const a = await fakeQ((sent) => {
+    const text = JSON.stringify(sent);
+    if (!text.includes("slowq") && !text.includes("failq")) {
+      return 1;
+    }
+    // Held until released; then the query lambda's answer, q's text of the
+    // value, or one it cannot read.
+    const held = new Promise((r) => (release = r));
+    return held.then(() => (text.includes("slowq") ? { ok: true, type: -7, text: ["1"] } : 1));
+  });
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  const shown = [];
+  const show = live.modes.show.bind(live.modes);
+  live.modes.show = (result, ...rest) => (shown.push(result.process), show(result, ...rest));
+  for (const code of ["slowq", "failq"]) {
+    const running = live.run(code);
+    await until(() => live.isBusy());
+    const to = code === "slowq" ? "a2" : "a3";
+    await editProcess(live.activeLabel(), to, a.port, "");
+    assert.strictEqual(live.activeLabel(), to);
+    release();
+    await running;
+    assert.deepStrictEqual([live.history()[0].code, live.history()[0].process], [code, to]);
+  }
+  // The answer shown went to the result panel under the label of now.
+  assert.deepStrictEqual(shown, ["a2"]);
+  assert.strictEqual(live.history()[1].outcome, "ok");
 });
 
 test("renaming the connected process keeps its Watch Query running (#1707)", async (t) => {

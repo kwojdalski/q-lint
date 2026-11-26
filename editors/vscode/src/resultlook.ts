@@ -345,7 +345,9 @@ export function rankEdge(payload: GridPayload, c: number, rule: FormatRule): num
 /// Excel holds without their quotes (#1411), are left out. `edge`, when
 /// given, is a top or bottom N rule's Nth value over every row the grid
 /// holds, as the grid ranks them: the rule is written as a comparison with
-/// it, not ranked over only the rows written (#1648).
+/// it, not ranked over only the rows written (#1648). `longText`, when
+/// given, is whether a numeric column holds a long written as text, as
+/// one Excel would round is: its comparisons read that text too (#2459).
 export function xlsxRules(
   rules: FormatRule[],
   names: string[],
@@ -355,6 +357,7 @@ export function xlsxRules(
   text: boolean[] = numeric.map((n) => !n),
   edge?: (rule: FormatRule, column: number) => number | undefined,
   infinite?: (column: number) => { pos: boolean; neg: boolean },
+  longText?: (column: number) => boolean,
 ): { dxfs: string[]; formatting: string[] } {
   const dxfs: string[] = [];
   const formatting: string[] = [];
@@ -382,6 +385,11 @@ export function xlsxRules(
     const matchesInf = (v: number): boolean =>
       ranked ? (rule.op === "top" ? v >= (nth as number) : v <= (nth as number)) : rule.op === ">" ? v > Number(rule.value) : rule.op === ">=" ? v >= Number(rule.value) : rule.op === "<" ? v < Number(rule.value) : rule.op === "<=" ? v <= Number(rule.value) : rule.op === "<>";
     const infTerms = [...(inf.pos && matchesInf(Infinity) ? [`${first}="0w"`] : []), ...(inf.neg && matchesInf(-Infinity) ? [`${first}="-0w"`] : [])];
+    // A long written as text is no number to ISNUMBER: its value is
+    // compared too, as the grid compares it, a double (#2459).
+    const asText = numeric[c] && longText !== undefined && longText(c);
+    const compared = (op: string, x: number): string =>
+      asText ? `OR(AND(ISNUMBER(${first}),${first}${op}${x}),AND(ISTEXT(${first}),IFERROR(VALUE(${first})${op}${x},FALSE)))` : `AND(ISNUMBER(${first}),${first}${op}${x})`;
     const withInf = (formula: string | undefined): string | undefined => {
       const terms = [...(formula === undefined ? [] : [formula]), ...infTerms];
       return terms.length === 0 ? undefined : terms.length === 1 ? terms[0] : `OR(${terms.join(",")})`;
@@ -401,14 +409,22 @@ export function xlsxRules(
     let cf: string;
     if (ranked && nth !== undefined) {
       // Past an infinite Nth value only the infinities themselves match.
-      const formula = withInf(Number.isFinite(nth) ? `AND(ISNUMBER(${first}),${first}${rule.op === "top" ? ">=" : "<="}${nth})` : nth === (rule.op === "top" ? Infinity : -Infinity) ? undefined : `ISNUMBER(${first})`) as string;
+      const formula = withInf(
+        Number.isFinite(nth)
+          ? compared(rule.op === "top" ? ">=" : "<=", nth)
+          : nth === (rule.op === "top" ? Infinity : -Infinity)
+            ? undefined
+            : asText
+              ? `OR(ISNUMBER(${first}),ISNUMBER(VALUE(${first})))`
+              : `ISNUMBER(${first})`,
+      ) as string;
       cf = `<cfRule type="expression"${at}><formula>${xmlAttr(formula)}</formula></cfRule>`;
     } else if (rule.op === "top" || rule.op === "bottom") {
       cf = `<cfRule type="top10"${at} rank="${Number(rule.value)}"${rule.op === "bottom" ? ' bottom="1"' : ""}/>`;
     } else {
       const want = formulaText(String(rule.value));
       const formula = numeric[c]
-        ? (withInf(`AND(ISNUMBER(${first}),${first}${rule.op}${Number(rule.value)})`) as string)
+        ? (withInf(compared(rule.op, Number(rule.value))) as string)
         : rule.op === "contains"
           ? `AND(LEN(${first})>0,ISNUMBER(FIND(LOWER(${want}),LOWER(${first}))))`
           : `AND(LEN(${first})>0,${rule.op === "=" ? "" : "NOT("}EXACT(${first},${want})${rule.op === "=" ? "" : ")"})`;

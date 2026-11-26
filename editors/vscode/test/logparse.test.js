@@ -114,7 +114,7 @@ test("a q error and its backtrace are one entry; each entry has a process", () =
 });
 
 test("filters by level, process, time and text", () => {
-  const e = entries([TORQ_INFO, TORQ_ERROR, TORQ_ERR, TORQ_WARN, BANNER]);
+  const e = entries([BANNER, TORQ_INFO, TORQ_ERROR, TORQ_ERR, TORQ_WARN]);
   const pass = (filter) => e.filter((x) => matches(x, { levels: [], processes: [], ...filter })).map((x) => x.lines[0].slice(0, 30));
   assert.strictEqual(pass({}).length, 5);
   assert.deepStrictEqual(pass({ levels: ["ERROR"] }).length, 2);
@@ -133,9 +133,9 @@ test("filters by level, process, time and text", () => {
 });
 
 test("entries of several files are merged by time, each file's order kept", () => {
-  const a = entries(["2026.11.07D10:00:00.000000000|h|rdb|rdb1|INFO|x|a1", "no time", "2026.11.07D12:00:00.000000000|h|rdb|rdb1|INFO|x|a2"], "/l/a.log");
+  const a = entries(["2026.11.07D10:00:00.000000000 INFO a1", "notime", "2026.11.07D12:00:00.000000000 INFO a2"], "/l/a.log");
   const b = entries(["2026.11.07D11:00:00.000000000|h|hdb|hdb1|INFO|x|b1"], "/l/b.log");
-  assert.deepStrictEqual(merge([a, b]).map((x) => x.lines[0].split("|").pop()), ["a1", "no time", "b1", "a2"]);
+  assert.deepStrictEqual(merge([a, b]).map((x) => x.lines[0].split(/[| ]/).pop()), ["a1", "notime", "b1", "a2"]);
   assert.strictEqual(merge([a]), a);
 });
 
@@ -155,4 +155,36 @@ test("an impossible date or time is no time, and no filter bound (#1436)", () =>
   // A leap day is a day.
   assert.strictEqual(new Date(timeOf("2028.02.29D23:59:59.5")).toISOString(), "2028-02-29T23:59:59.500Z");
   assert.strictEqual(validBound("2026.02.28"), true);
+});
+
+test("a date alone as a time bound is that whole day (#2418)", () => {
+  const e = entries(["2026.11.21D09:00:00.000000000|h|rdb|rdb1|INFO|x|a", "2026.11.21D17:30:00.000000000|h|rdb|rdb1|INFO|x|b", "2026.11.22D09:00:00.000000000|h|rdb|rdb1|INFO|x|c"]);
+  const pass = (filter) => e.filter((x) => matches(x, { levels: [], processes: [], ...filter })).map((x) => x.lines[0].split("|").pop());
+  assert.deepStrictEqual(pass({ from: "2026.11.21", to: "2026.11.21" }), ["a", "b"]);
+  assert.deepStrictEqual(pass({ to: "2026.11.21" }), ["a", "b"]);
+  assert.deepStrictEqual(pass({ from: "2026.11.22" }), ["c"]);
+  assert.deepStrictEqual(pass({ to: "2026-11-20" }), []);
+  // A full time is still that instant.
+  assert.deepStrictEqual(pass({ to: "2026.11.21D09:00" }), ["a"]);
+});
+
+test("a multi-line TorQ message is one entry, its unindented lines too (#2419)", () => {
+  // `.lg.format` in KDB-X with the message
+  // "failed to insert: 'type\n  [2]  upd:{x insert y}\n               ^\nrolled back".
+  const e = entries([
+    "2026.11.21D09:00:00.000000000|h|rdb|rdb1|INFO|x|a",
+    "2026.11.21D17:30:00.000000000|h|rdb|rdb1|ERROR|upd|failed to insert: 'type",
+    "  [2]  upd:{x insert y}",
+    "               ^",
+    "rolled back",
+    "'type",
+    "2026.11.21D17:31:00.000000000|h|rdb|rdb1|INFO|x|c",
+  ]);
+  assert.deepStrictEqual(e.map((x) => [x.level, x.lines.length]), [["INFO", 1], ["ERROR", 5], ["INFO", 1]]);
+  const errors = e.filter((x) => matches(x, { levels: ["ERROR"], processes: [] }));
+  assert.deepStrictEqual(errors[0].lines.slice(3), ["rolled back", "'type"]);
+  // A line with a time of its own is an entry of its own, and so is a
+  // line before any TorQ line.
+  const k = entries(["`hello", "2026.11.21D17:30:00.000000000|h|rdb|rdb1|ERROR|upd|x", "'2026.11.21T17:30:01.000 type"]);
+  assert.deepStrictEqual(k.map((x) => x.lines.length), [1, 1, 1]);
 });

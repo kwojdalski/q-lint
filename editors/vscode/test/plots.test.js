@@ -121,7 +121,8 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   assert.deepStrictEqual([posted.at(-1).count, posted.at(-1).index, posted.at(-1).plot.kind], [2, 1, "bar"]);
   assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.previous)(), true);
   assert.strictEqual(posted.at(-1).plot.kind, "line");
-  receive({ type: "move", by: 1 });
+  assert.strictEqual(posted.at(-1).plot.key, "r1/line");
+  receive({ type: "move", by: 1, plot: "r1/line" });
   assert.strictEqual(posted.at(-1).plot.kind, "bar");
   // SVG is written as kept; a PNG is the page's drawing of it.
   assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("svg", vscode.Uri.file("/p.svg")), "/p.svg");
@@ -151,7 +152,7 @@ test("the view shows the plot on show, steps and saves it, and off is unregister
   assert.strictEqual(await stub.commands.get(PLOT_COMMANDS.save)("svg", vscode.Uri.file("/ro/p.svg")), undefined);
   assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/p.svg: EROFS: read-only file system"]);
   vscode.workspace.fs.writeFile = writeFile;
-  receive({ type: "remove" });
+  receive({ type: "remove", plot: "r2/bar" });
   assert.strictEqual(PLOTS.list().length, 1);
   // Off: unregistered, the plots dropped, the commands refuse.
   stub.config.user["results.plots.enable"] = false;
@@ -238,4 +239,72 @@ test("the page cuts a plot's long code by code point, never through an emoji (#1
   assert.strictEqual(shown, `${"x:".padEnd(299, "a")}😀...`);
   page.send({ type: "plots", plot: { kind: "line", process: "hdb", at: 0, code: "😀".repeat(300), svg: "<svg/>" }, index: 0, count: 1 });
   assert.strictEqual(page.find("pre")[0].textContent, "😀".repeat(300));
+});
+
+test("a kept chart drawn again unchanged leaves the plot the user stepped to on show (#2505)", () => {
+  const store = new PlotStore();
+  store.add(plot("r1/line", "pnl"));
+  store.add(plot("r2/line", "risk"));
+  assert.strictEqual(store.move(-1).key, "r1/line");
+  // The result page shown again draws r2's chart as it was.
+  store.add(plot("r2/line", "risk"));
+  assert.strictEqual(store.shown().key, "r1/line");
+  // A chart that changed - a column ticked - is shown.
+  store.add(plot("r2/line", "risk and pnl"));
+  assert.strictEqual(store.shown().key, "r2/line");
+});
+
+test("the page's Remove, Save and arrows act on the plot it showed, not one added since (#2502)", async () => {
+  const store = new PlotStore();
+  store.add(plot("r1/line", "pnl"));
+  store.add(plot("r2/line", "risk"));
+  store.move(-1);
+  store.add(plot("r3/line", "fills"));
+  store.remove("r1/line");
+  assert.deepStrictEqual(store.list().map((p) => p.key), ["r2/line", "r3/line"]);
+  assert.strictEqual(store.shown().key, "r3/line");
+  // A plot no longer kept: nothing moves, nothing goes.
+  assert.strictEqual(store.move(1, "r1/line"), undefined);
+  store.remove("r1/line");
+  assert.strictEqual(store.list().length, 2);
+  assert.strictEqual(store.move(-1, "r3/line").key, "r2/line");
+  store.add(plot("r4/line", "more"));
+  assert.strictEqual(store.move(1, "r2/line").key, "r3/line");
+
+  // Through the view: the page names the plot it shows with each act.
+  stub.reset();
+  const providers = [];
+  vscode.window.registerWebviewViewProvider = (id, provider) => (providers.push(provider), { dispose() {} });
+  const written = {};
+  vscode.workspace.fs = { writeFile: async (uri, bytes) => void (written[uri.fsPath] = Buffer.from(bytes)) };
+  const { PlotsView } = require("../out/plotsview.js");
+  const context = stub.newContext();
+  new PlotsView(context);
+  const posted = [];
+  let receive;
+  providers[0].resolveWebviewView({
+    visible: true,
+    webview: { options: {}, html: "", cspSource: "x", asWebviewUri: (u) => u, postMessage: async (m) => void posted.push(m), onDidReceiveMessage: (f) => (receive = f) },
+    onDidDispose: () => {},
+  });
+  PLOTS.clear();
+  PLOTS.add(plot("p/line", "pnl"));
+  PLOTS.add(plot("k/line", "risk"));
+  PLOTS.move(-1);
+  const aimed = posted.at(-1).plot.key;
+  assert.strictEqual(aimed, "p/line");
+  PLOTS.add(plot("f/line", "fills"));
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/aimed.svg");
+  receive({ type: "save", format: "svg", plot: aimed });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(written["/aimed.svg"].toString(), svg("pnl"));
+  receive({ type: "remove", plot: aimed });
+  assert.deepStrictEqual(PLOTS.list().map((p) => p.key), ["k/line", "f/line"]);
+  // The page's own buttons send the key of the plot they were drawn for.
+  const page = loadSmallPage(["refocus.js", "plots.js"]);
+  page.send({ type: "plots", plot: { key: "p/line", kind: "line", process: "hdb", at: 0, code: "x", svg: "<svg/>" }, index: 0, count: 2 });
+  page.find("button").find((b) => b.textContent === "Remove").fire("click");
+  assert.deepStrictEqual(page.posted.at(-1), { plot: "p/line", type: "remove" });
+  PLOTS.clear();
+  for (const d of context.subscriptions) d.dispose?.();
 });

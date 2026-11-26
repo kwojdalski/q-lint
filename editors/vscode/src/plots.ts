@@ -46,12 +46,17 @@ export class PlotStore {
   }
 
   /// Keep `plot`, or replace the one of the same key; it is then the one on
-  /// show. The oldest go past the limit.
+  /// show - a replacement only when its SVG changed: the result page draws
+  /// a kept chart again each time it is shown, and that leaves the plot the
+  /// user stepped to on show (#2505). The oldest go past the limit.
   add(plot: Plot): void {
     const at = this.plots.findIndex((p) => p.key === plot.key);
     if (at >= 0) {
+      const changed = this.plots[at].svg !== plot.svg;
       this.plots[at] = { ...plot, at: this.plots[at].at };
-      this.current = at;
+      if (changed) {
+        this.current = at;
+      }
     } else {
       this.plots.push(plot);
       const over = Math.max(0, this.plots.length - this.limit);
@@ -66,12 +71,21 @@ export class PlotStore {
     return this.plots[this.current];
   }
 
-  /// Show the plot `by` places on (negative: back), within the history.
-  move(by: number): Plot | undefined {
-    if (this.plots.length === 0) {
+  /// The plot kept under `key`, if it still is.
+  find(key: string): Plot | undefined {
+    return this.plots.find((p) => p.key === key);
+  }
+
+  /// Show the plot `by` places on (negative: back) from the one on show, or
+  /// from the plot `from` names: the one the page showed when it was asked,
+  /// which a plot added since has moved off show (#2502). Nothing moves if
+  /// that plot is no longer kept.
+  move(by: number, from?: string): Plot | undefined {
+    const start = from === undefined ? this.current : this.plots.findIndex((p) => p.key === from);
+    if (this.plots.length === 0 || start < 0) {
       return undefined;
     }
-    this.current = Math.min(this.plots.length - 1, Math.max(0, this.current + by));
+    this.current = Math.min(this.plots.length - 1, Math.max(0, start + by));
     this.fire();
     return this.shown();
   }
@@ -79,11 +93,24 @@ export class PlotStore {
   /// Forget the plot on show; the next older one is shown, or the oldest
   /// left when it was the oldest (#1260).
   removeShown(): void {
-    if (this.current < 0) {
+    const plot = this.shown();
+    if (plot !== undefined) {
+      this.remove(plot.key);
+    }
+  }
+
+  /// Forget the plot kept under `key` (#2502). If it was on show the next
+  /// older one is shown, as `removeShown`; else the one on show stays.
+  remove(key: string): void {
+    const at = this.plots.findIndex((p) => p.key === key);
+    if (at < 0) {
       return;
     }
-    this.plots.splice(this.current, 1);
-    this.current = this.plots.length === 0 ? -1 : Math.max(0, this.current - 1);
+    this.plots.splice(at, 1);
+    if (at < this.current || (at === this.current && at > 0)) {
+      this.current--;
+    }
+    this.current = this.plots.length === 0 ? -1 : Math.min(this.current, this.plots.length - 1);
     this.fire();
   }
 

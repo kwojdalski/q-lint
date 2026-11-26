@@ -338,6 +338,27 @@ test("a paused grid is told at once that its connection closed, and sent no rows
   panels[0].dispose();
 });
 
+// The page starts unpaused: reloaded while the stream was paused, it was
+// sent nothing, and only a second click of its 'Pause' resumed.
+test("a grid page reloaded while paused is sent its rows and resumes, as its button says (#2499)", async (t) => {
+  const { fakeQ } = require("./fakeq.js");
+  const { SUBSCRIBE } = require("../out/stream.js");
+  const q = await fakeQ((m) => (Array.isArray(m) && m[0] === SUBSCRIBE ? ["trade", ["time", "sym", "px"]] : null));
+  t.after(() => q.close());
+  const { panels } = await setUp(t, [{ label: "tp", host: "127.0.0.1", port: q.port, tags: [] }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  await stub.commands.get(STREAM_COMMANDS.start)("tp", "trade");
+  panels[0].send({ type: "ready" });
+  panels[0].send({ type: "pause", paused: true });
+  const sent = panels[0].posted.length;
+  panels[0].send({ type: "ready" });
+  assert.deepStrictEqual(panels[0].posted.slice(sent).map((m) => [m.type, m.reset]), [["rows", true]]);
+  // Unpaused as the page is: its first click pauses, and nothing is drawn then.
+  panels[0].send({ type: "pause", paused: true });
+  assert.strictEqual(panels[0].posted.length, sent + 1);
+  panels[0].dispose();
+});
+
 // The grid listened for updates only once .u.sub had answered: an update
 // a tickerplant published at once, in the same packet as the answer, was
 // dispatched to no listener and lost.

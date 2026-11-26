@@ -43,6 +43,8 @@ interface PageMessage {
   format?: string;
   key?: string;
   data?: string;
+  /// The key of the plot the page showed when it was asked.
+  plot?: string;
 }
 
 function plotsHtml(webview: Webview, media: Uri): string {
@@ -119,14 +121,15 @@ export class PlotsView {
       const waiting = this.ready;
       this.ready = [];
       waiting.forEach((w) => w());
-    } else if (message.type === "move" && typeof message.by === "number") {
-      PLOTS.move(message.by);
-    } else if (message.type === "remove") {
-      PLOTS.removeShown();
+    } else if (message.type === "move" && typeof message.by === "number" && typeof message.plot === "string") {
+      // Each act names the plot the page showed: one added since is not it (#2502).
+      PLOTS.move(message.by, message.plot);
+    } else if (message.type === "remove" && typeof message.plot === "string") {
+      PLOTS.remove(message.plot);
     } else if (message.type === "clear") {
       PLOTS.clear();
-    } else if (message.type === "save") {
-      void this.save(message.format, undefined);
+    } else if (message.type === "save" && typeof message.plot === "string") {
+      void this.save(message.format, undefined, message.plot);
     } else if (message.type === "png" && typeof message.key === "string" && this.png.has(message.key)) {
       const resolve = this.png.get(message.key);
       this.png.delete(message.key);
@@ -140,7 +143,7 @@ export class PlotsView {
       type: "plots",
       count: PLOTS.list().length,
       index: PLOTS.current,
-      plot: plot === undefined ? undefined : { svg: plot.svg, process: plot.process, code: plot.code, kind: plot.kind, at: plot.at },
+      plot: plot === undefined ? undefined : { key: plot.key, svg: plot.svg, process: plot.process, code: plot.code, kind: plot.kind, at: plot.at },
     });
   }
 
@@ -166,10 +169,15 @@ export class PlotsView {
     return answer;
   }
 
-  /// Save the plot on show as `format` (or one picked) to `target` (or a
-  /// file chosen). The path written, or undefined.
-  private async save(format: string | undefined, target: Uri | undefined): Promise<string | undefined> {
-    const plot: Plot | undefined = PLOTS.shown();
+  /// Save the plot on show, or the one kept under `key`, as `format` (or
+  /// one picked) to `target` (or a file chosen). The path written, or
+  /// undefined.
+  private async save(format: string | undefined, target: Uri | undefined, key?: string): Promise<string | undefined> {
+    const plot: Plot | undefined = key === undefined ? PLOTS.shown() : PLOTS.find(key);
+    if (key !== undefined && plot === undefined) {
+      void window.showInformationMessage("q-lint: that plot is no longer kept; nothing was saved.");
+      return undefined;
+    }
     if (plot === undefined) {
       void window.showInformationMessage("q-lint: there is no plot to save. Draw a chart in the result panel first.");
       return undefined;

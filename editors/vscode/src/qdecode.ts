@@ -24,7 +24,9 @@ export type QValue =
   /// A char vector, as its bytes: q's text escapes what is not printable.
   | { kind: "chars"; attr: number; v: Buffer }
   | { kind: "list"; attr: number; v: QValue[] }
-  | { kind: "table"; attr: number; cols: string[]; data: QValue[] }
+  /// A table; `colAttr`, the attribute of its column names' list, as the
+  /// flip of a sorted dictionary has (#2581).
+  | { kind: "table"; attr: number; cols: string[]; data: QValue[]; colAttr?: number }
   /// A dictionary; `sorted` for one with the `s` attribute (type 127).
   | { kind: "dict"; sorted: boolean; k: QValue; v: QValue }
   /// A function: a lambda's or a primitive's text; for a projection (104),
@@ -229,7 +231,7 @@ export function decode(message: Buffer): QValue {
       if (dict.kind !== "dict" || dict.k.kind !== "vector" || dict.v.kind !== "list") {
         throw new Error("a table that is not a dictionary of columns");
       }
-      return { kind: "table", attr, cols: dict.k.v.map(String), data: dict.v.v };
+      return { kind: "table", attr, cols: dict.k.v.map(String), data: dict.v.v, ...(dict.k.attr ? { colAttr: dict.k.attr } : {}) };
     }
     if (t < 0 || t > 19 || t === 3) {
       throw new Error(`q-lint cannot read a value of type ${t}`);

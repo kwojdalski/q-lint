@@ -383,3 +383,16 @@ test("a direct grid ranks dictionaries item by item, and equal (::) cells as one
   const p = (n) => ({ kind: "func", t: 104, parts: [{ kind: "func", t: 100, text: "{x+y}" }, { kind: "atom", t: -7, v: BigInt(n) }] });
   assert.deepStrictEqual(rank({ kind: "list", attr: 0, v: [p(1), p(1), p(2)] }), [[0, 0, 1]]);
 });
+
+test("a table's attribute, and its names' list's, are written where -3! writes them (#2581)", () => {
+  const { oneLine } = require("../out/qformat.js");
+  // KDB-X `8_-8!x` and `-3!x` of each.
+  const cases = [
+    ["6201630b0001000000610000000100000007010200000001000000000000000200000000000000", "`s#+(,`a)!,`s#1 2"],
+    ["6200630b01020000006100620000000200000007000100000001000000000000000700010000000200000000000000", "+`s#`a`b!(,1;,2)"],
+    ["7f6201630b00010000006b00000001000000070102000000010000000000000002000000000000006200630b0001000000760000000100000007000200000003000000000000000400000000000000", "`s#(`s#+(,`k)!,`s#1 2)!+(,`v)!,3 4"],
+  ];
+  for (const [hex, text] of cases) assert.strictEqual(oneLine(decode(message(Buffer.from(hex, "hex")))), text);
+  // In a list, as a console item or a grid cell writes it.
+  assert.strictEqual(oneLine(decode(message("\x00\x00", Buffer.from([2, 0, 0, 0]), Buffer.from(cases[0][0], "hex"), long(1)))), "(`s#+(,`a)!,`s#1 2;1)");
+});

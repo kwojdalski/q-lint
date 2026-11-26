@@ -68,7 +68,7 @@ export class AsyncQueries {
     }
     if (this.listeners.length === 0) {
       this.listeners = [
-        this.live.onAsyncMessage((message) => void this.arrive(message)),
+        this.live.onAsyncMessage((message, process) => void this.arrive(message, process.label)),
         this.live.onDidChange((what) => {
           if (what === "disconnected" && this.pending.size > 0) {
             void window.showWarningMessage(plainMessage(`q-lint: the connection closed; ${this.pending.size} asynchronous result(s) will not arrive.`));
@@ -163,12 +163,15 @@ export class AsyncQueries {
     return id;
   }
 
-  private async arrive(message: Buffer): Promise<void> {
+  /// `label`: the process the message came from as it is now - renamed
+  /// since the query was sent, on the same connection, its new label (#2568).
+  private async arrive(message: Buffer, label?: string): Promise<void> {
     const read = readAsyncMessage(message);
-    const p = read === undefined ? undefined : this.pending.get(read.id);
-    if (read === undefined || p === undefined) {
+    const sent = read === undefined ? undefined : this.pending.get(read.id);
+    if (read === undefined || sent === undefined) {
       return;
     }
+    const p = label === undefined ? sent : { ...sent, process: label };
     this.pending.delete(read.id);
     this.showCount();
     const millis = Date.now() - p.started;

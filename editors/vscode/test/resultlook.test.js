@@ -146,10 +146,26 @@ test("the layout orders, hides and freezes columns by name, a name twice taking 
   assert.deepStrictEqual(L.displayColumns(g, { order: ["c", "a", "a"], hidden: ["b"] }), [3, 0, 2]);
   assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: [] }, 3, 0), ["c", "a", "b", "a"]);
   // Hidden columns keep their place after the ones moved.
-  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), ["a", "c", "a", "b"]);
-  assert.deepStrictEqual(L.displayColumns(g, { order: L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), hidden: ["b"] }).map((i) => g.columns[i].name), ["a", "c", "a"]);
+  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: ["b"] }, 2, 0), ["c", "a", "a", "b"]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: L.moveColumn(g, { order: [], hidden: ["b"] }, 2, 0), hidden: ["b"] }), [3, 0, 2]);
   assert.deepStrictEqual(L.frozenOffsets(["10ch", "80px", "5ch"], 3), ["0px", "10ch", "calc(10ch + 80px)"]);
   assert.deepStrictEqual(L.frozenOffsets(["10ch"], 0), []);
+});
+
+test("a column is not moved past another of its name, and neither is resized by itself (#2508)", () => {
+  // `cols 0!kt` of a keyed table with key sym and value sym px.
+  const g = grid([["sym", 11, ["a"]], ["sym", 11, ["b"]], ["px", 9, ["1"]]]);
+  const at = (order) => L.displayColumns(g, { order, hidden: [] });
+  // The second sym to the front, or the first to the end: each would draw
+  // the other one there, so nothing moves.
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 1, 0)), [0, 1, 2]);
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 0, 2)), [0, 1, 2]);
+  // A move that keeps the two in their order is made, and draws as asked.
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 2, 0)), [2, 0, 1]);
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 1, 2)), [0, 2, 1]);
+  const f = grid([["sym", 11, ["a"]], ["px", 9, ["1"]], ["sym", 11, ["b"]]]);
+  assert.deepStrictEqual(L.displayColumns(f, { order: L.moveColumn(f, { order: [], hidden: [] }, 2, 0), hidden: [] }), [0, 1, 2]);
+  assert.deepStrictEqual([0, 1, 2].map((i) => L.repeatedName(f, i)), [true, false, true]);
 });
 
 test("a layout that would hide every column draws them all: a new run of only hidden columns is not a grid of none (#1652)", () => {
@@ -388,6 +404,29 @@ test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of the
   const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
   const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<"));
   assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
+});
+
+test("Excel colours a long it holds as text, past 2^53, as the grid's rule does (#2459)", () => {
+  // ([] id:5 1700000000000000123 9007199254740993), id > 100 and id top 1.
+  const p = {
+    count: 3, keys: 0, names: ["id"], types: [7],
+    cells: [["5", "1700000000000000123", "9007199254740993"]],
+    raw: [[5, "1700000000000000123", "9007199254740993"]],
+    rank: [[0, 2, 1]],
+  };
+  const rules = [{ column: "id", op: ">", value: 100, style: { background: "red" } }, { column: "id", op: "top", value: 1, style: { bold: true } }];
+  const g = require("../out/grid.js").toGrid(p, -1);
+  assert.deepStrictEqual([...L.ruleStyles(g, rules.slice(0, 1))[0].keys()].sort(), [1, 2]);
+  const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<t xml:space="preserve">1700000000000000123<\/t>/);
+  const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&gt;/g, ">"));
+  assert.deepStrictEqual(formulas, [
+    "OR(AND(ISNUMBER(A2),A2>100),AND(ISTEXT(A2),IFERROR(VALUE(A2)>100,FALSE)))",
+    "OR(AND(ISNUMBER(A2),A2>=1700000000000000000),AND(ISTEXT(A2),IFERROR(VALUE(A2)>=1700000000000000000,FALSE)))",
+  ]);
+  // A column of longs Excel holds as numbers is as before.
+  const small = unzip(exportResult("xlsx", { ...p, cells: [["5", "6", "7"]], raw: [[5, 6, 7]] }, -1, undefined, rules.slice(0, 1)).data)["xl/worksheets/sheet1.xml"];
+  assert.match(small, /<formula>AND\(ISNUMBER\(A2\),A2&gt;100\)<\/formula>/);
 });
 
 test("correlation reads at most CORR_BUDGET row-pairs, over every step-th row past it, and says so (#1857)", () => {

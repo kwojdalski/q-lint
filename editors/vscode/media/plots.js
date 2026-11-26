@@ -30,7 +30,8 @@
       const b = el("button", "", label);
       b.title = title;
       b.disabled = !!disabled;
-      b.addEventListener("click", () => send(message));
+      // Each act names the plot on show here, for the extension to act on that one (#2502).
+      b.addEventListener("click", () => send(Object.assign({ plot: shown.key }, message)));
       // At the first or last plot an arrow is disabled: the other one takes its focus.
       focus.name(b, title, { "Previous plot": "Next plot", "Next plot": "Previous plot" }[title]);
       bar.append(b);
