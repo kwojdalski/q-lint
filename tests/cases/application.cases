@@ -709,15 +709,35 @@ r2:@[f;1;{x,y}]
 r3:.[f;1 2;{[e;z] e,z}]
 r4:@[value;`hook;{[d;p] d,p}]
 
-=== clean | a rank-1 or niladic handler, a projected one, a named one, or an amend (#1142)
+=== clean | a rank-1 or niladic handler, one projected down to rank 1, or an amend (#1142)
 f:{'`boom}
 h:{[e;z] e,z}
 r1:@[f;1;{[e] e}]
 r2:@[f;1;{x}]
-r3:@[f;1;h]
+r3:@[f;1;h[0]]
 r4:@[f;1;{[e;z] e,z}[;0]]
 r5:@[f;1;{[] 0}]
 r6:@[1 2 3;0;{x+1}]
+r7:@[f;1;h[;0]]
+r8:@[f;1;{x,y}/]
+
+=== QA013 | a rank-2 handler named here, in parentheses, or a projection that leaves two slots open (KDB-X: @[{'x};1;h] is {[e;z] e,z}["stype"], #2931)
+f:{'`boom}
+h:{[e;z] e,z}
+r1:@[f;1;h]
+r2:@[f;1;({[e;z] e,z})]
+r3:@[f;1;{[a;e;z] a,e,z}[`a;]]
+r4:@[f;1;(h)]
+r5:.[f;1 2;h]
+r6:@[f;1;{[a;e;z] a,e,z}[;`a;]]
+
+=== clean | while a named handler defined twice, or a parameter of the lambda the trap is in, has no rank to read
+f:{'`boom}
+h:{[e;z] e,z}
+h:{[e] e}
+r1:@[f;1;h]
+g:{[k] k:{x}; @[f;1;k]}
+k:{[e;z] e,z}
 
 === QE011 profile: general | an infix keyword or glyph ending a line, with the iterator on the indented line that continues it (#2851; q 5: ')
 a:x cor

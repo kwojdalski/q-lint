@@ -8477,10 +8477,12 @@ fn lint_rules(
     // The handler of a protected apply is given one argument, the error
     // text, so a handler of rank 2 or more is projected, not run: q 5
     // `@[{'`boom};1;{[e;z] e}]` is `{[e;z] e}["boom"]`, and so with `{x,y}`
-    // and with `.[f;args;h]`. Only a lambda written out as the whole third
-    // slot - a name may be bound to anything - and only where the first slot
-    // is a function rather than data, which makes the three-slot form an
-    // amend.
+    // and with `.[f;args;h]`. The handler may be a lambda written out, in
+    // parentheses or not, one named here - `h2:{[a;b] "h"}; @[f;1;h2]` is
+    // `{[a;b] "h"}["stype"]` on KDB-X - or a projection of either that
+    // leaves two slots open, `{[a;b;c] "h"}[`a;]` (#2931). Only where the
+    // first slot is a function rather than data, which makes the three-slot
+    // form an amend.
     for m in re!(r"([@.])\[").find_iter(code) {
         let open = m.end() - 1;
         if !boundary(code, m.start())
@@ -8499,13 +8501,54 @@ fn lint_rules(
         if !(f.starts_with('{') || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f)) {
             continue;
         }
-        let h = parts[2].trim();
-        let h_at = parts[2].as_ptr() as usize - code.as_ptr() as usize
+        let mut h = parts[2].trim();
+        let mut h_at = parts[2].as_ptr() as usize - code.as_ptr() as usize
             + (parts[2].len() - parts[2].trim_start().len());
-        if !h.starts_with('{') || matching(code, h_at, b'{', b'}') != Some(h_at + h.len()) {
-            continue;
+        while h.starts_with('(') && matching(h, 0, b'(', b')') == Some(h.len()) {
+            let inner = &h[1..h.len() - 1];
+            h_at += 1 + (inner.len() - inner.trim_start().len());
+            h = inner.trim();
         }
-        let rank = lambda_rank(code, source, h_at, h_at + h.len());
+        // The function, and where it ends: a bracket after it fills slots.
+        let (whole, f_end) = if h.starts_with('{') {
+            let Some(end) = matching(h, 0, b'{', b'}') else {
+                continue;
+            };
+            (lambda_rank(code, source, h_at, h_at + end), end)
+        } else {
+            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                .find(h)
+                .map_or("", |n| n.as_str());
+            let key = qualified(h_at, name);
+            if redefined.contains(&key)
+                || overwritten(&key)
+                || foreign(h_at, &key)
+                || shadowed(code, source, h_at, name)
+            {
+                continue;
+            }
+            match ranks.get(&key) {
+                Some(&r) => (r, name.len()),
+                None => continue,
+            }
+        };
+        let filled = match &h[f_end..] {
+            "" => 0,
+            given
+                if given.starts_with('[')
+                    && matching(given, 0, b'[', b']') == Some(given.len()) =>
+            {
+                let given = slots(&given[1..given.len() - 1]);
+                match given.iter().filter(|slot| !slot.trim().is_empty()).count() {
+                    // `f[]` fills none, and is no projection to count.
+                    0 => continue,
+                    _ if given.len() > whole => continue,
+                    n => n,
+                }
+            }
+            _ => continue,
+        };
+        let rank = whole - filled;
         if rank >= 2 {
             add(
                 h_at,
