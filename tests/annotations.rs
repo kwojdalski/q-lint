@@ -270,6 +270,27 @@ fn a_string_argument_is_hinted_where_it_starts() {
     );
 }
 
+// #2950: a call to a function defined on a `k)` line had no hints, its
+// signature never read.
+#[test]
+fn a_call_to_a_function_defined_on_a_k_line_shows_its_parameter_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "k)kf:{[aa;bb] aa}
+k)kg:{x+y}
+r:kf[1;2]
+s:kg[1;2]
+";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    // `kg` declares no signature, as on a q line.
+    assert_eq!(
+        hints(&reply),
+        [hint(2, 5, "aa:"), hint(2, 7, "bb:")],
+        "{reply}"
+    );
+}
+
 #[test]
 fn inlay_hints_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();

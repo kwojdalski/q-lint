@@ -61,6 +61,13 @@ pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) 
             .map(|name| name.to_string())
             .collect()
     };
+    left_open(code, brace, params)
+}
+
+/// Of `params`, the parameters of the lambda at `brace`, the ones what is
+/// written after it leaves for a caller: all of them, or what a projection
+/// or a first argument put beside it does not fill.
+pub(super) fn left_open(code: &str, brace: usize, params: Vec<String>) -> Vec<String> {
     let Some(end) = matching(code, brace, b'{', b'}') else {
         return params;
     };

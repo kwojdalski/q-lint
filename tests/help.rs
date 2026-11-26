@@ -411,6 +411,58 @@ fn a_column_named_y_or_z_is_not_an_implicit_parameter() {
     );
 }
 
+// #2950: a lambda on a `k)` line took nothing, whatever it named or read.
+// KDB-X 5: `k)kf:{[a;b] a}` and `k)kg:{x+y}` take two arguments, `k)kh:{1}`
+// takes `x`, and `(value kf)1` is `` `a`b ``.
+#[test]
+fn a_lambda_on_a_k_line_takes_what_one_on_a_q_line_does() {
+    let source = "k)kf:{[a;b] a}
+k)kg:{x+y}
+k)kh:{1}
+k)kn:{[] 1}
+k)kz:{x+{z}y}
+                  k)kp:{[a;b;c] b}[1;;3]
+k)kc:{([]z:1);y}
+k)kv:1
+";
+    assert_eq!(
+        parameters(source),
+        [
+            takes("kf", &["a", "b"]),
+            takes("kg", &["x", "y"]),
+            takes("kh", &["x"]),
+            takes("kn", &[]),
+            // The inner lambda's z is its own.
+            takes("kz", &["x", "y"]),
+            takes("kp", &["b"]),
+            // A column's name is no read of z.
+            takes("kc", &["x", "y"]),
+        ]
+    );
+    let details: Vec<(String, String)> = mentions(source)
+        .into_iter()
+        .filter_map(|m| Some((m.name, m.definition?.detail)))
+        .collect();
+    let detail = |name: &str| &details.iter().find(|(n, _)| n == name).unwrap().1;
+    assert_eq!(detail("kf"), "[a;b]");
+    assert_eq!(detail("kg"), "");
+    assert_eq!(detail("kn"), "[]");
+}
+
+#[test]
+fn a_projection_takes_the_slots_it_leaves_open() {
+    let source = "turn:{[g;n] g+n}[;7]\ninc:{[a;b] a+b}[1]\nmid:{[a;b;c] b}[1;;3]\nnext1:{x+y} 1\n";
+    assert_eq!(
+        parameters(source),
+        [
+            takes("turn", &["g"]),
+            takes("inc", &["b"]),
+            takes("mid", &["b"]),
+            takes("next1", &["y"]),
+        ]
+    );
+}
+
 /// The comment above the definition of `name` in `source`.
 fn above(source: &str, name: &str) -> String {
     let start = mentions(source)
@@ -1691,6 +1743,35 @@ v:ctx";
     let reply = server.ask("textDocument/hover", &uri, text, "v:ctx", 3, Value::Null);
     let shown = reply["result"]["contents"]["value"].as_str().unwrap();
     assert!(shown.contains("ctx[x]"), "{shown}");
+}
+
+// #2950: a function defined on a `k)` line was `f[]`, "takes 0 arguments".
+#[test]
+fn signature_help_and_hover_read_a_lambda_on_a_k_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "k)kf:{[aa;bb] aa}
+k)kg:{x+y}
+r:kf[1;
+s:kg[1;
+t:kg";
+    let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
+    let uri = server.open(dir.path(), "a.q", text);
+    for (context, label) in [("r:kf[1;", "kf[aa;bb]"), ("s:kg[1;", "kg[x;y]")] {
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            context,
+            context.len(),
+            Value::Null,
+        );
+        let help = &reply["result"];
+        assert_eq!(labelled(help), (label.to_string(), json!(1)), "{reply}");
+        assert_eq!(help["signatures"][0]["documentation"], Value::Null);
+    }
+    let reply = server.ask("textDocument/hover", &uri, text, "t:kg", 3, Value::Null);
+    let shown = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(shown.contains("kg[x;y]"), "{shown}");
 }
 
 #[test]

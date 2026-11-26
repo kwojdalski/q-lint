@@ -181,6 +181,9 @@ pub(super) struct KLines {
     /// lambda is its value, and the span of its statement - the k statement
     /// at the top level, the name alone in a lambda (`k){fk::x}`).
     pub(super) assigned: HashMap<usize, (bool, usize, usize)>,
+    /// Each of `assigned` whose value is a lambda, by where it is: its
+    /// signature as written, `[a;b]` or nothing, and what a caller passes.
+    pub(super) params: HashMap<usize, (String, Vec<String>)>,
 }
 
 /// The `k)` lines of `raw` read as k, for the names in them.
@@ -196,6 +199,7 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         lambdas: vec![],
         symbols: vec![],
         assigned: HashMap::new(),
+        params: HashMap::new(),
     };
     if !raw.contains("k)") {
         return out;
@@ -293,6 +297,8 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         Column,
     }
     let mut names = vec![];
+    // Each lambda assigned to a global: the name's place and the brace's.
+    let mut assigned_lambdas: Vec<(usize, usize)> = vec![];
     let mut open: Vec<(u8, Option<usize>, bool)> = vec![];
     let bytes = text.as_bytes();
     let mut at = 0;
@@ -358,6 +364,9 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
             };
             out.assigned
                 .insert(start, (value.starts_with('{'), span.0, span.1.max(at)));
+            if value.starts_with('{') {
+                assigned_lambdas.push((start, text.len() - value.len()));
+            }
         }
         let kind = match open.last() {
             // In a lambda's `[..]`, a parameter; in a table's, or straight
@@ -388,6 +397,40 @@ pub(super) fn k_lines(code: &str, raw: &str) -> KLines {
         .map(String::as_str)
         .filter(|w| crate::reserved_word(w))
         .collect();
+    // What each assigned lambda takes, read as a q line's is, k writing a
+    // lambda the same way: KDB-X 5 `k)f:{[a;b] a}` and `k)g:{x+y}` both take
+    // two arguments, and `k)h:{1}` takes `x` (#2950).
+    for (assigned, brace) in assigned_lambdas {
+        let l = out.lambdas.partition_point(|(at, _)| *at < brace);
+        let sig = signature(text, raw, brace);
+        let (detail, params) = if sig.named {
+            let slots: Vec<&str> = sig.slots.iter().map(|slot| slot.trim()).collect();
+            let params = match slots.as_slice() {
+                [""] => vec![],
+                slots => slots.iter().map(|slot| slot.to_string()).collect(),
+            };
+            (format!("[{}]", slots.join(";")), params)
+        } else {
+            let reads = |name: &str| {
+                names.iter().any(|(at, len, lambda, kind)| {
+                    *lambda == Some(l) && *kind != Kind::Column && &text[*at..at + len] == name
+                })
+            };
+            let taken = if reads("z") {
+                3
+            } else if reads("y") {
+                2
+            } else {
+                1
+            };
+            let params = ["x", "y", "z"][..taken].iter().map(|n| n.to_string());
+            (String::new(), params.collect())
+        };
+        out.params.insert(
+            assigned,
+            (detail, super::help::left_open(text, brace, params)),
+        );
+    }
     for (at, len, lambda, kind) in names {
         let word = &text[at..at + len];
         let own = lambda.is_some_and(|l| out.lambdas[l].1.contains(word));
@@ -647,17 +690,17 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             implicit: !word.starts_with('.') && at < first_switch,
             at,
             len,
-            definition: k
-                .assigned
-                .get(&at)
-                .map(|&(function, start, end)| Definition {
+            definition: k.assigned.get(&at).map(|&(function, start, end)| {
+                let (detail, params) = k.params.get(&at).cloned().unwrap_or_default();
+                Definition {
                     function,
                     holds_function: holds.unwrap_or(function),
-                    detail: String::new(),
-                    params: vec![],
+                    detail,
+                    params,
                     start,
                     end,
-                }),
+                }
+            }),
         });
     }
     out.sort_by(|a, b| (a.at, &a.name).cmp(&(b.at, &b.name)));
