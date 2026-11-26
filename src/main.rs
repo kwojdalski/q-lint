@@ -961,10 +961,14 @@ fn run(args: Args) -> Result<u8, String> {
         }
         let text = baseline::render(file, &findings, &sources);
         fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
+        // The files the baseline holds, not every file linted: a clean one
+        // has no row in it (#2770).
+        let files: std::collections::BTreeSet<&str> =
+            findings.iter().map(|f| f.path.as_str()).collect();
         eprintln!(
             "qlinter: wrote {} finding(s) in {} file(s) to the baseline {}",
             findings.len(),
-            sources.len(),
+            files.len(),
             file.display()
         );
         return Ok(if failed { 2 } else { 0 });

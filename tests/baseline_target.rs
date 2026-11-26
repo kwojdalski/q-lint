@@ -72,6 +72,24 @@ fn a_baseline_hides_todays_findings_and_shows_new_ones() {
     assert!(err.contains("wrote 2 finding(s)"), "{err}");
 }
 
+/// "N finding(s) in M file(s)" is what the baseline holds: M counted every
+/// file linted, so one finding in a tree of six read "in 6 file(s)", which
+/// the editor's Write Lint Baseline dialog repeated (#2770).
+#[test]
+fn a_written_baseline_counts_the_files_it_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    for clean in ["b.q", "c.q", "d.q"] {
+        fs::write(d.join(clean), "a:1\n").unwrap();
+    }
+    let (status, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "."]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 2 finding(s) in 1 file(s)"), "{err}");
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "b.q"]);
+    assert!(err.contains("wrote 0 finding(s) in 0 file(s)"), "{err}");
+}
+
 #[test]
 fn a_baseline_names_a_file_outside_its_directory_through_dot_dot() {
     // So it matches in another checkout, not only at today's absolute path.
