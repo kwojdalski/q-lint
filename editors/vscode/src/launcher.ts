@@ -2,6 +2,7 @@
 // starts, and where. No `vscode` import, so node tests it; `launcherview.ts`
 // starts and stops the processes and shows their output.
 import * as os from "os";
+import { isIP, isIPv6 } from "node:net";
 import { statSync } from "node:fs";
 import { scriptPath } from "./connectscript";
 import { onPath } from "./relations";
@@ -20,10 +21,59 @@ export function readLauncher(get: <T>(key: string, fallback: T) => T): { enabled
   return { enabled: get<unknown>("processes.launcher.enable", true) !== false };
 }
 
-/// Whether `host` is this machine: only a process here can be started.
+/// `host` as it is compared: in lower case, without the brackets a URL
+/// writes an IPv6 address in, or the dot of the root after a name.
+function bare(host: string): string {
+  return host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1")
+    .replace(/\.$/, "");
+}
+
+/// The IPv6 address `h` is, as it is written shortest (`0:0:0:0:0:0:0:1` is
+/// `::1`), or undefined when it is none.
+function ipv6(h: string): string | undefined {
+  try {
+    return isIPv6(h) ? new URL(`http://[${h}]`).hostname.slice(1, -1) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/// The IPv4 loopback address `host` names, or undefined when it names none:
+/// any 127.x, also as the system reads it short (`127.1` is 127.0.0.1) or
+/// mapped into IPv6 (`::ffff:127.0.0.1`).
+export function loopbackAddress(host: string): string | undefined {
+  const h = bare(host);
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ipv6(h) ?? "");
+  const parts = mapped !== null ? [mapped[1], mapped[2]].flatMap((g) => [parseInt(g, 16) >> 8, parseInt(g, 16) & 255]).map(String) : h.split(".");
+  if (parts.length < 2 || parts.length > 4 || !parts.every((p) => /^(0|[1-9]\d{0,9})$/.test(p))) {
+    return undefined;
+  }
+  // The last part fills the bytes the ones before it leave.
+  const bytes = parts.slice(0, -1).map(Number);
+  const last = Number(parts[parts.length - 1]);
+  const room = 4 - bytes.length;
+  if (bytes[0] !== 127 || bytes.some((b) => b > 255) || last >= 256 ** room) {
+    return undefined;
+  }
+  for (let i = room - 1; i >= 0; i--) {
+    bytes.push(Math.floor(last / 256 ** i) % 256);
+  }
+  return bytes.join(".");
+}
+
+/// Whether `host` is this machine: only a process here can be started. By
+/// any spelling of it: the name with the root's dot (`localhost.`), a
+/// loopback address written short, long, mapped or in brackets (`127.1`,
+/// `0:0:0:0:0:0:0:1`, `::ffff:127.0.0.1`, `[::1]`), and the machine's name
+/// without its domain, which is what `hostname -s` and q's .z.h commonly
+/// give. Each was "not this machine" (#3115).
 export function isLocalHost(host: string, hostname: string = os.hostname()): boolean {
-  const h = host.trim().toLowerCase();
-  return h === "localhost" || h === "::1" || /^127\.\d+\.\d+\.\d+$/.test(h) || h === "0.0.0.0" || h === hostname.toLowerCase();
+  const h = bare(host);
+  const name = bare(hostname);
+  return h === "localhost" || ipv6(h) === "::1" || loopbackAddress(h) !== undefined || h === "0.0.0.0" || h === name || (h !== "" && isIP(name) === 0 && h === name.split(".")[0]);
 }
 
 /// What `-p` is given for a process on `host`: a loopback host's port on
@@ -35,14 +85,15 @@ export function isLocalHost(host: string, hostname: string = os.hostname()): boo
 /// process.csv into .z.h, the machine's name, and its processes connect to
 /// each other there, which a loopback-only q refuses (#1742).
 export function listenAddress(host: string, port: number, peers = false): string {
-  const h = host.trim().toLowerCase();
+  const h = bare(host);
   if (peers) {
     return String(port);
   }
-  if (/^127\.\d+\.\d+\.\d+$/.test(h)) {
-    return `${h}:${port}`;
+  const own = loopbackAddress(h);
+  if (own !== undefined) {
+    return `${own}:${port}`;
   }
-  return h === "localhost" || h === "::1" ? `127.0.0.1:${port}` : String(port);
+  return h === "localhost" || ipv6(h) === "::1" ? `127.0.0.1:${port}` : String(port);
 }
 
 /// Whether a launch's script and arguments start a TorQ process (torq.q,
@@ -56,8 +107,7 @@ export function inStack(script: string | undefined, args: readonly string[]): bo
 /// address, which it alone may be bound to (#1742); else 127.0.0.1, which a
 /// loopback-only and a bare-port q both answer on.
 export function probeHost(host: string): string {
-  const h = host.trim().toLowerCase();
-  return /^127\.\d+\.\d+\.\d+$/.test(h) ? h : "127.0.0.1";
+  return loopbackAddress(host) ?? "127.0.0.1";
 }
 
 export interface Plan {
@@ -105,7 +155,7 @@ export function launchPlan(
   }
   // q listens on IPv4 only, and a connect dials ::1 as written, where it
   // would never be: started at 127.0.0.1, it was refused (#2130).
-  if (process.host.trim() === "::1") {
+  if (ipv6(bare(process.host)) === "::1") {
     return { error: `${process.label} is at ::1, and q listens on IPv4 only: give it the host 127.0.0.1 or localhost to start it here.` };
   }
   const cwd = launch.cwd !== undefined ? scriptPath(launch.cwd, home, folder) : (folder ?? home);

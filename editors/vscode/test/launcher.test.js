@@ -122,6 +122,29 @@ test("a launch definition starts its program with its script, -p and its argumen
   assert.ok(!isLocalHost("rdb.example", "mybox"));
 });
 
+test("this machine by any spelling of it: its short name, the root's dot, a loopback address written short, long, mapped or in brackets (#3115)", () => {
+  for (const host of ["Mac", "mac.lan.", "MAC.LAN", "localhost.", "127.1", "127.0.1", "127.0.0.2", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "[::FFFF:7f00:1]", "0.0.0.0"]) {
+    assert.strictEqual(isLocalHost(host, "Mac.lan"), true, host);
+  }
+  // Another machine: one of another name or domain, an address that is no
+  // loopback, and the first number of this machine's address.
+  for (const [host, here] of [["mac2", "Mac.lan"], ["mac.other", "Mac.lan"], ["lan", "Mac.lan"], ["128.1", "Mac.lan"], ["::2", "Mac.lan"], ["::ffff:10.0.0.1", "Mac.lan"], ["127.0.0.256", "Mac.lan"], ["127", "Mac.lan"], ["10", "10.0.0.5"], ["", "Mac.lan"]]) {
+    assert.strictEqual(isLocalHost(host, here), false, host);
+  }
+  // And each is started where it was said to be: on the loopback, by the
+  // address in full, not on every interface (#1671).
+  assert.deepStrictEqual(
+    ["127.1", "127.0.513", "localhost.", "::ffff:127.0.0.3", "Mac"].map((host) => listenAddress(host, 5)),
+    ["127.0.0.1:5", "127.0.2.1:5", "127.0.0.1:5", "127.0.0.3:5", "5"],
+  );
+  assert.deepStrictEqual(["127.1", "::ffff:127.0.0.3", "localhost."].map(probeHost), ["127.0.0.1", "127.0.0.3", "127.0.0.1"]);
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 47126, {}), host: "127.1" }, "q", undefined, "/home/me").args, ["-p", "127.0.0.1:47126"]);
+  // ::1 by another spelling is still not started (#2130).
+  for (const host of ["[::1]", "0:0:0:0:0:0:0:1"]) {
+    assert.match(launchPlan({ ...proc("l", 47126, {}), host }, "q", undefined, "/home/me").error, /is at ::1, and q listens on IPv4 only/);
+  }
+});
+
 // A saved process's relative cwd or script is whichever workspace is open:
 // in one not trusted, its script (#1527).
 test("a relative cwd, or a relative script with no cwd, is from the workspace folder", () => {
