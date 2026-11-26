@@ -608,6 +608,61 @@ fn each_load_path_links_to_the_file_it_loads() {
     assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
 }
 
+/// After `\cd dir`, q 5 loads dir/x.q for `\l x.q`: the graph knew it by
+/// the names x.q defines, but the load had no link, Go to Definition on its
+/// path nothing, a rename of dir/x.q left it naming the old file, and
+/// completion offered the workspace root's files (#2961).
+#[test]
+fn a_load_after_a_change_of_directory_is_read_from_there() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("dir/sub")).unwrap();
+    let text = "\\cd dir\n\\l x.q\n\\cd sub\n\\l s.q\n\\l \n";
+    let files = [
+        ("x.q", "top:1\n"),
+        ("dir/x.q", "g:{[a;b] a}\n"),
+        ("dir/sub/s.q", "s:1\n"),
+        ("other.q", "\\l dir/x.q\n"),
+        ("main.q", text),
+        ("computed.q", "system \"cd \",d\n\\l x.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            (1, 3, 6, "dir/x.q".to_string()),
+            (3, 3, 6, "dir/sub/s.q".into())
+        ],
+        "{reply}"
+    );
+    let at =
+        |line: u64, character: u64| json!({"position": {"line": line, "character": character}});
+    let reply = server.whole("textDocument/definition", &uri, at(1, 4));
+    let target = reply["result"][0]["uri"].as_str().unwrap_or_default();
+    assert!(target.ends_with("/dir/x.q"), "{reply}");
+    let reply = server.whole("textDocument/completion", &uri, at(4, 3));
+    assert_eq!(labels(&reply), ["s.q"], "{reply}");
+    // Where the directory is computed, reading cannot say where the load
+    // goes, and it is linked nowhere rather than to the root's x.q.
+    let computed = server.open(dir.path(), "computed.q", "system \"cd \",d\n\\l x.q\n");
+    let reply = server.whole("textDocument/documentLink", &computed, json!({}));
+    assert_eq!(links(&reply, dir.path()), [], "{reply}");
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("dir/x.q", "dir/y.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 1, 3, 6, "y.q".to_string()),
+            ("other.q".into(), 0, 3, 10, "dir/y.q".into()),
+        ],
+        "{reply}"
+    );
+}
+
 /// A load after a language prefix is a load: KDB-X 5 runs b.q for
 /// `k)\l b.q`, `q)k)\l b.q` and `K)\l b.q`, and none of them was linked
 /// (#2994).

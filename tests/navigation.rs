@@ -1,7 +1,7 @@
 //! Navigation: the outline, workspace symbols, go to definition, find
 //! references, highlights and renaming a local - first as the library reads
 //! one file, then as the language server answers an editor over a workspace.
-use q_lint_rs::{Name, load_at, mentions, name_at, rename, rename_target};
+use q_lint_rs::{Name, load_at, load_directory, mentions, name_at, rename, rename_target};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -433,10 +433,16 @@ fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     assert_eq!(path("lib/a.q", 7), Some("lib/a.q"));
     assert_eq!(path("lib/b.q", 4), Some("lib/b.q"));
     assert_eq!(path("lib/c.q", 2), Some("lib/c.q"));
-    // Not a comment, not the command, and not a path read after `\cd`.
+    // Not a comment, nor the command.
     assert_eq!(path("lib/d.q", 2), None);
     assert_eq!(path("\\l lib/a", 1), None);
-    assert_eq!(path("e.q", 1), None);
+    // A path read after `\cd` is a path, followed from the directory the
+    // `\cd` names (#2961).
+    assert_eq!(path("e.q", 1), Some("e.q"));
+    assert_eq!(
+        load_directory(source, at(source, "e.q", 1)).as_deref(),
+        Some("lib")
+    );
 }
 
 /// The local at `offset`: each place it is named, as text offsets, with the

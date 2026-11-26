@@ -2459,7 +2459,8 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 }
 
 /// The bytes of each path `references` counts as a load, which a
-/// navigation request on one follows to the file it names.
+/// navigation request on one follows to the file it names - and one after
+/// a `\cd` that `directory_at` settles, which it follows from there.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
     let (scopes, _) = scopes(code, raw);
@@ -2468,10 +2469,68 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     sites
         .into_iter()
         .filter(|(at, path, symbol)| {
-            *symbol || !displaced(&scopes, &changes, *at) || raw[path.clone()].starts_with('/')
+            *symbol
+                || !displaced(&scopes, &changes, *at)
+                || raw[path.clone()].starts_with('/')
+                || moved_to(raw, &scopes, &changes, *at).is_some()
         })
         .map(|(_, path, _)| path)
         .collect()
+}
+
+/// The directory a relative load at `at` is read from, when the script
+/// has changed directory by then and the text says to where: each `\cd
+/// dir` and `system "cd dir"` before it, joined in order from where q
+/// started - `lib`, `lib/sub`, or an absolute path. q 5 loads lib/x.q for
+/// `\cd lib` then `\l x.q` (#763), so a link, a definition, a rename and
+/// completion follow `\l x.q` there (#2961). Nothing where no change of
+/// directory has run, or one has whose directory reading cannot know: a
+/// path joined at run time, `system "cd ",d`, or the load of what may be a
+/// directory.
+pub fn directory_at(code: &str, raw: &str, at: usize) -> Option<String> {
+    let view = commands_blanked(code, raw);
+    let (scopes, _) = scopes(code, raw);
+    // Not the load at `at` itself, which may be of a directory but has not
+    // run by the time its own path is read - nor one still being typed.
+    let mut sites = load_sites(code, raw, &view);
+    sites.retain(|(_, path, _)| path.end < at);
+    let changes = changes_directory(code, raw, &view, &sites);
+    moved_to(raw, &scopes, &changes, at)
+}
+
+/// `directory_at`, over the changes of directory `changes_directory`
+/// found.
+fn moved_to(raw: &str, scopes: &[Scope], changes: &[usize], at: usize) -> Option<String> {
+    let mut ran: Vec<usize> = changes
+        .iter()
+        .copied()
+        .filter(|&change| displaced(scopes, &[change], at))
+        .collect();
+    ran.sort_unstable();
+    ran.dedup();
+    let mut dir: Option<String> = None;
+    for change in ran {
+        let rest = &raw[change..];
+        let to = re!(r"^\\cd[ \t]+(\S+)[ \t]*\r?(?:\n|$)")
+            .captures(rest)
+            .or_else(|| {
+                re!(r#"^system\s*(?:\[\s*|@\s*|\(\s*)?"cd\s+([^"\s]+)\s*"\s*(?:[\])]|;|\r?\n|$)"#)
+                    .captures(rest)
+            })?
+            .get(1)?
+            .as_str()
+            .trim_end_matches(['/', '\\']);
+        if to.is_empty() {
+            return None;
+        }
+        dir = Some(match dir {
+            Some(dir) if !std::path::Path::new(to).is_absolute() && !to.starts_with('/') => {
+                format!("{dir}/{to}")
+            }
+            _ => to.to_string(),
+        });
+    }
+    dir
 }
 
 /// Each literal handle 0 given something to run, with where what it is

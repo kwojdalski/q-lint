@@ -724,10 +724,8 @@ fn document_links(params: &Value, sources: &Sources) -> Value {
     load_paths(text)
         .into_iter()
         .filter_map(|(at, len)| {
-            let [file] = sources
-                .loaded(&key, &text[at..at + len], true)
-                .try_into()
-                .ok()?;
+            let load = super::navigate::as_run(text, at, &text[at..at + len]);
+            let [file] = sources.loaded(&key, &load, true).try_into().ok()?;
             Some(json!({
                 "range": range(&lines, at, len),
                 "target": sources.uri(&file),

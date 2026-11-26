@@ -29,7 +29,7 @@
 //! was.
 use super::{Documents, Index, Lines, file_key, is_q_uri, path_of};
 use q_lint_rs::graph::{self, Placement};
-use q_lint_rs::{Mention, Name, load_at, mentions, name_at, symbol_mentions};
+use q_lint_rs::{Mention, Name, load_at, load_directory, mentions, name_at, symbol_mentions};
 use serde_json::{Value, json};
 use std::{
     borrow::Cow,
@@ -343,7 +343,8 @@ impl<'a> Sources<'a> {
     /// cursor is on no load.
     pub(super) fn load_under(&self, cursor: &Cursor) -> Option<(usize, usize, Vec<String>)> {
         let (at, len) = load_at(cursor.text, cursor.offset)?;
-        let files = self.loaded(&cursor.key, &cursor.text[at..at + len], true);
+        let load = as_run(cursor.text, at, &cursor.text[at..at + len]);
+        let files = self.loaded(&cursor.key, &load, true);
         Some((at, len, files))
     }
 
@@ -1382,4 +1383,17 @@ fn re_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The path of the load at `at` of `text` as q reads it: after `\cd dir`,
+/// a relative `\l x.q` is dir/x.q - q 5 loads it, where the link and Go to
+/// Definition led nowhere (#2961).
+pub(super) fn as_run(text: &str, at: usize, load: &str) -> String {
+    if Path::new(load).is_absolute() || load.starts_with('/') || !text.contains("cd") {
+        return load.to_string();
+    }
+    match load_directory(text, at) {
+        Some(dir) => format!("{dir}/{load}"),
+        None => load.to_string(),
+    }
 }

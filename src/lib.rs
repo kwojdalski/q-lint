@@ -398,6 +398,15 @@ pub fn load_at(source: &str, offset: usize) -> Option<(usize, usize)> {
         .map(|path| (path.start, path.len()))
 }
 
+/// The directory a relative load at byte `offset` of `source` is read
+/// from, after the `\cd dir` before it: `dir`, joined from where q
+/// started, or an absolute path. Nothing where no change of directory has
+/// run by then, or where reading cannot say where one went.
+pub fn load_directory(source: &str, offset: usize) -> Option<String> {
+    let v = views(source);
+    semantics::directory_at(&v.code, source, offset)
+}
+
 /// What the name at byte `offset` of `source` refers to, when there is one.
 pub fn name_at(source: &str, offset: usize) -> Option<Name> {
     let v = views(source);
