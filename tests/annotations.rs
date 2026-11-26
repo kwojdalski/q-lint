@@ -291,6 +291,36 @@ s:kg[1;2]
     );
 }
 
+// #2966: a call whose brackets are on the next, indented line - which
+// KDB-X 5 runs as the call - drew no hints.
+#[test]
+fn a_call_whose_brackets_are_on_a_continuation_line_is_hinted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "cc:{[sym;px] px}
+                r:cc
+  [1;2]
+                s:cc / the call
+	[3;
+	 4]
+                t:cc
+[5;6]
+";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(2, 3, "sym:"),
+            hint(2, 5, "px:"),
+            hint(4, 2, "sym:"),
+            hint(5, 2, "px:"),
+            // A bracket at column 0 starts a statement, and calls nothing.
+        ],
+        "{reply}"
+    );
+}
+
 #[test]
 fn inlay_hints_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();

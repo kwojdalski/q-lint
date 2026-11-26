@@ -211,10 +211,37 @@ pub fn glyph_at(code: &str, raw: &str, offset: usize) -> Option<(usize, usize)> 
     (!part_of).then_some((at, len))
 }
 
+/// Where the blanks before `at` begin: the spaces and tabs before it, and
+/// the line ends before those when `at` is on an indented line, which goes
+/// on with the statement of the line above. KDB-X 5 runs `r:f` and then
+/// `  [1;2]` as `r:f[1;2]`, over a blank line or a comment's between them
+/// too, and at a line end in a lambda (#2966).
+fn before_blanks(code: &str, at: usize) -> usize {
+    let same = code[..at].trim_end_matches([' ', '\t']).len();
+    if same < at && code[..same].ends_with('\n') {
+        code[..same].trim_end().len()
+    } else {
+        same
+    }
+}
+
+/// Where the blanks after `at` end, as `before_blanks` reads them: on the
+/// line, or on an indented line after it.
+fn after_blanks(code: &str, at: usize) -> usize {
+    let same = code.len() - code[at..].trim_start_matches([' ', '\t']).len();
+    let next = code.len() - code[at..].trim_start().len();
+    if code[same..].starts_with(['\r', '\n']) && code[..next].ends_with([' ', '\t']) {
+        next
+    } else {
+        same
+    }
+}
+
 /// The bracketed call the cursor at `offset` is in, when what is called is
 /// written as a name: the innermost open `[`, and how many `;` of its own
 /// lie between it and the cursor. A space or a tab may part the name from
-/// its bracket: q 5 reads `f [1;2;3]` as `f[1;2;3]` wherever it is written. A parenthesis starts the count again,
+/// its bracket: q 5 reads `f [1;2;3]` as `f[1;2;3]` wherever it is written,
+/// and so may the end of a line whose next is indented. A parenthesis starts the count again,
 /// since `f[a;(b;c` is still in the second argument; a brace ends the
 /// search, since inside `f[a;{x+` what is being written is a lambda's body.
 /// In a comment nothing is being called, whatever brackets are open above.
@@ -233,10 +260,7 @@ pub fn call_at(code: &str, comments: &str, raw: &str, offset: usize) -> Option<C
             b'(' => argument = 0,
             b'{' => return None,
             b'[' => {
-                let mut end = i;
-                while end > 0 && b" \t".contains(&bytes[end - 1]) {
-                    end -= 1;
-                }
+                let end = before_blanks(code, i);
                 let mut start = end;
                 while start > 0
                     && (bytes[start - 1].is_ascii_alphanumeric()
@@ -389,8 +413,9 @@ pub fn completing(
     })
 }
 
-/// Every call written as a name and its brackets, `f[a;b]` or `f [a;b]`,
-/// with where each argument starts and how long it is, its blanks trimmed:
+/// Every call written as a name and its brackets, `f[a;b]` or `f [a;b]` -
+/// the brackets on an indented line after the name's too - with where each
+/// argument starts and how long it is, its blanks trimmed:
 /// an empty slot, as in a projection, has no length. Nothing in a string, a
 /// comment or a system command, which the code view blanks.
 pub fn bracket_calls(code: &str) -> Vec<BracketCall> {
@@ -406,8 +431,7 @@ pub fn bracket_calls_in(code: &str, shown: &str) -> Vec<BracketCall> {
         if !boundary(code, m.start()) {
             continue;
         }
-        let rest = &code[m.end()..];
-        let open = m.end() + (rest.len() - rest.trim_start_matches([' ', '\t']).len());
+        let open = after_blanks(code, m.end());
         if code.as_bytes().get(open) != Some(&b'[') {
             continue;
         }

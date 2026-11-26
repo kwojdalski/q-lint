@@ -574,6 +574,23 @@ fn a_space_before_the_bracket_still_calls_the_name() {
     assert_eq!(call("x:(a) [1;"), None);
 }
 
+// #2966: only a space or a tab was skipped back from the bracket. KDB-X 5
+// runs `r:pp` and then `  [1;2]` as `r:pp[1;2]`: over a comment, a blank
+// line or a comment line between them, with a tab or CRLF, and at a line
+// end inside a lambda.
+#[test]
+fn a_bracket_on_an_indented_line_calls_the_name_the_line_above_ends_in() {
+    assert_eq!(call("r:f\n  [1;"), Some(("f", 1)));
+    assert_eq!(call("r:.ns.f / note\n\t["), Some((".ns.f", 0)));
+    assert_eq!(call("r:f\r\n  [1;2;"), Some(("f", 2)));
+    assert_eq!(call("r:f\n\n/ why\n  [1;"), Some(("f", 1)));
+    assert_eq!(call("g:{a:f\n  [1;"), Some(("f", 1)));
+    // A line at column 0 starts a statement of its own.
+    assert_eq!(call("r:f\n[1;"), None);
+    // And the line above has to end in a name.
+    assert_eq!(call("r:f;\n  [1;"), None);
+}
+
 #[test]
 fn a_call_goes_on_inside_a_string_left_open() {
     // A `;`, a bracket or a brace in the string is part of it.
