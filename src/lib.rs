@@ -9455,7 +9455,11 @@ fn lint_rules(
         // `xv.pcSplit:xv.i.applyIdx{[pc;n;features;target] ...}` it is the
         // argument of a projection, and the block documents what that
         // projection takes - `function` among it.
-        let lead = &code[code[..at].rfind('\n').map_or(0, |p| p + 1)..at];
+        // After a `q)` prompt too, which the views hold a `;` for: q loads
+        // `q)g:{[a] a}` as the same definition (#2790).
+        let line = code[..at].rfind('\n').map_or(0, |p| p + 1);
+        let prompt = usize::from(source[line..].starts_with("q)"));
+        let lead = &code[line + prompt..at];
         if !re!(r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*\s*::?)?\s*$").is_match(lead) {
             continue;
         }
