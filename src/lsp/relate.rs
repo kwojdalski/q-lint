@@ -632,13 +632,28 @@ fn outgoing(params: &Value, sources: &Sources) -> Value {
         .iter()
         .flat_map(|(_, names)| names.iter().map(String::as_str))
         .collect();
+    // Where each name is read, by the name: asked of every read for every
+    // function they lead to, a script of N one-line functions that calls
+    // each once was N^2 comparisons, 4 s at 32,000 (#2955).
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, (_, names)) in named.iter().enumerate() {
+        for name in names {
+            by_name.entry(name).or_default().push(i);
+        }
+    }
     let mut out = vec![];
     functions(sources, &wanted, |file, target_lines, i, answers| {
-        let places: Vec<&Value> = named
+        // In the order read, each place once though two of the names a
+        // definition answers to are read there.
+        let mut reads: Vec<usize> = answers
             .iter()
-            .filter(|(_, names)| names.iter().any(|name| answers.contains(name)))
-            .map(|(place, _)| place)
+            .filter_map(|name| by_name.get(name.as_str()))
+            .flatten()
+            .copied()
             .collect();
+        reads.sort_unstable();
+        reads.dedup();
+        let places: Vec<&Value> = reads.iter().map(|&read| &named[read].0).collect();
         if !places.is_empty() {
             out.push(json!({"to": file.item(sources, target_lines, i), "fromRanges": places}));
         }

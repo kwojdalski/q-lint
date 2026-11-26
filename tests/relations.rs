@@ -981,6 +981,59 @@ if[1b; c:{f[x]}; d:{g[x]}]
     );
 }
 
+/// The calls out of a script that defines N one-line functions and calls
+/// each once take time in proportion to it: every read was asked of every
+/// function it might lead to, 4 s at 32,000 with every other request
+/// waiting behind it (#2955).
+#[test]
+fn the_calls_out_of_a_file_of_many_functions_take_linear_time() {
+    // The ratio of two sizes, not a bound, as for the speed tests in
+    // tests/core.rs: a fixed bound measures the runner.
+    let time = |n: usize| {
+        let text: String = (0..n)
+            .map(|i| {
+                format!(
+                    "f{i}:{{x}}
+"
+                )
+            })
+            .chain((0..n).map(|i| {
+                format!(
+                    "f{i}[1]
+"
+                )
+            }))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = Server::start(dir.path(), &[("many.q", &text)]);
+        let uri = server.open(dir.path(), "many.q", &text);
+        // The file's own item is the caller of what it calls as it loads.
+        let f0 = server.item(&uri, &text, "f0:", 0);
+        let callers = server.calls("incomingCalls", &f0);
+        let (file, _) = &callers[0];
+        assert_eq!(file["kind"], FILE);
+        let mut ask = || {
+            let started = std::time::Instant::now();
+            let calls = server.result("callHierarchy/outgoingCalls", json!({"item": file}));
+            let elapsed = started.elapsed();
+            assert_eq!(calls.as_array().map(Vec::len), Some(n));
+            elapsed
+        };
+        (0..2).map(|_| ask()).min().unwrap()
+    };
+    // Sizes at which the comparisons were most of the time: reading the
+    // file is the rest, and in proportion to it.
+    let (small, large) = (time(3000), time(24000));
+    eprintln!("3000 functions took {small:?} and 24000 {large:?}");
+    // Linear is 8 times, and measures 9.4 here (0.38 s and 3.6 s in a debug
+    // build); with the comparisons it was 27 (0.60 s and 16.2 s). 16 fails
+    // that, and leaves a loaded runner most of twice the time.
+    assert!(
+        large < small * 16,
+        "3000 functions took {small:?} and 24000 {large:?}"
+    );
+}
+
 #[test]
 fn a_call_by_a_string_is_not_seen_and_a_recursive_one_is() {
     let dir = tempfile::tempdir().unwrap();
