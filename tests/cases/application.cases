@@ -29,6 +29,12 @@ r:{[a;b;c;d;e;f;g;h;[k]] a,b,c,d,e,f,g,h,k}
 === QA004 | applying a niladic function to the empty list
 f:{[] 1};f . ()
 
+=== clean | a dot that ends a number is no apply: `3 4.` is a float vector, indexed with the empty list (KDB-X: 3 4. () is (), #2935)
+b:3 4. ()
+
+=== QA004 | but apart from it, it is (KDB-X: 3 4 . () is 'type)
+b:3 4 . ()
+
 === QA004 | and in brackets, where the trap's handler swallows the 'type (q 5: .[g;()] is 'type, .[g;();{x}] calls the handler)
 f:{[] 1}
 b:.[f;()]

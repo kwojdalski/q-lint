@@ -2366,11 +2366,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                 return None;
             }
             begin = function.len();
+            // Written by `--fix` only where `[]` is that call: after
+            // `count`, a lambda of two arguments or data it would turn a
+            // 'type into a value nobody asked for (#2934).
             (
                 &source[begin..start + m.end()],
                 "[]".into(),
                 "Call with `[]`".into(),
-                true,
+                niladic(&v.code, source, begin),
             )
         }
         // `til 5.0` is 'type; a float with no fraction is the long it spells.
@@ -4081,6 +4084,42 @@ fn grouped(phrase: &str) -> String {
         .map(|(f, p)| if f != p && p != b' ' { b'_' } else { f })
         .collect();
     String::from_utf8(filled).unwrap()
+}
+/// Whether what ends at `end` is a function `[]` calls with nothing: a lambda
+/// written out that takes one argument at most, or a name this file gives
+/// one such lambda and nothing else. q 5: `{[] 42}[]` is 42 and `{1}[]` 1,
+/// while `{[a;b] a+b}[]` is a projection, `count[]` 1 and `d[]` the data
+/// `d` (#2934).
+fn niladic(code: &str, source: &str, end: usize) -> bool {
+    let unary = |open: usize| {
+        matching(code, open, b'{', b'}')
+            .is_some_and(|close| lambda_rank(code, source, open, close) <= 1)
+    };
+    if code[..end].ends_with('}') {
+        let mut depth = 0i32;
+        for (i, b) in code.as_bytes()[..end].iter().enumerate().rev() {
+            match b {
+                b'}' => depth += 1,
+                b'{' if depth == 1 => return unary(i),
+                b'{' => depth -= 1,
+                _ => {}
+            }
+        }
+        return false;
+    }
+    let Some(name) = re!(r"\.?[A-Za-z][A-Za-z0-9_.]*$").find(&code[..end]) else {
+        return false;
+    };
+    if !boundary(code, name.start()) || shadowed(code, source, name.start(), name.as_str()) {
+        return false;
+    }
+    let assigned = regex::Regex::new(&format!(r"{}[ \t]*::?", regex::escape(name.as_str())))
+        .unwrap()
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()))
+        .map(|m| past_blanks(code, m.end()))
+        .collect::<Vec<_>>();
+    matches!(assigned[..], [at] if code[at..].starts_with('{') && unary(at))
 }
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
@@ -10604,9 +10643,14 @@ fn lint_rules(
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
         // and the whole of the right operand: `. (),y` applies to a list.
         // Reported at the `.` itself, which is where the fix edits.
+        // Nor is a dot that ends a number an apply: `3 4.` is the float
+        // vector, and q 5 `3 4. ()` indexes it with the empty list, `()`
+        // (#2935).
         for m in re!(r"\.\s*\(\s*\)").find_iter(line) {
             if re!(r"\(\s*\)$").is_match(&literals[m.range()])
                 && operand_ends(code, &v.comments, offset + m.end())
+                && !(line[..m.start()].ends_with(|c: char| c.is_ascii_digit())
+                    && ends_in_number(&line[..m.start()]))
             {
                 add(offset + m.start(), "QA004", "`. ()`".into());
             }
