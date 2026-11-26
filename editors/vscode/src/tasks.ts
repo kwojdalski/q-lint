@@ -32,6 +32,7 @@
 // read as any other error's (#2001).
 
 import * as path from "node:path";
+import { argText, splitArgs } from "./processes";
 
 export const TASK_TYPE = "q" as const;
 
@@ -78,7 +79,8 @@ export function readTaskDefinition(raw: unknown): QTaskDefinition | undefined {
   if (d === null || typeof d !== "object" || d.type !== TASK_TYPE || typeof d.script !== "string" || d.script.trim() === "") {
     return undefined;
   }
-  const args = Array.isArray(d.args) ? d.args.filter((a): a is string => typeof a === "string") : undefined;
+  // A number is its text, and one string is split as a launch's is (#2521).
+  const args = Array.isArray(d.args) ? d.args.map(argText).filter((a) => a !== undefined) : typeof d.args === "string" ? splitArgs(d.args) : undefined;
   return { type: TASK_TYPE, script: d.script.trim(), ...(args !== undefined && args.length > 0 ? { args } : {}) };
 }
 

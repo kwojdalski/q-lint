@@ -76,7 +76,7 @@ import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, r
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
-import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, plainMessage } from "./history";
+import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
 import { blockAt, scriptCode, selectionCode, statements } from "./statements";
@@ -481,7 +481,7 @@ export class QTerminals {
     // The folder's own program or env file, in a folder that is not trusted,
     // is the repository's: refused, as dotenvFor and the launcher do (#1825).
     const trusted = workspace.isTrusted !== false;
-    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath ?? "", os.homedir(), trusted) === undefined) {
+    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir(), trusted) === undefined) {
       void window.showErrorMessage(plainMessage(`q-lint: ${relativeBinaryProblem(settings.qBinary, trusted)}.`));
       return undefined;
     }
@@ -745,6 +745,9 @@ export class Live {
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
   private shared: Discovered | undefined;
+  /// The folder (its URI) whose list names each shared process, by its
+  /// qualified label: what its password is kept by (#2513).
+  private sharedFolders = new Map<string, string>();
   private sharedWatcher: Disposable | undefined;
   /// Bumped by each read, so a slow one does not overwrite a later one.
   private sharedRead = 0;
@@ -1005,10 +1008,17 @@ export class Live {
   /// Where `process`'s password is kept: a shared-list process's by this
   /// folder and its address too (#1824).
   private passwordKey(process: Pick<Process, "label" | "server"> & Partial<Pick<Process, "host" | "port" | "user" | "tls" | "ssh">>): string {
-    const folder = workspace.workspaceFolders?.[0]?.uri.toString();
     return process.server === SHARED_SOURCE && process.host !== undefined && process.port !== undefined
-      ? sharedPasswordKey({ ...process, host: process.host, port: process.port }, folder ?? "")
+      ? sharedPasswordKey({ ...process, host: process.host, port: process.port }, this.sharedFolder(process.label))
       : passwordKey(process);
+  }
+
+  /// The folder (its URI) whose shared list names the process `label`
+  /// (qualified, `.qlint/rdb`): not the first folder, so opening the
+  /// repository in another workspace, or reordering its folders, keeps its
+  /// password (#2513). The first folder's for one no list names now.
+  sharedFolder(label: string): string {
+    return this.sharedFolders.get(label) ?? workspace.workspaceFolders?.[0]?.uri.toString() ?? "";
   }
 
   /// Read the shared list again. A process whose host, port or user changed
@@ -1058,12 +1068,18 @@ export class Live {
         }
         const merged = mergeShared(lists, workspace.workspaceFolders?.[0]?.uri.fsPath);
         const read = { ...merged, problems: [...merged.problems, ...broken] };
+        const uris = new Map(found.map(({ folder }) => [folder.uri.fsPath, folder.uri.toString()]));
+        const folderOf = new Map(read.processes.map((p, i) => [qualified(SHARED_SOURCE, p.label), uris.get(read.folders[i]) ?? ""]));
         const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
         const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
         for (const label of passwordsToForget(seen, read.processes)) {
           const was = seen.find((p) => p.label === label);
           if (was !== undefined) {
-            await this.context.secrets.delete(this.passwordKey({ ...was, label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+            // Kept by the folder it was read from, or, read in another
+            // window, by the one that names it now.
+            const key = qualified(SHARED_SOURCE, label);
+            const folder = this.sharedFolders.get(key) ?? folderOf.get(key) ?? this.sharedFolder(key);
+            await this.context.secrets.delete(sharedPasswordKey({ ...was, label: key }, folder));
           }
         }
         await this.context.workspaceState.update(
@@ -1083,6 +1099,7 @@ export class Live {
           return;
         }
         this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
+        this.sharedFolders = folderOf;
         if (read.secrets.length > 0) {
           void window.showWarningMessage(plainMessage(secretsWarning(read.secrets)));
         }
@@ -1223,8 +1240,7 @@ export class Live {
   }
 
   private storedHistory(): HistoryEntry[] {
-    const stored = this.context.globalState.get<unknown>(HISTORY_KEY, []);
-    return Array.isArray(stored) ? (stored as HistoryEntry[]) : [];
+    return parseQueryHistory<HistoryEntry>(this.context.globalState.get<unknown>(HISTORY_KEY, []));
   }
 
   /// The history through the Query History view's filter.
@@ -2004,7 +2020,7 @@ export class Live {
         }
         chosen = code.trim() === "" ? undefined : { kind: "code", code };
       } else if (picked.choice === "file") {
-        const folder = workspace.workspaceFolders?.[0]?.uri;
+        const folder = workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri;
         const files = await window.showOpenDialog({
           title: `Connect script of ${process.label}: q file`,
           canSelectMany: false,
@@ -2012,6 +2028,15 @@ export class Live {
           ...(folder !== undefined ? { defaultUri: folder } : {}),
         });
         if (files === undefined || files.length === 0) {
+          return;
+        }
+        // Kept by its path, which is read from the disk at each connect: a
+        // file of a virtual folder (vscode-vfs) would be read at a local
+        // path that is not it (#2515).
+        if (files[0].scheme !== "file") {
+          void window.showErrorMessage(
+            plainMessage(`q-lint: ${files[0].toString()} is not a file on disk, which a connect script is read from at every connect; its connect script was not set. Pick a file on disk, or set the script as q code.`),
+          );
           return;
         }
         // Kept whole: a saved process is every window's, and a path
@@ -2077,7 +2102,9 @@ export class Live {
         failed(`${script.file} is relative to the workspace folder, which is not trusted: it was not run. Name the file by its full path.`);
         return;
       }
-      const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
+      // A relative one is the first folder on disk's, never a virtual
+      // folder's path read from the local disk (#2515).
+      const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath);
       if (file === undefined) {
         failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
         return;
@@ -2495,7 +2522,8 @@ export class Live {
     // Stopped with the connect it is for: by Disconnect, or a connect elsewhere (#2127).
     const output = await runCredentialCommand(process.credentialCommand, {
       signal,
-      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
+      // A folder on disk: a virtual one's fsPath is no directory (#2514).
+      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);

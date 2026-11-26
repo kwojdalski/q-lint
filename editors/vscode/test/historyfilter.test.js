@@ -236,6 +236,41 @@ test("two windows recording queries keep each other's, and Clear in one holds in
   assert.deepStrictEqual(a.history().map((e) => e.code), ["after clear"]);
 });
 
+// A stored entry that is null, or has no string code, threw at every read
+// and at every query recorded after it (#2509).
+test("a malformed stored history entry is dropped, and the history still reads and records", async (t) => {
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const good = { process: "p", code: "til 3", at: "2026-11-24T10:00:00.000Z", millis: 1, outcome: "ok" };
+  for (const bad of [null, "til 4", 7, { process: "p", at: good.at, millis: 1, outcome: "ok" }, { ...good, code: 5 }, { ...good, at: undefined }, { ...good, process: null }]) {
+    await context.globalState.update("q-lint.queryHistory", [good, bad]);
+    assert.deepStrictEqual(live.history().map((e) => e.code), ["til 3"], JSON.stringify(bad));
+  }
+  await live.record({ ...good, code: "1+1", at: "2026-11-24T10:00:05.000Z" });
+  assert.deepStrictEqual(context.globalState.get("q-lint.queryHistory").map((e) => e.code), ["1+1", "til 3"]);
+});
+
+// A query running when Clear was run was dropped at every read after the
+// one that recorded it: its start, not its end, was before the Clear (#2555).
+test("a query still running when the history is cleared is kept once it ends", async (t) => {
+  stub.reset();
+  const context = stub.newContext();
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const sent = Date.now();
+  await live.record({ process: "p", code: "before", at: new Date(sent - 5000).toISOString(), millis: 10, outcome: "ok" });
+  await new Promise((r) => setTimeout(r, 5));
+  await live.clearHistory();
+  await new Promise((r) => setTimeout(r, 5));
+  await live.record({ process: "p", code: "sleep 1.5", at: new Date(sent - 1000).toISOString(), millis: Date.now() - sent + 1000, outcome: "ok" });
+  assert.deepStrictEqual(live.history().map((e) => e.code), ["sleep 1.5"]);
+  assert.deepStrictEqual(live.history().map((e) => e.code), ["sleep 1.5"]);
+  await live.record({ process: "p", code: "2+2", at: new Date().toISOString(), millis: 1, outcome: "ok" });
+  assert.deepStrictEqual(live.history().map((e) => e.code), ["2+2", "sleep 1.5"]);
+});
+
 // Clear run while the clock was ahead stamped a moment still to come: every
 // query sent after the clock was put right was "at or before" it (#1882).
 test("a Clear stamp from a clock that was ahead does not drop the queries sent since", async (t) => {

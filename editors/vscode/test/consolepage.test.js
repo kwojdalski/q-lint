@@ -237,6 +237,28 @@ test("Ctrl+R searches the history through the extension, and a key other than ty
   assert.deepStrictEqual(page.posted.at(-1), { type: "enter", code: "select from t" });
 });
 
+// Up after a search went to the newest entry, and Down did nothing: the
+// walk did not start from the entry found (#2497).
+test("after Ctrl+R finds an entry, Up and Down walk the history on from it, back to the draft", () => {
+  const page = load(true);
+  const input = page.find("textarea")[0];
+  page.send({ type: "all", entries: [], history: ["c3", "b2", "a1 target", "z0"] });
+  input.value = "draft";
+  input.selectionStart = input.selectionEnd = 5;
+  page.key("r", { ctrlKey: true });
+  page.key("a");
+  page.send({ type: "found", index: 2, code: "a1 target" });
+  assert.strictEqual(input.value, "a1 target");
+  page.key("ArrowUp");
+  assert.strictEqual(input.value, "z0");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  assert.strictEqual(input.value, "b2");
+  page.key("ArrowDown");
+  page.key("ArrowDown");
+  assert.strictEqual(input.value, "draft");
+});
+
 test("a finished run is announced in a polite live region, its lines and time or its error; off, there is none (#1188)", () => {
   const page = load(true);
   const region = () => page.find("div").find((d) => d.attributes["aria-live"] === "polite");

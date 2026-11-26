@@ -218,6 +218,22 @@ test("a credential command runs in the workspace folder only when it is trusted,
 
 // The command ran with no way to stop it: a connect elsewhere waited for it
 // to finish, and Disconnect or the timeout left what it started running (#2127).
+// The first folder's fsPath, a vscode-vfs one's /acme/desk, is not on disk:
+// the spawn failed, and the connect said the command could not run (#2514).
+test("a credential command runs in the first folder on disk, not a virtual first folder's path", { skip: process.platform === "win32" }, async (t) => {
+  const vscode = require("vscode");
+  const q = await fakeQ(1);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
+  const plain = vscode.workspace.workspaceFolders;
+  t.after(() => (q.close(), fs.rmSync(dir, { recursive: true, force: true }), (vscode.workspace.workspaceFolders = plain)));
+  const marker = path.join(dir, "cwd");
+  const { live } = await setUp(t, [{ label: "a", host: "127.0.0.1", port: q.port, tags: [], credentialCommand: `pwd -P > '${marker}'; echo svc:pw` }]);
+  const virtual = { scheme: "vscode-vfs", authority: "github", path: "/acme/desk", fsPath: "/acme/desk", toString: () => "vscode-vfs://github/acme/desk" };
+  vscode.workspace.workspaceFolders = [{ uri: virtual, name: "desk", index: 0 }, { uri: vscode.Uri.file(dir), name: path.basename(dir), index: 1 }];
+  assert.strictEqual(await live.connectTo("a"), true, JSON.stringify(stub.messages));
+  assert.strictEqual(fs.readFileSync(marker, "utf8").trim(), fs.realpathSync(dir));
+});
+
 test("a credential command stopped or timed out is ended with everything it started (#2127)", { skip: process.platform === "win32" }, async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-creds-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

@@ -210,6 +210,12 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       problems.push(`${where} (${label}): ${bad}`);
       return;
     }
+    // "true", 1 or "yes" read as no TLS sent the handshake's password in
+    // cleartext to a process meant to be reached over TLS (#2520).
+    if (e.tls !== undefined && typeof e.tls !== "boolean") {
+      problems.push(`${where} (${label}): tls is ${JSON.stringify(e.tls)}, not true or false, so it was skipped rather than connected to without TLS.`);
+      return;
+    }
     if (seen.has(label)) {
       problems.push(`${where} (${label}) repeats a label, and was skipped.`);
       return;
@@ -266,6 +272,14 @@ export function serverTypes(value: unknown): string[] | undefined {
   return types.length > 0 ? types : undefined;
 }
 
+/// An argument or a variable's value as written: a string as it is, a
+/// finite number or a boolean as JSON writes it. `["-p", 5010]` was read as
+/// a bare `-p`, and q started with its port disabled (#2521). Undefined for
+/// anything else.
+export function argText(value: unknown): string | undefined {
+  return typeof value === "string" ? value : (typeof value === "number" && Number.isFinite(value)) || typeof value === "boolean" ? String(value) : undefined;
+}
+
 /// A launch definition as written, or undefined when it is none: every field
 /// is optional, but the object must be one.
 export function launchOf(value: unknown): Launch | undefined {
@@ -274,12 +288,13 @@ export function launchOf(value: unknown): Launch | undefined {
   }
   const v = value as Record<string, unknown>;
   const text = (x: unknown): string | undefined => (typeof x === "string" && x.trim() !== "" ? x.trim() : undefined);
-  const args = Array.isArray(v.args) ? v.args.filter((a): a is string => typeof a === "string") : typeof v.args === "string" ? splitArgs(v.args) : [];
+  const args = Array.isArray(v.args) ? v.args.map(argText).filter((a) => a !== undefined) : typeof v.args === "string" ? splitArgs(v.args) : [];
   const env: Record<string, string> = {};
   if (typeof v.env === "object" && v.env !== null && !Array.isArray(v.env)) {
     for (const [k, x] of Object.entries(v.env as Record<string, unknown>)) {
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof x === "string") {
-        Object.defineProperty(env, k, { value: x, enumerable: true, writable: true, configurable: true });
+      const value = argText(x);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && value !== undefined) {
+        Object.defineProperty(env, k, { value, enumerable: true, writable: true, configurable: true });
       }
     }
   }

@@ -89,7 +89,10 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
 /// (#2511). And in a folder other than `first`, which a connect
 /// script and a launch are otherwise read against, a relative one is made
 /// that folder's. Problems are named by folder when there are several.
-export function mergeShared(lists: { name: string; path: string; read: SharedList }[], first: string | undefined): SharedList {
+/// `folders` is the `path` of the list each process came from, in the
+/// processes' order: what its password and scratch buffer are kept by
+/// (#2513).
+export function mergeShared(lists: { name: string; path: string; read: SharedList }[], first: string | undefined): SharedList & { folders: string[] } {
   const taken = new Set<string>();
   const own = (file: string, dir: string): string => (path.isAbsolute(file) || file.startsWith("~") ? file : path.join(dir, file));
   const listing = new Map<string, number>();
@@ -102,7 +105,14 @@ export function mergeShared(lists: { name: string; path: string; read: SharedLis
   const processes = lists.flatMap(({ name, path: dir, read }) =>
     read.processes.map((p) => {
       const shared = (listing.get(p.label) ?? 0) > 1;
-      const label = !shared && !taken.has(p.label) ? p.label : `${p.label} (${names.filter((n) => n === name).length > 1 ? dir : name})`;
+      const qualifier = names.filter((n) => n === name).length > 1 ? dir : name;
+      let label = !shared && !taken.has(p.label) ? p.label : `${p.label} (${qualifier})`;
+      // A list may name `rdb (B)` itself: numbered until free, so no two
+      // processes share a label and a lookup by it never finds the wrong
+      // one (#2512).
+      for (let n = 2; taken.has(label); n++) {
+        label = `${p.label} (${qualifier} ${n})`;
+      }
       taken.add(label);
       if (dir === first) {
         return { ...p, label };
@@ -120,6 +130,7 @@ export function mergeShared(lists: { name: string; path: string; read: SharedLis
     processes,
     problems: lists.flatMap(({ name, read }) => read.problems.map((problem) => (named ? `${name}: ${problem}` : problem))),
     secrets: lists.flatMap(({ read }) => read.secrets),
+    folders: lists.flatMap(({ path: dir, read }) => read.processes.map(() => dir)),
   };
 }
 

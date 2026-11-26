@@ -20,11 +20,12 @@ export const HISTORY_CHARS = 500_000;
 /// first, then what `kept` - this window's copy, which a read just after a
 /// write can be ahead of - and `stored` - the shared list, which every
 /// window writes - hold between them, each entry once, newest first, none
-/// sent at or before `cleared` (when Clear was last run, in any window), at
+/// ended at or before `cleared` (when Clear was last run, in any window): a
+/// query still running at the Clear is recorded after it, and kept (#2555), at
 /// most `limit`, and no more than `chars` characters of code between them:
 /// the newest that fit. A query longer than `chars` by itself is left out,
 /// never kept cut - Run Again would run something else (#1880).
-export function mergedHistory<T extends { at: string; process: string; code: string }>(
+export function mergedHistory<T extends { at: string; process: string; code: string; millis?: number }>(
   entry: T | undefined,
   kept: readonly T[],
   stored: readonly T[],
@@ -39,7 +40,7 @@ export function mergedHistory<T extends { at: string; process: string; code: str
       continue;
     }
     const key = `${e.at}\u0000${e.process}\u0000${e.code}`;
-    if (seen.has(key) || (cleared !== undefined && e.at <= cleared && e !== entry)) {
+    if (seen.has(key) || (cleared !== undefined && endedAt(e) <= cleared && e !== entry)) {
       continue;
     }
     seen.add(key);
@@ -50,6 +51,28 @@ export function mergedHistory<T extends { at: string; process: string; code: str
   let room = chars;
   const fits = out.findIndex((e) => (room -= e.code.length) < 0);
   return out.slice(0, Math.min(limit, fits < 0 ? out.length : fits));
+}
+
+/// When an entry's query ended, as an ISO string: `at` and its `millis`
+/// on; `at` itself when either cannot be read.
+function endedAt(e: { at: string; millis?: number }): string {
+  const sent = Date.parse(e.at);
+  return Number.isNaN(sent) || typeof e.millis !== "number" || !Number.isFinite(e.millis) || e.millis <= 0
+    ? e.at
+    : new Date(sent + e.millis).toISOString();
+}
+
+/// The query history as `globalState` holds it: only entries that are
+/// objects with a string `code`, `process` and `at`. One `null`, or one
+/// without code, threw at every read and every query recorded after it, so
+/// nothing new was ever stored (#2509); the REPL's history is read so too.
+export function parseQueryHistory<T extends { at: string; process: string; code: string }>(stored: unknown): T[] {
+  return Array.isArray(stored)
+    ? stored.filter((e): e is T => {
+        const entry = e as Record<string, unknown> | null;
+        return typeof entry === "object" && entry !== null && typeof entry.code === "string" && typeof entry.process === "string" && typeof entry.at === "string";
+      })
+    : [];
 }
 
 /// When Clear was last run, as a window recording a query sent at `at`
