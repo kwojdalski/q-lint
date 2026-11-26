@@ -536,6 +536,38 @@
     return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };
   }
 
+  /// An SVG chart's x labels, `items` of {x, text} in x's order, at height
+  /// `y` of an image `W` wide. Each is centred on its x, but one that would
+  /// pass the image's edge is anchored at the edge instead, and one that
+  /// would touch the label before it is left out - widths being CHAR a
+  /// character. A timestamp is 29 of them, and centred every 90 pixels each
+  /// covered half of the next, the first cut at the image's left (#3131).
+  function xLabels(items, y, W, fill) {
+    const out = [];
+    let free = 0;
+    items.forEach(function (item) {
+      const text = String(item.text);
+      const w = text.length * CHAR;
+      let anchor = "middle";
+      let x = item.x;
+      let from = x - w / 2;
+      if (from < 2) {
+        anchor = "start";
+        x = from = 2;
+      } else if (x + w / 2 > W - 2) {
+        anchor = "end";
+        x = W - 2;
+        from = x - w;
+      }
+      if (text === "" || from < free) {
+        return;
+      }
+      free = from + w + 6;
+      out.push('<text x="' + x.toFixed(1) + '" y="' + y + '" text-anchor="' + anchor + '" fill="' + fill + '">' + xml(text) + "</text>");
+    });
+    return out;
+  }
+
   /// The chart chartData() describes as an SVG document, drawn here rather
   /// than by Chart.js, so it is vector graphics: axes with round ticks, each
   /// series as a line (filled for an area, stepped for a step), bars,
@@ -633,17 +665,21 @@
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
       xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };
-      t.values.forEach(function (v) {
-        const label = x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step);
-        out.push('<text x="' + xOf(v).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(label) + "</text>");
+      const labels = t.values.map(function (v) {
+        return { x: xOf(v), text: x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step) };
       });
+      out.push.apply(out, xLabels(labels, top + ph + 16, W, xml(fg)));
     } else {
       const band = n > 0 ? pw / n : pw;
       xOf = function (i) { return left + band * (i + 0.5); };
-      const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / 90))));
+      // A label every 90 pixels, or as far apart as the longest is wide (#3131).
+      const widest = data.labels.reduce(function (w, l) { return Math.max(w, String(l).length); }, 0);
+      const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / Math.max(90, widest * CHAR + 12)))));
+      const labels = [];
       for (let i = 0; i < n; i += every) {
-        out.push('<text x="' + xOf(i).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(data.labels[i]) + "</text>");
+        labels.push({ x: xOf(i), text: data.labels[i] });
       }
+      out.push.apply(out, xLabels(labels, top + ph + 16, W, xml(fg)));
     }
     const colour = function (i) { return look.colours[i % look.colours.length]; };
     const band = n > 0 ? pw / n : pw;
@@ -768,6 +804,7 @@
     WHOLE: WHOLE,
     short: short,
     yMargin: yMargin,
+    xLabels: xLabels,
     xml: xml,
   };
   if (typeof module !== "undefined" && module.exports) {

@@ -638,9 +638,9 @@
       out.push('<text x="' + (left - 6) + '" y="' + f(Y(v)) + '" dy="0.32em" text-anchor="end" fill="' + fg + '">' + xml(C.short(v, yt.step)) + "</text>");
     });
     const xt = C.ticks(xr.lo, xr.hi, spec.xWhole);
-    xt.values.filter(function (v) { return v >= xr.lo && v <= xr.hi; }).forEach(function (v) {
-      out.push('<text x="' + f(X(v)) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.xText ? spec.xText(v, xt.step) : C.short(v, xt.step)) + "</text>");
-    });
+    out.push.apply(out, C.xLabels(xt.values.filter(function (v) { return v >= xr.lo && v <= xr.hi; }).map(function (v) {
+      return { x: X(v), text: spec.xText ? spec.xText(v, xt.step) : C.short(v, xt.step) };
+    }), top + ph + 16, W, fg));
     out.push('<rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '" fill="none" stroke="' + border + '"/>');
     out.push('<g clip-path="url(#plot' + (opts.at || 0) + ')">');
     if (spec.outline) {

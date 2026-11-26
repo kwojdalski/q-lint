@@ -56,7 +56,7 @@ test("a date, month, minute or second x axis ticks whole units, each label once 
   const M = require("../media/chartmore.js");
   const look = { colours: ["#f00", "#0f0"] };
   const g = (type, vals) => ({ columns: [{ name: "d", numeric: false, temporal: true, type }, { name: "px", numeric: true }], cells: [vals.map(String), ["1", "2", "3"].slice(0, vals.length)], values: [vals, [1, 2, 3].slice(0, vals.length)] });
-  const labels = (svg) => [...svg.matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+  const labels = (svg) => [...svg.matchAll(/ y="[\d.]+" text-anchor="\w+" fill[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
   for (const [type, vals] of [[14, [9800, 9801]], [13, [318, 319]], [17, [600, 601]], [18, [36000, 36001]]]) {
     const grid = g(type, vals);
     const ls = labels(C.chartSvg(grid, [0, 1], "scatter", C.chartData(grid, [0, 1], "scatter", [1], 20), look, {}));
@@ -78,7 +78,7 @@ test("a timestamp, timespan or time x axis ticks at least one unit, or one doubl
   const g = (type, vals) => ({ columns: [{ name: "t", numeric: false, temporal: true, type }, { name: "y", numeric: true }], cells: [vals.map(String), vals.map((_, i) => String(i))], values: [vals, vals.map((_, i) => i)] });
   const labels = (grid) => {
     const rows = grid.values[0].map((_, i) => i);
-    return [...C.chartSvg(grid, rows, "scatter", C.chartData(grid, rows, "scatter", [1], 20), { colours: ["#f00"] }, {}).matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+    return [...C.chartSvg(grid, rows, "scatter", C.chartData(grid, rows, "scatter", [1], 20), { colours: ["#f00"] }, {}).matchAll(/ y="[\d.]+" text-anchor="\w+" fill[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
   };
   // 2024.01.01D12:00:00 and 2 ns later.
   const t0 = 757425600000000000;
@@ -212,4 +212,28 @@ test("a value of a million, or under a thousandth, is in plain digits where they
   assert.ok(labels.length > 1 && labels.every(([, t]) => /^1234567890\d\d(\.\d)?$/.test(t)), JSON.stringify(labels));
   labels.forEach(([x, t]) => assert.ok(x - t.length * 6.6 >= 0, t + " starts at " + (x - t.length * 6.6)));
   assert.strictEqual(C.yMargin(["0", "10"]), 64, "the margin short labels always had");
+});
+
+test("a saved chart's x labels are as far apart as they are wide, and none passes the image's edge (#3131)", () => {
+  // Where each x label's text runs from and to, at 6.6 px a character.
+  const spans = (svg, W) => [...svg.matchAll(/<text x="([\d.-]+)" y="[\d.]+" text-anchor="(\w+)" fill[^>]*>([^<]*)</g)].filter((m) => /\d\d/.test(m[3])).map((m) => {
+    const w = m[3].length * 6.6;
+    const from = Number(m[1]) - (m[2] === "middle" ? w / 2 : m[2] === "end" ? w : 0);
+    assert.ok(from >= 0 && from + w <= W, m[3] + " runs " + from + " to " + (from + w));
+    return [from, from + w];
+  });
+  const apart = (s) => s.every(([from], i) => i === 0 || from > s[i - 1][1]);
+  const look = { colours: ["#f00"] };
+  // A hundred timestamps a minute apart: labels of 29 characters.
+  const stamps = [...Array(100).keys()].map((i) => "2024.01.01D" + String(9 + Math.floor((30 + i) / 60)).padStart(2, "0") + ":" + String((30 + i) % 60).padStart(2, "0") + ":00.000000000");
+  const g = { columns: [{ name: "time", numeric: false, temporal: true, type: 12 }, { name: "px", numeric: true, type: 9 }], cells: [stamps, stamps.map((_, i) => String(i))], values: [stamps.map((_, i) => 7.5e17 + i * 6e10), stamps.map((_, i) => i)] };
+  const rows = [...stamps.keys()];
+  const line = spans(C.chartSvg(g, rows, "line", C.chartData(g, rows, "line", [1], 20), look, { width: 800, height: 450 }), 800);
+  assert.ok(line.length >= 3 && apart(line), JSON.stringify(line));
+  const scatter = spans(C.chartSvg(g, rows, "scatter", C.chartData(g, rows, "scatter", [1], 20), look, { width: 800, height: 450 }), 800);
+  assert.ok(scatter.length >= 2 && apart(scatter), JSON.stringify(scatter));
+  // Short labels keep a label every 90 pixels, each centred.
+  const few = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }], cells: [["aa", "bb", "cc"], ["1", "3", "2"]], values: [null, [1, 3, 2]] };
+  const svg = C.chartSvg(few, [0, 1, 2], "bar", C.chartData(few, [0, 1, 2], "bar", [1], 20), look, {});
+  assert.deepStrictEqual([...svg.matchAll(/text-anchor="middle" fill[^>]*>([^<]*)</g)].map((m) => m[1]), ["aa", "bb", "cc", "s"]);
 });
