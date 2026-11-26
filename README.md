@@ -142,7 +142,8 @@ to replace code that could only fail.
 
 Some rewrites change behaviour or guess at intent, so they remain editor Quick
 Fixes that you choose individually: `&&` → `&`, `||` → `|` (QE004), `reverse asc` →
-`desc` (QR001: they differ on a dictionary's tied keys), `distinct asc distinct` →
+`desc` (QR001: they differ on a dictionary's tied keys, and `asc` for `reverse desc`
+marks its result as sorted, `` `s# ``, where `reverse desc` leaves it plain), `distinct asc distinct` →
 `asc distinct` (QR003: the attribute differs on a table), a symbol given to
 `ss`/`ssr` → a string (QT007), dropping a lambda's trailing `;` so it returns its last
 value (QB012), `a -1` → `a - 1` (QB010), a string compared with `=` in a filter → `like`

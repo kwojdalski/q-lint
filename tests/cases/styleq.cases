@@ -478,6 +478,14 @@ ratio:{[tape] tape}
 / @return gaps
 gaps:{[fromts] fromts}
 
+=== QS007 profile: styleq | a definition after a `q)` prompt is the same definition (#2790)
+/ @param zz nothing
+q)g:{[a] a}
+
+=== clean profile: styleq | and takes the parameter its block names (#2790)
+/ @param a something
+q)g:{[a] a}
+
 === QS007 QS007 profile: styleq | nor does an anonymous lambda inside another function's body make it another's (#2729)
 / @param t table
 / @param c column

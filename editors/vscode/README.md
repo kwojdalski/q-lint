@@ -1656,9 +1656,10 @@ is sent to the connected process only on **Run**, through the read-only
 guard, as it assigns a global. The process reads the file by its path, so it
 must run on this machine, or the path be changed in the editor first.
 
-**Column formats.** A column whose name ends in one of these suffixes (any
-case, after the last `_`) is shown formatted, so the query decides how its
-result looks. The header shows the name without the suffix, which stays in
+**Column formats.** A column whose name ends in one of these suffixes (in
+upper case, after the last `_`) is shown formatted, so the query decides how
+its result looks. A lower-case ending is no suffix: `order_num` and
+`zip_code` are shown as q writes them. The header shows the name without the suffix, which stays in
 its tooltip, and a cell's tooltip is q's own text:
 
 | Suffix | Shown as |

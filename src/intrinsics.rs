@@ -14,6 +14,8 @@ enum Kind {
     Byte,
     /// A date, month, time, timespan, timestamp or datetime, unsuffixed.
     Temporal,
+    /// The guid null, `0Ng`: the one guid q reads as a literal.
+    Guid,
 }
 struct Literal {
     kind: Kind,
@@ -94,6 +96,19 @@ fn literal(s: &str) -> Option<Literal> {
             kind: Kind::Bool,
             vector: s.len() > 2,
             len: s.len() - 1,
+            negative: false,
+            short_integer: false,
+            integer_null: false,
+        });
+    }
+    // The guid null, in either case, and an atom only: q 5 `type 0Ng` and
+    // `type 0ng` are -2h, while `0Wg`, `-0Ng` and `0Ng 0Ng` do not parse
+    // (#2784).
+    if matches!(s, "0Ng" | "0ng") {
+        return Some(Literal {
+            kind: Kind::Guid,
+            vector: false,
+            len: 1,
             negative: false,
             short_integer: false,
             integer_null: false,
@@ -737,6 +752,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             {
                 Some(("QT016", "Numeric math cannot operate on a symbol literal"))
             }
+            // Nor on the guid null: q 5 `neg 0Ng` and `abs 0Ng` are 'type
+            // (#2784).
+            "sqrt" | "log" | "exp" | "abs" | "neg" | "sin" | "cos" | "tan" | "acos" | "asin"
+            | "atan" | "reciprocal" | "ceiling" | "signum"
+                if value.kind == Kind::Guid =>
+            {
+                Some(("QT016", "Numeric math cannot operate on a guid literal"))
+            }
             // A null window too, though `mmin` and `mmax` take one: q 5
             // `0N mavg x` is 'type and `0N mmin x` is x (#2245).
             "mavg" | "msum" | "mcount" | "mdev" if value.integer_null => {
@@ -746,7 +769,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 if value.vector
                     || matches!(
                         value.kind,
-                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal | Kind::Guid
                     ) =>
             {
                 Some(("QT017", "Moving-window size must be an integer atom"))
@@ -754,10 +777,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
 
             // A symbol atom runs - `til` is `key` there and lists a
             // namespace - and so does a byte atom. Any vector, a string of
-            // any length, a float and a temporal atom are 'type.
+            // any length, a float, a temporal atom and the guid null are
+            // 'type.
             "til"
                 if value.vector
-                    || matches!(value.kind, Kind::Float | Kind::Char | Kind::Temporal) =>
+                    || matches!(
+                        value.kind,
+                        Kind::Float | Kind::Char | Kind::Temporal | Kind::Guid
+                    ) =>
             {
                 Some(("QT008", "til needs an integer atom, not this literal"))
             }
@@ -772,8 +799,10 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             // A date, month, time or timespan is no count: q 5 `where 12:00
             // 13:00` and `where 0D01 0D02` are 'type (#736).
             "where"
-                if matches!(value.kind, Kind::Float | Kind::Symbol | Kind::Temporal)
-                    || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
+                if matches!(
+                    value.kind,
+                    Kind::Float | Kind::Symbol | Kind::Temporal | Kind::Guid
+                ) || (matches!(value.kind, Kind::Char | Kind::Byte) && value.len > 0)
                     || (matches!(value.kind, Kind::Integer | Kind::Bool) && !value.vector)
                     || value.short_integer =>
             {
@@ -801,6 +830,13 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                             name,
                             "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
                         )))
+                    // The guid null as a symbol atom is: q 5 `sum 0Ng` runs
+                    // and `avg 0Ng` is 'type (#2784).
+                    || (value.kind == Kind::Guid
+                        && matches!(
+                            name,
+                            "avg" | "med" | "dev" | "var" | "sdev" | "svar" | "all" | "any" | "avgs"
+                        ))
                     // A string is numeric to `sum`, `avg` and `ratios`, and
                     // not to these five (q 5: `avgs "ab"` is 'type, #606).
                     || (value.kind == Kind::Char
@@ -835,7 +871,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 if value.vector
                     || matches!(
                         value.kind,
-                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal
+                        Kind::Float | Kind::Symbol | Kind::Char | Kind::Temporal | Kind::Guid
                     ) =>
             {
                 Some(("QT014", "rotate requires an integer atom for its count"))

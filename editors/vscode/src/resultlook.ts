@@ -302,10 +302,18 @@ export function ruleValueProblem(op: RuleOp, text: string, numeric: boolean): st
   return t === "" && op === "contains" ? "Some text to find." : undefined;
 }
 
-/// A rule's value from the text typed for it.
+/// A rule's value from the text typed for it. A whole number past what a
+/// double holds stays its digits, which a long column is compared with
+/// as q wrote it (#3085).
 export function ruleValue(op: RuleOp, text: string, numeric: boolean): number | string {
   const t = text.trim();
-  return op === "top" || op === "bottom" || (numeric && op !== "contains") ? Number(t) : text;
+  if (op === "top" || op === "bottom") {
+    return Number(t);
+  }
+  if (numeric && op !== "contains") {
+    return /^-?\d+$/.test(t) && !Number.isSafeInteger(Number(t)) ? t : Number(t);
+  }
+  return text;
 }
 
 // --- exports

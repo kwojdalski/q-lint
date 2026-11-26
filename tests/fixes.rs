@@ -361,6 +361,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
     ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
     ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
+    ("QR001", "r:reverse desc 3 1 2", "r:asc 3 1 2", false),
     ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
     ("QR002", "r:count {x} each y", "r:count y", false),
     ("QR002", "r:{x}' y", "r:y", false),
@@ -552,6 +553,29 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         "f:{r:(); do[n; r,:1]; r}",
         false,
     ),
+    // A parameter is a local whatever is assigned, and outside a lambda
+    // both spellings write the global (#2798).
+    (
+        "QV003",
+        "f:{[r] do[2; r:r,3]; r}",
+        "f:{[r] do[2; r,:3]; r}",
+        false,
+    ),
+    ("QV003", "r:1 2\ndo[3; r:r,4]", "r:1 2\ndo[3; r,:4]", false),
+    // A symbol runs on over `:` and `/`: the word in a file handle is no
+    // use of the parameter (#2799).
+    (
+        "QF001",
+        "f:{[count] (count;`:count;`:dir/count)}",
+        "f:{[countArg] (countArg;`:count;`:dir/count)}",
+        false,
+    ),
+    (
+        "QF001",
+        "g:{[type] (type;`:db/type;`a:type;`type)}",
+        "g:{[typeArg] (typeArg;`:db/type;`a:type;`type)}",
+        false,
+    ),
     ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
     ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
     ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
@@ -620,7 +644,36 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] {a+y}'[1 2;3 4]}",
-        "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
+        "f:{[a] {[unused;y;a] a+y}[;;a]'[1 2;3 4]}",
+        false,
+    ),
+    // An argument the lambda does not read is named for that, where `x`
+    // and `y` would be parameters QF016 reports (#2797).
+    (
+        "QF005",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {[unused1;unused2;z;a] a+z}[;;;a] . (1;2;3)}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] {x+a+z}[1;2;3]}",
+        "f:{[a] {[x;unused;z;a] x+a+z}[;;;a][1;2;3]}",
+        false,
+    ),
+    // `{[] b}` takes one argument: `{[;b]` would hold the empty slot QF009
+    // reports, and `{[b] b}[b]` is the call and no projection (#2797).
+    (
+        "QF005",
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[b] g:{[unused;b] b}[;b]; g[]}",
+        false,
+    ),
+    // `.z.s` in a lambda nested deeper is that lambda (#2796).
+    (
+        "QF005",
+        "f:{[a] {$[x>0;a+{.z.s x} x-1;0]} 3}",
+        "f:{[a] {[x;a] $[x>0;a+{.z.s x} x-1;0]}[;a] 3}",
         false,
     ),
     (
@@ -632,7 +685,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] g:{a}; g 1}",
-        "f:{[a] g:{[x;a] a}[;a]; g 1}",
+        "f:{[a] g:{[unused;a] a}[;a]; g 1}",
         false,
     ),
     (
@@ -910,6 +963,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QF005", "h:{a:{a+1};a}"),
         ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
         ("QF005", "f:{[a] {[c:a] c}}"), // a pattern, not a body to pass it into (#637)
+        // `.z.s` would be the lambda with one more parameter, and its call a
+        // projection (#2796)
+        ("QF005", "f:{[a] {$[x>0;a+.z.s x-1;0]} 3}"),
+        ("QF005", "f:{[a] {[n] $[n>0;a+.z.s[n-1];0]} 3}"),
+        // The body has `unused` for something else (#2797)
+        ("QF005", "f:{[a] g:{a+unused}; g 1}"),
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
@@ -954,6 +1013,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QV003", "f:{[n] r:0; i:0; while[i<n; r:r,i; i+:1]; r}"),
         ("QV003", "f:{[s] r:`; do[2; r:r,s]; r}"),
         ("QV003", "r:\"a\"\ndo[3; r:r,\"b\"]"),
+        // `r:r,x` is all that makes `r` a local: `r,:x` would amend the
+        // global `r` (#2798)
+        ("QV003", "r:1 2\nf:{do[2; r:r,x]; r}"),
+        ("QV003", "r:1 2\ng:{[x] do[1; r:r,x]; count r}"),
+        ("QV003", "f:{g:{r:()}; do[2; r:r,x]; r}"), // assigned in another lambda
+        ("QV003", "f:{s:`r:1; do[2; r:r,x]; r}"),   // and in a symbol
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -1841,6 +1906,36 @@ fn qf005_fix_raises_no_qs008() {
     }
 }
 
+/// Nor does it write a parameter the linter's own rules then report: an
+/// empty slot (QF009) for `{[] b}`, or an `x` and `y` never read (QF016)
+/// before the `z` that is (#2797).
+#[test]
+fn qf005_fix_writes_no_parameter_another_rule_reports() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for source in [
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {a+y}'[1 2;3 4]}",
+        "f:{[a] g:{a}; g 1}",
+    ] {
+        for profile in [Profile::Style, Profile::StyleQ, Profile::Uqf] {
+            let finding = lint(source, "probe.q", profile)
+                .into_iter()
+                .find(|f| f.code == "QF005")
+                .expect("QF005");
+            let fix = fix_for(&finding, source).expect("a fix");
+            let fixed = format!(
+                "{}{}{}",
+                &source[..fix.start],
+                fix.replacement,
+                &source[fix.end..]
+            );
+            let after = lint(&fixed, "probe.q", profile);
+            assert!(after.is_empty(), "{fixed}: {after:?}");
+        }
+    }
+}
+
 /// Two fixes that touch are applied in one pass, each against the source
 /// as it was. QS004 unwrapped both of `(x)(y)` and left the name `xy`, which
 /// q 5 throws as undefined where the original indexes `x` by `y`.
@@ -2267,6 +2362,41 @@ fn a_datetime_cast_fix_keeps_the_instant() {
         return;
     };
     assert_eq!(values, ["1b", "1b", "1b", "0b"]);
+}
+
+/// `asc` marks what it sorted and `reverse desc` does not, so that rewrite
+/// changes what `attr` says of a list and of a table's first column: it is
+/// offered in the editor with a title that says so. `desc` for `reverse asc`
+/// has nothing to say - neither marks anything (#2800).
+#[test]
+fn asc_for_reverse_desc_says_the_result_is_marked_sorted() {
+    let title = |source: &str| {
+        let finding = selected(source, &["QR001"]).remove(0);
+        let fix = q_lint_rs::fix_for(&finding, source).unwrap();
+        assert!(!fix.batch_safe, "{source}");
+        fix.title.to_string()
+    };
+    assert!(
+        title("r:reverse desc 3 1 2").contains("marks the result as sorted"),
+        "{}",
+        title("r:reverse desc 3 1 2")
+    );
+    assert_eq!(
+        title("r:reverse asc 3 1 2"),
+        "Replace `reverse asc` with `desc`"
+    );
+    let scripts = [
+        "r:attr reverse desc 3 1 2 1",
+        "r:attr asc 3 1 2 1",
+        "r:(attr reverse asc 3 1 2 1;attr desc 3 1 2 1)",
+        "r:(reverse desc 3 1 2 1)~asc 3 1 2 1",
+        "r:(attr first flip reverse desc t;attr first flip asc t:([]a:3 1 2))",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["`", "`s", "``", "1b", "``s"]);
 }
 
 /// `asc scan x` iterates `asc` to convergence, so `reverse` reverses the

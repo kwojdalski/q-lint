@@ -1116,6 +1116,25 @@ fn a_vector_comparison_names_the_row_count_that_runs() {
     assert!(messages[1].contains("`=` against a 3-item vector literal"));
 }
 #[test]
+fn a_two_character_glyph_before_an_iterator_keyword_is_named_whole() {
+    // #2772: `x <= each y` was reported at the `=`, with `x =' y` as the
+    // rewrite - another comparison. q 5 runs `1 2<='2 3`.
+    for glyph in ["<=", ">=", "<>"] {
+        let source = format!("x:1 2;y:2 3\nr:x {glyph} each y\n");
+        let found: Vec<_> = lint(&source, "t.q", Profile::General)
+            .into_iter()
+            .filter(|f| f.code == "QE011")
+            .collect();
+        assert_eq!(found.len(), 1, "{glyph}: {found:?}");
+        assert_eq!((found[0].column, found[0].end_column), (Some(5), Some(7)));
+        assert!(
+            found[0].detail.contains(&format!("write `x {glyph}' y`")),
+            "{}",
+            found[0].detail
+        );
+    }
+}
+#[test]
 fn an_indexed_integer_names_the_error_of_a_closed_handle() {
     // #507: q 5 `a:5; a[0]` is 'Cannot write to handle 5, not 'domain.
     let details: Vec<_> = lint("a:5\nr:a[0]\n", "t.q", Profile::General)
