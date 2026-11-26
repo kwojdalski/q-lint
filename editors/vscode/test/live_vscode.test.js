@@ -680,6 +680,26 @@ test("Set SSH Tunnel forgets the stored password when the way changes, and keeps
   assert.strictEqual(secrets.has("q-lint.password.rdb"), false);
 });
 
+test("Set SSH Tunnel's box says what is wrong with a destination, and takes a domain login (#3116, #3117)", async (t) => {
+  const { live } = await setUp(t, [proc("rdb", 5010)]);
+  let said;
+  stub.inputs.push(({ validateInput }) => ((said = [":2222", "me@", "me@b:99999", "a b", "CORP\\me@bastion", " "].map((v) => validateInput(v))), "CORP\\me@bastion"));
+  await stub.commands.get("q-lint.setSshTunnel")("rdb");
+  assert.deepStrictEqual(said, [
+    "A host is needed before the port.",
+    "A host is needed after the @.",
+    "The port after the colon is a whole number between 1 and 65535.",
+    "A host ssh takes has no space.",
+    undefined,
+    undefined,
+  ]);
+  assert.strictEqual(live.processes()[0].ssh, "CORP\\me@bastion");
+  // Handed one that is none, it is refused, not saved.
+  await stub.commands.get("q-lint.setSshTunnel")("rdb", ":2222");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: ":2222" is not an SSH destination; the tunnel was not set.']);
+  assert.strictEqual(live.processes()[0].ssh, "CORP\\me@bastion");
+});
+
 // Disconnect while a connect waits for the handshake: the connect went on,
 // and the process - perhaps a production one - became the active one.
 test("Disconnect during a connect stops it (#1073)", async (t) => {

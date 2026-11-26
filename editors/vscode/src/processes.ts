@@ -273,14 +273,52 @@ function written(value: unknown): boolean {
   return value !== undefined && value !== null && !(typeof value === "string" && value.trim() === "");
 }
 
-/// An SSH destination as written, or undefined when it is none. A leading
-/// `-` would be read by ssh as an option, and a space as two arguments.
-export function sshDestination(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+/// Why `text` is not a destination ssh takes, or undefined when it is one:
+/// `host` or `user@host`, either with `:port` after it, an IPv6 host in
+/// brackets before a port. A leading `-` would be read by ssh as an option,
+/// and a space as two arguments. The user is all before the last `@`, as
+/// ssh reads it, and may hold what OpenSSH lets one hold - the `\` of
+/// `CORP\me` and the `$` of a service account, refused here though ssh is
+/// run by no shell (#3117). A host is needed, and a port is one: `:2222`,
+/// `me@`, `b:` and `me@b:99999` were taken, for ssh to fail on at connect
+/// (#3116). Each refusal names what it refuses.
+export function sshProblem(text: string): string | undefined {
+  const d = text.trim();
+  if (d === "") {
+    return "A destination is needed.";
   }
-  const d = value.trim();
-  return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
+  if (d.startsWith("-")) {
+    return "A destination does not start with -: ssh would read it as an option.";
+  }
+  const shown = (c: string): string => (/\s/.test(c) ? "space" : c);
+  const at = d.lastIndexOf("@");
+  const user = at < 0 ? undefined : d.slice(0, at);
+  const rest = d.slice(at + 1);
+  if (user !== undefined) {
+    const bad = /[\s'"`;|&<>(){}]/.exec(user);
+    if (user === "" || bad !== null || user.endsWith("\\")) {
+      return user === "" ? "A user is needed before the @." : bad !== null ? `A user ssh takes has no ${shown(bad[0])}.` : "A user ssh takes does not end with a \\.";
+    }
+  }
+  const bracketed = /^\[([^\]]*)\](?::(.*))?$/.exec(rest);
+  const parts = rest.split(":");
+  const [host, port] = bracketed !== null ? [bracketed[1], bracketed[2]] : parts.length === 2 ? parts : [rest, undefined];
+  if (host === "") {
+    return user === undefined ? "A host is needed before the port." : "A host is needed after the @.";
+  }
+  const bad = /[\s'"`$;|&<>\\(){}]/.exec(host);
+  if (bad !== null || host.startsWith("-")) {
+    return bad !== null ? `A host ssh takes has no ${shown(bad[0])}.` : "A host does not start with -.";
+  }
+  if (bracketed === null && parts.length > 2 && !isIPv6(host)) {
+    return "One port only, after one colon: an IPv6 address goes in brackets before it.";
+  }
+  return port !== undefined && portProblem(port) !== undefined ? "The port after the colon is a whole number between 1 and 65535." : undefined;
+}
+
+/// An SSH destination as written, or undefined when it is none (`sshProblem`).
+export function sshDestination(value: unknown): string | undefined {
+  return typeof value === "string" && sshProblem(value) === undefined ? value.trim() : undefined;
 }
 
 /// The tunnel a list entry's `ssh` names. In the list saved here (`stored`)

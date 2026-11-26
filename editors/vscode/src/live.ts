@@ -59,6 +59,7 @@ import {
   relabelsAfter,
   resaved,
   sshDestination,
+  sshProblem,
   serverTypes,
   givenServerTypes,
   tlsChoices,
@@ -2589,7 +2590,7 @@ export class Live {
         title: `SSH tunnel of ${process.label}`,
         value: process.ssh ?? "",
         prompt: `The jump host q-lint runs \`ssh -N -L\` through to reach ${address(process.host, process.port)}, as you would type it: bastion, me@bastion or me@bastion:2222. ssh uses your agent and ~/.ssh/config, and never asks for a password. Empty: connect directly.`,
-        validateInput: (v) => (v.trim() === "" || sshDestination(v) !== undefined ? undefined : "A destination ssh takes: no spaces or quotes, and not starting with -."),
+        validateInput: (v) => (v.trim() === "" ? undefined : sshProblem(v)),
         ignoreFocusOut: true,
       });
       if (given === undefined) {
