@@ -718,3 +718,19 @@ r3:@[f;1;h]
 r4:@[f;1;{[e;z] e,z}[;0]]
 r5:@[f;1;{[] 0}]
 r6:@[1 2 3;0;{x+1}]
+
+=== QE011 profile: general | an infix keyword or glyph ending a line, with the iterator on the indented line that continues it (#2851; q 5: ')
+a:x cor
+ each y
+b:x in
+  peach y
+c:x ,
+  each y
+f[x;y cor
+  each z]
+
+=== clean profile: general | while with nothing applied after the iterator it is a projection (#2851; q 5 parses each)
+a:x cor
+ each
+b:x cor
+ each[y]

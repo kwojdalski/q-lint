@@ -2152,10 +2152,11 @@ fn monadic_keyword(
 /// iterator keywords among them: q 5 refuses `f over each x` and
 /// `each each x` too (#659). The qSQL words have their own rule. Of the
 /// glyphs, `:` is left to assignment and `.` and `_` to names; `/`, `\` and
-/// `'` are iterators.
+/// `'` are iterators. The iterator may start the indented line that
+/// continues the statement: `a:x cor` over ` each y` is refused too (#2851).
 fn keyword_each(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Vec<Finding>) {
     for m in re!(
-        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)[ \t]+|([-+*%!&|<>=~,^#$?@])[ \t]*)(each|peach|over|scan|prior)\b"
+        r"(?:\b(and|asof|bin|binr|cor|cov|cross|cut|div|dsave|each|ema|except|fby|ij|ijf|in|insert|inter|like|lj|ljf|lsq|mavg|mcount|mdev|mmax|mmin|mmu|mod|msum|or|over|peach|pj|prior|rotate|scan|scov|set|setenv|ss|sublist|sv|uj|ujf|union|upsert|vs|wavg|within|wsum|xasc|xbar|xcol|xcols|xdesc|xexp|xgroup|xkey|xlog|xprev|xrank)(?:[ \t]+|[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+)|([-+*%!&|<>=~,^#$?@])[ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?)(each|peach|over|scan|prior)\b"
     )
     .captures_iter(unsym)
     {
