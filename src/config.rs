@@ -419,6 +419,24 @@ impl Policy {
         (files, dirs)
     }
 
+    /// The files a run over `inputs` reads besides them: the configuration
+    /// that governs each, with those it extends, and the baseline in force
+    /// for it. No flag of the run may write over one, any more than over a
+    /// source (#2751). A configuration that does not read names none here:
+    /// linting under it is what says so.
+    pub fn reads(&self, inputs: &[PathBuf]) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = self.overrides.config.iter().map(|c| absolute(c)).collect();
+        for input in inputs {
+            if let Ok(settings) = self.settings(input) {
+                files.extend(settings.sources.iter().cloned());
+                files.extend(self.baseline_file(&settings));
+            }
+        }
+        files.sort();
+        files.dedup();
+        files
+    }
+
     /// The settings for `path`, a file or a directory: the configuration
     /// nearest to it, searching from the directory that contains it.
     pub fn settings(&self, path: &Path) -> Result<Rc<Settings>, String> {

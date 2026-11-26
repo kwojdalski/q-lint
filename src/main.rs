@@ -323,18 +323,27 @@ fn target_version(text: &str) -> Result<String, String> {
 /// anything is written, so a refused run exits 2 and leaves the file as it
 /// was: `--write-baseline o.q`, with `o.q` taken for the flag's value and
 /// the tree linted, would otherwise replace the source with JSON (#2115).
-fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Result<(), String> {
+fn refuse_overwrite(
+    flag: &str,
+    target: Option<&Path>,
+    inputs: &[PathBuf],
+    what: &str,
+) -> Result<(), String> {
     let Some(target) = target else {
         return Ok(());
     };
     if inputs.iter().any(|f| same_file(target, f)) {
-        return Err(format!(
-            "{flag} {}: it is one of the files to lint",
-            target.display()
-        ));
+        return Err(format!("{flag} {}: it is {what}", target.display()));
     }
     Ok(())
 }
+
+/// What `refuse_overwrite` calls a source the run lints.
+const LINTED: &str = "one of the files to lint";
+/// And a file the run is configured by, which is as much one it reads: a
+/// report written over the baseline in force left every later run refusing
+/// it, and one over `qlinter.toml` left no configuration (#2751).
+const CONFIGURED_BY: &str = "a configuration or a baseline this run reads";
 
 /// Whether two paths reach one file on disk: compared as files, not names,
 /// so a symlink to a source, a hard link, or another case of its name on a
@@ -742,8 +751,25 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     }
-    refuse_overwrite("--output-file", args.output_file.as_deref(), &inputs)?;
-    refuse_overwrite("--write-baseline", args.write_baseline.as_deref(), &inputs)?;
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        &inputs,
+        LINTED,
+    )?;
+    refuse_overwrite(
+        "--write-baseline",
+        args.write_baseline.as_deref(),
+        &inputs,
+        LINTED,
+    )?;
+    let read = policy.reads(&inputs);
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        &read,
+        CONFIGURED_BY,
+    )?;
     if let Some(file) = args
         .write_baseline
         .as_deref()

@@ -309,6 +309,75 @@ fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
 }
 
+/// A configuration and the baseline it names are files the run reads too:
+/// a report written over the baseline in force left every later run refusing
+/// it, and one over `qlinter.toml`, or a file it extends, left none (#2751).
+#[test]
+fn output_file_is_never_a_configuration_or_a_baseline_the_run_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let configured = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(d)
+            .env("XDG_CONFIG_HOME", d.join("no-user-config"))
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    fs::write(d.join("a.q"), TWO).unwrap();
+    fs::write(d.join("base.toml"), "profile = \"uqf\"\n").unwrap();
+    let config = "extend = \"base.toml\"\nbaseline = \"known.json\"\n";
+    fs::write(d.join("qlinter.toml"), config).unwrap();
+    let (status, err) = configured(&["--write-baseline", "known.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    let known = fs::read_to_string(d.join("known.json")).unwrap();
+    for (target, holds) in [
+        ("known.json", known.as_str()),
+        ("qlinter.toml", config),
+        ("./base.toml", "profile = \"uqf\"\n"),
+    ] {
+        let (status, err) = configured(&["--format", "json", "--output-file", target, "a.q"]);
+        assert_eq!(status, Some(2), "{target}: {err}");
+        assert!(
+            err.contains("a configuration or a baseline this run reads"),
+            "{target}: {err}"
+        );
+        assert_eq!(fs::read_to_string(d.join(target)).unwrap(), holds);
+    }
+    // The file `--config` and `--baseline` name, as much as one found.
+    fs::write(d.join("other.toml"), "profile = \"uqf\"\n").unwrap();
+    let (status, err) = configured(&[
+        "--config",
+        "other.toml",
+        "--output-file",
+        "other.toml",
+        "a.q",
+    ]);
+    assert_eq!(status, Some(2), "{err}");
+    let (status, err) = configured(&[
+        "--isolated",
+        "--baseline",
+        "known.json",
+        "--output-file",
+        "known.json",
+        "a.q",
+    ]);
+    assert_eq!(status, Some(2), "{err}");
+    assert_eq!(fs::read_to_string(d.join("known.json")).unwrap(), known);
+    // One the run does not read is a file like any other.
+    let (status, err) = configured(&["--isolated", "--output-file", "base.toml", "a.q"]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        fs::read_to_string(d.join("base.toml"))
+            .unwrap()
+            .contains("QS001")
+    );
+}
+
 /// `--output-file a.q b.q` is `--output-file` with a path to lint taken for
 /// its value: `a.q` is no input, so nothing refused it and the report on
 /// `b.q` replaced it (#2764). A name that looks like source is refused, as
