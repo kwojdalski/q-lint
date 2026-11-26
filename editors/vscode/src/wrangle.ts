@@ -122,8 +122,12 @@ export function stepCode(step: Step, x: string): string {
       // `null` ask each of its characters, 'length and 'type here (#2014).
       const whole: Partial<Record<FilterOp, string>> =
         step.strings === true ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` } : {};
+      // And `in` takes a list of them: one string is a list of characters
+      // to it, 'type against a column of strings, so a value that is no
+      // general list is the one item looked for (#3090).
+      const items = step.strings === true ? "{$[0h=type x;x;enlist x]}" : "";
       const test =
-        whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
+        whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${items}${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
       return `select from ${x} where ${test}`;
     }
     case "sort":

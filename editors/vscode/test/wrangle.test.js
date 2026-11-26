@@ -101,7 +101,10 @@ test("a filter on a column of strings matches the whole string, and offers no or
   assert.strictEqual(f("null", ""), "select from t where 0=count each b");
   assert.strictEqual(f("not null", ""), "select from t where 0<count each b");
   assert.strictEqual(f("like", '"x*"'), 'select from t where b like "x*"');
-  assert.strictEqual(f("in", '("yy";"xy")'), 'select from t where b in ("yy";"xy")');
+  // One string is the item looked for, not a list of characters (#3090).
+  assert.strictEqual(f("in", '("yy";"xy")'), 'select from t where b in {$[0h=type x;x;enlist x]}("yy";"xy")');
+  assert.strictEqual(f("in", '"xy"'), 'select from t where b in {$[0h=type x;x;enlist x]}"xy"');
+  assert.strictEqual(f("in", '"x","y"'), 'select from t where b in {$[0h=type x;x;enlist x]}("x","y")');
   // A one-character string is the list the grid shows it as, and a comma is kept in one test (#1412).
   assert.strictEqual(f("=", ',"x"'), 'select from t where b~\\:enlist "x"');
   assert.strictEqual(f("=", '"x","y"'), 'select from t where b~\\:("x","y")');

@@ -144,6 +144,8 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     for (const op of w.filterOps(strings)) answers[op] = await kept(op, op === "in" ? '("yy";"xy")' : op === "like" ? '"?y"' : first);
     assert.deepStrictEqual(answers, { "=": ["3"], "<>": ["1", "2", "4"], like: ["3", "1"], in: ["3", "1"], null: ["2"], "not null": ["3", "1", "4"] });
     assert.deepStrictEqual(await kept("=", w.cellLiteral(base.grid, 1, 3)), ["4"]);
+    // `in` runs on the value it starts from too, one string: 'type before (#3090).
+    assert.deepStrictEqual([await kept("in", first), await kept("in", w.cellLiteral(base.grid, 1, 3)), await kept("in", 'enlist "yy"')], [["3"], ["4"], ["1"]]);
     // The ordering tests are q's 'length on strings: they are not offered.
     const answer = await connection.queryGrid(statements(w.wrangleQuery(from, [{ kind: "filter", column: "b", op: "<", value: first }])), SIZE, 1000);
     assert.deepStrictEqual([answer.ok, answer.error], [false, "length"]);
