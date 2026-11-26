@@ -3683,6 +3683,11 @@ export class Live {
     if (connection.isBusy) {
       return { later: "a query is running on it; scroll again once it ends" };
     }
+    // Nothing is sent while it is evaluated directly, and the process keeps
+    // the result: later, not gone (#2566).
+    if (connection.isDirect) {
+      return { later: "it is evaluated directly now, and paging needs q-lint's lambda; turn direct evaluation off, then scroll again" };
+    }
     return readPage(await connection.call(PAGE, token, offset, count));
   }
 
