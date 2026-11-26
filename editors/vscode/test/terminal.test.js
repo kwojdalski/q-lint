@@ -1,7 +1,7 @@
 // The q terminal (#856): the command line that starts q in each shell, the
 // env file, code made into lines q's console reads, and the keys and
 // settings package.json declares for it. Run after `tsc`; nothing here needs
-// an editor or a q.
+// an editor, and only the test of q's console itself a q (QLINT_TEST_Q).
 const test = require("node:test");
 const assert = require("node:assert");
 const { spawnSync } = require("node:child_process");
@@ -235,6 +235,31 @@ test("a system command is sent as it is, and comments and \\ follow the query ru
   assert.deepStrictEqual(replLines("/ a comment\na:1\n/\nb:2\n\\\nc:3"), ["a:1", "c:3"]);
   assert.deepStrictEqual(replLines("a:1\n\\\nb:2"), ["a:1"]);
   assert.deepStrictEqual(replLines("/ only\n\n"), []);
+});
+
+// `p)print(10 / 2)` reached Python as `print(10`, and a def block as one
+// line, `def f(x): y = x + 1 return y` (#2914).
+test("a p) statement reaches q's console as Python reads it: no comment cut, its lines kept (#2914)", () => {
+  assert.deepStrictEqual(replLines("p)print(10 / 2)\na:1 / one"), ["p)print(10 / 2)", "a:1"]);
+  const block = "p)def f(x):\n    y = x + 1 / 2\n\n    return y";
+  assert.deepStrictEqual(replLines(`${block}\np)f(1)`), ['value "p)def f(x):\\n    y = x + 1 / 2\\n\\n    return y"', "p)f(1)"]);
+  // No tab reaches the console (#1673): in a string of q's it is `\t`.
+  assert.deepStrictEqual(replLines('p)x = "a\tb"'), ['value "p)x = \\"a\\tb\\""']);
+  // SQL is its interpreter's too; k and q are q's own to read.
+  assert.deepStrictEqual(replLines("s)select 10 / 2 from t"), ["s)select 10 / 2 from t"]);
+  assert.deepStrictEqual(replLines("q)a:1 / one\nk)b:2 / two"), ["q)a:1", "k)b:2"]);
+});
+
+// Under a stand-in for embedPy's `.p.e`, which is all q does with a `p)` line.
+test("q's console hands Python what \\l of the same file hands it (#2914)", { skip: process.env.QLINT_TEST_Q ? false : "QLINT_TEST_Q names no q binary" }, () => {
+  const code = 'p)print(10 / 2)\np)def f(x):\n    y = x + 1 / 2\n\n    return y\np)x = "a\tb"';
+  const input = ['.p.e:{-1 "python: ",.Q.s1 x;}', ...replLines(code), "\\\\", ""].join("\n");
+  const ran = spawnSync(process.env.QLINT_TEST_Q, ["-q"], { input, encoding: "utf8", timeout: 20000 });
+  assert.deepStrictEqual(ran.stdout.split(/\r?\n/).filter((l) => l !== ""), [
+    'python: "print(10 / 2)"',
+    'python: "def f(x):\\n    y = x + 1 / 2\\n\\n    return y"',
+    'python: "x = \\"a\\tb\\""',
+  ]);
 });
 
 test("the terminal keys are ctrl+shift+q, ctrl+shift+r and ctrl+shift+e in a q editor", () => {
