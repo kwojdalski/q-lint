@@ -4341,12 +4341,19 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
 /// 1;{x}]` a projection (#630).
 fn vector_items(arg: &str, literal: &str) -> Option<usize> {
     let (arg, literal) = (arg.trim(), literal.trim());
-    if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(arg) {
+    // A number as `number!` has it, so with a clock part or a leading dot:
+    // q 5 `f . 12:00 13:00 14:00` and `f . .5 .6 .7` are 'rank at rank 2
+    // (#2943).
+    if re!(concat!("^", number!(), r"(?:[ \t]+", number!(), ")+$")).is_match(arg) {
         Some(arg.split_whitespace().count())
     } else if re!(r"^(?:`[A-Za-z0-9_.:]*){2,}$").is_match(arg) {
         Some(arg.matches('`').count())
     } else if re!(r"^[01]{2,}b$").is_match(arg) {
         Some(arg.len() - 1)
+    } else if re!(r"^0x[0-9a-fA-F]{3,}$").is_match(arg) {
+        // A byte for each pair of digits, and one for an odd digit that
+        // leads: q 5 `0x010` is 0x0010.
+        Some((arg.len() - 1) / 2)
     } else if let Some(body) = literal
         .strip_prefix('"')
         .and_then(|l| l.strip_suffix('"'))
@@ -4357,6 +4364,27 @@ fn vector_items(arg: &str, literal: &str) -> Option<usize> {
         Some(1)
     } else {
         None
+    }
+}
+/// How many items the argument list of a dot apply holds where it is written
+/// out: a list in parentheses by its slots, and a vector by its items in
+/// however many parentheses - q 5 `f . (1 2 3)` and `f . ((1;2;3))` are the
+/// 'rank that `f . 1 2 3` is at rank 2, and `.[f;(1 2);h]` is the call that
+/// `.[f;1 2;h]` is (#2938, #2943). Nothing for what is not written out,
+/// `(x)`. `literal` is `arg` with its strings kept.
+fn listed(arg: &str, literal: &str) -> Option<usize> {
+    let from = arg.len() - arg.trim_start().len();
+    let list = arg.trim();
+    if list.starts_with('(') && matching(list, 0, b'(', b')') == Some(list.len()) {
+        let inner = &list[1..list.len() - 1];
+        let n = slots(inner).len();
+        if n > 1 {
+            Some(n)
+        } else {
+            listed(inner, literal.get(from + 1..from + list.len() - 1)?)
+        }
+    } else {
+        vector_items(arg, literal)
     }
 }
 /// A byte that is not UTF-8 - 0x80 or more, since an ASCII one always is -
@@ -8451,12 +8479,13 @@ fn lint_rules(
             let arg = parts[1].trim();
             let second = parts[1].as_ptr() as usize - code.as_ptr() as usize;
             let literal = &v.comments[second..second + parts[1].len()];
-            if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
-                slots(&arg[1..arg.len() - 1]).len()
-            } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*$").is_match(arg) {
-                arg.split_whitespace().count()
-            } else if let Some(n) = vector_items(arg, literal) {
+            // A vector before a lone number: `01b` and `0x0102` are two
+            // items each, and `(1 2)` the vector it holds - q 5
+            // `.[{[a;b] a+b};(1 2);{x}]` is 3 and `.[f;01b;{x}]` 1i (#2938).
+            if let Some(n) = listed(parts[1], literal) {
                 n
+            } else if re!(r"^-?\d[A-Za-z0-9.]*$").is_match(arg) {
+                1
             } else {
                 continue;
             }
@@ -8593,13 +8622,7 @@ fn lint_rules(
     let items = |arg: &str| -> Option<usize> {
         let at = arg.as_ptr() as usize - code.as_ptr() as usize;
         let literal = &v.comments[at..at + arg.len()];
-        let arg = arg.trim();
-        if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
-            let n = slots(&arg[1..arg.len() - 1]).len();
-            (n > 1).then_some(n)
-        } else {
-            vector_items(arg, literal)
-        }
+        listed(arg, literal)
     };
     let too_many = |rank: usize, n: usize| {
         (rank > 0 && n > rank).then(|| {

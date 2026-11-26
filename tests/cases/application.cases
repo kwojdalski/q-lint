@@ -616,6 +616,41 @@ f:{x+y}
 a:f . 1 2
 b:f . enlist 1
 
+=== QA012 | a vector in parentheses is the vector, and a byte or a clock vector one argument an item (KDB-X: 'rank for each, #2943)
+f:{[a;b] (a;b)}
+a:f . (1 2 3)
+b:f . ((1;2;3))
+c:f . 0x010203
+d:f . 12:00 13:00 14:00
+e:f . .5 .6 .7
+g:.[f;(1 2 3)]
+
+=== clean | as many as the rank the same way (KDB-X: f . (1 2) is 1 2 and f . 0x0102 is 0x0102)
+f:{[a;b] (a;b)}
+a:f . (1 2)
+b:f . 0x0102
+c:f . 12:00 13:00
+d:.[f;((1;2))]
+
+=== clean | and under a handler they are the call, not a projection (KDB-X: 3, "ab", 3, 3, 1i and 3i, #2938)
+f:{[a;b] a+b}
+a:.[{[a;b] a+b};(1 2);{x}]
+b:.[{[a;b] (a;b)};("ab");{x}]
+c:.[f;(1 2);{x}]
+d:.[f;((1;2));{x}]
+e:.[f;01b;{x}]
+g:.[f;0x0102;{x}]
+h:.[{[a;b] (a;b)};(`a`b);{x}]
+
+=== clean | nor is a name in parentheses one argument: it holds what it holds (KDB-X: x:(1;2); .[f;(x);{x}] is 1 2, #2938)
+f:{[a;b] (a;b)}
+x:(1;2)
+r:.[f;(x);{x}]
+
+=== QA003 | while an enlist in parentheses is still the one (KDB-X: .[f;(enlist 1);{x}] is {[a;b] a+b}[1])
+f:{[a;b] a+b}
+r:.[f;(enlist 1);{x}]
+
 === QA011 profile: general | a string of other than one char, or a symbol or byte vector (q 5: 'type)
 a:$["";1;2]
 b:$["ab";1;2]
