@@ -635,13 +635,23 @@ impl Policy {
         let structure =
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         // A language server must not stop linting over it: it says so once
-        // and keeps the forward rules, which are the profile's.
-        let conflict = match self.conflict(&settings, file) {
-            Err(e) if self.lenient => {
-                self.warn(format!("{e}; reporting {} only", UNDOES.join(" and ")), &e);
+        // and keeps the forward rules, which are the profile's. Once for a
+        // configuration and the rules at odds under it, not once for each
+        // file it governs - a popup an open file - and naming the forward
+        // rules that are on, where it named QP007 selected or not (#2767).
+        let conflict = match self.opposed(&settings, file) {
+            Some((reverse, forward)) if self.lenient => {
+                let governs = settings.file.as_deref().unwrap_or(file);
+                let said = Self::refusal(governs, reverse, forward[0]);
+                let forward = forward.join(" and ");
+                self.warn(
+                    format!("{said}; reporting {forward} only"),
+                    &format!("{}\n{reverse}\n{forward}", governs.display()),
+                );
                 true
             }
-            other => other.map(|()| false)?,
+            Some((reverse, forward)) => return Err(Self::refusal(file, reverse, forward[0])),
+            None => false,
         };
         let target = self.target(&settings);
         let mut found = {
@@ -685,30 +695,46 @@ impl Policy {
     /// it - and before any rule runs, so nothing is reported or rewritten.
     /// Under a language server, see `lint`.
     fn conflict(&self, settings: &Settings, path: &Path) -> Result<(), String> {
+        match self.opposed(settings, path) {
+            Some((reverse, forward)) => Err(Self::refusal(path, reverse, forward[0])),
+            None => Ok(()),
+        }
+    }
+
+    /// The opposite conventions both on for `path`, if any are: the reverse
+    /// rule, and each forward rule it undoes that would report there.
+    fn opposed(
+        &self,
+        settings: &Settings,
+        path: &Path,
+    ) -> Option<(&'static str, Vec<&'static str>)> {
         let on = |code: &str| {
             self.configured(settings, code)
                 && !per_file_ignored(settings, code, path)
                 && !self.test_exempt(settings, code, path)
         };
+        let reverse = OPPOSITE.into_iter().find(|code| on(code))?;
+        let forward: Vec<_> = UNDOES.into_iter().filter(|code| on(code)).collect();
+        (!forward.is_empty()).then_some((reverse, forward))
+    }
+
+    /// What refuses `reverse` beside `forward`, said of `at`: the file, or
+    /// the configuration that selects them both.
+    fn refusal(at: &Path, reverse: &str, forward: &str) -> String {
         let name = |code: &str| {
             RULES
                 .iter()
                 .find(|r| r.code == code)
                 .map_or(String::new(), |r| format!(" ({})", r.name))
         };
-        for reverse in OPPOSITE.into_iter().filter(|code| on(code)) {
-            if let Some(forward) = UNDOES.into_iter().find(|code| on(code)) {
-                return Err(format!(
-                    "{}: {reverse}{} and {forward}{} are opposite conventions - one removes the \
-                     parentheses the other adds, so --fix would undo itself; select one \
-                     (`--ignore {forward}`, or drop {reverse})",
-                    path.display(),
-                    name(reverse),
-                    name(forward)
-                ));
-            }
-        }
-        Ok(())
+        format!(
+            "{}: {reverse}{} and {forward}{} are opposite conventions - one removes the \
+             parentheses the other adds, so --fix would undo itself; select one \
+             (`--ignore {forward}`, or drop {reverse})",
+            at.display(),
+            name(reverse),
+            name(forward)
+        )
     }
 
     /// A test may build a legacy datetime, read the local clock or mix infix

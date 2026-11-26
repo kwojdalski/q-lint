@@ -1276,6 +1276,63 @@ fn a_configuration_the_cli_refuses_is_shown_to_the_user_not_only_logged() {
     }
 }
 
+/// A configuration that selects QP008 beside QP005 is said once, however
+/// many files it governs, and says which rules it keeps. The warning was
+/// keyed on its text, which held the file's path - a popup for each open
+/// file - and named QP007 as reported with QP007 off (#2767).
+#[test]
+fn opposite_conventions_are_said_once_for_a_configuration_naming_the_rules_kept() {
+    let said = |config: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("qlinter.toml"), config).unwrap();
+        let mut server = Server::spawn(dir.path(), &["--lsp"]);
+        server.initialize();
+        let uris: Vec<String> = (0..5)
+            .map(|n| file_uri(&dir.path().join(format!("f{n}.q"))))
+            .collect();
+        for uri in &uris {
+            server.open(uri, "w:a*b+c\n");
+        }
+        // The reply to a request sent after them is behind everything the
+        // opens made the server say.
+        server.send(
+            json!({"jsonrpc":"2.0","id":40,"method":"textDocument/hover",
+            "params":{"textDocument":{"uri":uris[4]},"position":{"line":0,"character":0}}}),
+        );
+        let mut shown = Vec::new();
+        let mut linted = 0;
+        loop {
+            let message = server.receive();
+            if message["id"] == 40 {
+                break;
+            }
+            if message["method"] == "window/showMessage" {
+                shown.push(message["params"]["message"].as_str().unwrap().to_string());
+            } else if message["method"] == "textDocument/publishDiagnostics" {
+                let found = message["params"]["diagnostics"].as_array().unwrap();
+                assert!(codes_of(found).iter().all(|c| c != "QP008"), "{message}");
+                linted += 1;
+            }
+        }
+        assert!(linted >= 5, "{linted}");
+        assert_eq!(server.shutdown_and_exit(), 0);
+        shown
+    };
+    let shown = said("profile = \"uqf\"\nextend-select = [\"QP008\"]\n");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(
+        shown[0].contains("qlinter.toml: QP008"),
+        "it names the configuration, not one of its files: {shown:?}"
+    );
+    assert!(shown[0].ends_with("; reporting QP005 only"), "{shown:?}");
+    let shown = said("profile = \"uqf\"\nextend-select = [\"QP008\", \"QP007\"]\n");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(
+        shown[0].ends_with("; reporting QP005 and QP007 only"),
+        "{shown:?}"
+    );
+}
+
 #[test]
 fn an_open_excluded_file_defines_nothing_for_the_others() {
     // `qlinter .` reads no excluded file, so src/a.q's `ff` is undefined
