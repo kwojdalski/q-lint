@@ -245,6 +245,29 @@ test("the partition check finds a column enumerated against another domain in so
   assert.deepStrictEqual(partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["sym", "src", ""])])), []);
 });
 
+// q's tables are the newest partition's (`.Q.pt`): one that partition lacks
+// is not loaded, and with the newest partition empty none is (#3050).
+test("the partition check says q has not loaded a table the newest partition lacks (#3050)", () => {
+  const row = (table, partition, dir = true) => ({ table, partition, dir, dotd: dir, columns: dir ? ["sym", "px"] : [], missing: [], types: dir ? [20, 9] : [], enums: dir ? ["sym", ""] : [], maxIndexes: [], rows: dir ? 6 : null });
+  const all = ["2026.01.05", "2026.01.06", "2026.01.07"];
+  const answer = (tables, loaded, rows) => ({ hdb: true, field: "date", root: "/db", all, checked: 3, tables, loaded, domains: new Map([["sym", 10]]), rows });
+  const lacks = answer(["trade", "oldtab"], ["trade"], [...all.map((p) => row("trade", p)), row("oldtab", all[0]), row("oldtab", all[1]), row("oldtab", all[2], false)]);
+  assert.deepStrictEqual(partitionProblems(lacks).map((p) => [p.kind, p.table, p.what, p.partitions]), [
+    ["missing table", "oldtab", "no oldtab directory; q takes its tables from the newest partition, so it has not loaded oldtab and a query of it fails", ["2026.01.07"]],
+  ]);
+  assert.match(partitionReport(lacks, "hdb", false), /tables trade, oldtab\.[^]*1 problem:[^]*q takes its tables from the newest partition/);
+  // Written since the load: on disk in the newest partition, in no .Q.pt.
+  const late = answer(["trade", "late"], ["trade"], [...all.map((p) => row("trade", p)), row("late", all[0], false), row("late", all[1], false), row("late", all[2])]);
+  assert.deepStrictEqual(partitionProblems(late).map((p) => [p.what, p.partitions]), [["no late directory; q has not loaded late (it is not in .Q.pt) and a query of it fails", ["2026.01.05", "2026.01.06"]]]);
+  // A loaded table missing from an older partition reads as before.
+  const older = answer(["trade"], ["trade"], [row("trade", all[0], false), row("trade", all[1]), row("trade", all[2])]);
+  assert.deepStrictEqual(partitionProblems(older).map((p) => [p.what, p.partitions]), [["no trade directory", ["2026.01.05"]]]);
+  // No table directory anywhere is not "No problems found".
+  const none = partitionReport(answer([], [], []), "hdb", false);
+  assert.match(none, /tables none\.[^]*\*\*missing table\*\*: no table directory in any partition checked, so q has loaded no table - 1 partition: 2026\.01\.07/);
+  assert.deepStrictEqual(readPartitions({ hdb: true, pf: "date", root: "/db", all, checked: 3, tables: ["trade", "oldtab"], loaded: ["trade"], domains: [], domainsizes: [], rows: {} }).loaded, ["trade"]);
+});
+
 // #2007: q writes a string or nested column with no rows as a general list
 // (type 0), and maps one with rows as 77h on.
 test("an empty partition's string or nested column is not a different type (#2007)", () => {

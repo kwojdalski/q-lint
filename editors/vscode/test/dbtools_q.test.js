@@ -16,7 +16,7 @@ const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { columnScript, columnsOf, COLUMN_DIRS, HELPERS, opProblem, readColumnDirs, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
-const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
+const { PARTITION_CHECK, readPartitions, partitionProblems, partitionReport } = require("../out/partcheck.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -551,6 +551,34 @@ test("the partition check finds missing dates, files, differing types and outlie
   // A process with no database says so.
   const { connection: plain } = await connect(t, "a:1\n");
   assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
+});
+
+// q takes its tables from the newest partition: one that partition lacks is
+// in no .Q.pt, and an empty newest partition - a failed end of day - leaves
+// q with no table at all. Both were "No problems found" (#3050).
+test("the partition check names a table the newest partition lacks, and an empty newest partition (#3050)", { skip }, async (t) => {
+  const old = "{[r;d] .Q.dd[r;d,`oldtab`] set .Q.en[r] ([] sym:`a`b;v:1 2)}[r] each 2026.01.05 2026.01.06;";
+  const { connection } = await connect(t, HDB(old));
+  assert.deepStrictEqual(await connection.call('{(string(),.Q.pt;@[value;"select from oldtab";{x}])}', 0), [["quote", "trade"], "oldtab"]);
+  const answer = readPartitions(await connection.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual([answer.tables, answer.loaded], [["quote", "trade", "oldtab"], ["quote", "trade"]]);
+  assert.deepStrictEqual(partitionProblems(answer).map((p) => [p.kind, p.table, p.what, p.partitions]), [
+    ["missing table", "oldtab", "no oldtab directory; q takes its tables from the newest partition, so it has not loaded oldtab and a query of it fails", ["2026.01.07"]],
+  ]);
+  assert.match(partitionReport(answer, "hdb", false), /tables quote, trade, oldtab\.[^]*1 problem:/);
+  // The sym inspector reads its columns too: their symbols are in the file.
+  const sym = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(sym.columns.map((c) => `${c.table}.${c.column}`).sort(), ["oldtab.sym", "quote.sym", "trade.sym"]);
+
+  const { connection: empty } = await connect(t, HDB('system "mkdir -p $DIR/hdb/2026.01.08";'));
+  assert.deepStrictEqual(await empty.call('{("f"$count .Q.pt;@[value;"select from trade";{x}])}', 0), [0, "trade"]);
+  const none = readPartitions(await empty.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual([none.tables, none.loaded], [["quote", "trade"], []]);
+  assert.deepStrictEqual(partitionProblems(none).map((p) => [p.kind, p.table, p.partitions]), [
+    ["missing table", "quote", ["2026.01.08"]],
+    ["missing table", "trade", ["2026.01.08"]],
+  ]);
+  assert.doesNotMatch(partitionReport(none, "hdb", false), /No problems found/);
 });
 
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
