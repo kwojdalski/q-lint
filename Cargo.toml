@@ -22,6 +22,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.9"
 glob = "0.3"
+# What Ruff matches `exclude` and `per-file-ignores` with, so a pattern means
+# here what it means there: `{a,b}`, `[^x]` (#2746).
+globset = { version = "0.4", default-features = false }
 walkdir = "2.5"
 # Already in the tree through walkdir: tells one file from another by device
 # and inode, or on Windows by volume serial and file index (#2116).

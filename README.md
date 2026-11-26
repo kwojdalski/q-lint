@@ -466,7 +466,13 @@ which the VS Code extension hands Even Better TOML for completion and
 validation; a test keeps it equal to what qlinter reads.
 
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
-are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
+are globs read the way Ruff reads them, and with the crate Ruff reads them
+with: `*` and `?` match any text and any one character, a `/` included;
+`[ab]` and `[a-z]` match one character of those and `[!a]` or `[^a]` one that
+is not; `{gen,vendor}` matches either name; and a `\` before any of these
+makes it a literal character (except on Windows, where `\` separates
+directories - write `[*]` there). A pattern that does not parse - `[bad`,
+`{gen,vendor` - is a configuration error. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
 configuration's directory (the current directory for `--exclude` and the
 user-level file), so `lib/` excludes the root's `lib` and not `tests/lib`. A

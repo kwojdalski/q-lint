@@ -196,6 +196,93 @@ fn exclude_patterns_are_relative_to_the_configuration_and_a_bare_name_matches_an
     assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
 }
 
+/// A pattern is read the way Ruff reads one, with the crate it reads them
+/// with. `{gen,vendor}` named one file of that name, so it excluded and
+/// ignored nothing; `[^x]` was `^` or `x`, the reverse of anything but `x`;
+/// and `a**.q` was refused. None of it was said (#2746).
+#[test]
+fn a_pattern_takes_alternatives_and_a_negated_class_as_ruffs_does() {
+    let repo = Repo::new();
+    for file in [
+        "a.q",
+        "ab.q",
+        "x.q",
+        "gen/a.q",
+        "gen/deep/a.q",
+        "vendor/a.q",
+        "src/a.q",
+        "src/gen/a.q",
+    ] {
+        repo.write(file, SOURCE);
+    }
+    let excluding = |patterns: &str| {
+        repo.write("qlinter.toml", &format!("exclude = [{patterns}]\n"));
+        linted(&repo, &["."])
+    };
+    assert_eq!(
+        excluding("\"{gen,vendor}\""),
+        ["a.q", "ab.q", "src/a.q", "x.q"]
+    );
+    assert_eq!(
+        excluding("\"gen\", \"vendor\""),
+        excluding("\"{gen,vendor}\"")
+    );
+    // With a `/` it is anchored at the root, as any pattern is.
+    assert_eq!(
+        excluding("\"{gen,vendor}/*\""),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    assert_eq!(
+        excluding("\"src/{gen,none}/**\""),
+        [
+            "a.q",
+            "ab.q",
+            "gen/a.q",
+            "gen/deep/a.q",
+            "src/a.q",
+            "vendor/a.q",
+            "x.q"
+        ]
+    );
+    assert_eq!(excluding("\"[^x].q\""), ["ab.q", "x.q"]);
+    assert_eq!(excluding("\"[!x].q\""), excluding("\"[^x].q\""));
+    assert_eq!(excluding("\"a**.q\""), ["x.q"]);
+    // `--exclude` reads one the same way, an absolute one included.
+    repo.write("qlinter.toml", "");
+    assert_eq!(
+        linted(&repo, &["--exclude", "{gen,vendor}", "."]),
+        ["a.q", "ab.q", "src/a.q", "x.q"]
+    );
+    let absolute = repo.path(".").canonicalize().unwrap().join("{gen,vendor}");
+    assert_eq!(
+        linted(&repo, &["--exclude", absolute.to_str().unwrap(), "."]),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    // And so are the keys of per-file-ignores, negated or not.
+    let ignoring = |key: &str| {
+        let config = format!("[lint.per-file-ignores]\n\"{key}\" = [\"ALL\"]\n");
+        repo.write("qlinter.toml", &config);
+        linted(&repo, &["."])
+    };
+    assert_eq!(
+        ignoring("{gen,vendor}/*"),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    assert_eq!(
+        ignoring("!{gen,vendor}/*"),
+        ["gen/a.q", "gen/deep/a.q", "vendor/a.q"]
+    );
+    // A group left open is an error, not a name nothing has.
+    repo.write("qlinter.toml", "exclude = [\"{gen,vendor\"]\n");
+    let out = run(&repo.path("."), &["."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("exclude: {gen,vendor: unclosed alternate group"),
+        "{stderr}"
+    );
+}
+
 /// The files a run from the repository root reports on, relative to it.
 fn linted(repo: &Repo, args: &[&str]) -> Vec<String> {
     linted_from(repo, ".", args)
@@ -455,7 +542,7 @@ fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
         ),
         (
             "exclude = [\"[bad\"]\n",
-            "exclude: [bad: Pattern syntax error",
+            "exclude: [bad: unclosed character class",
         ),
         (
             "[lint.per-file-ignores]\n\"a.q\" = [\"QZ\"]\n",
@@ -463,7 +550,7 @@ fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
         ),
         (
             "[lint.per-file-ignores]\n\"[bad\" = [\"QF\"]\n",
-            "per-file-ignores: [bad: Pattern",
+            "per-file-ignores: [bad: unclosed character class",
         ),
     ] {
         let repo = Repo::new();

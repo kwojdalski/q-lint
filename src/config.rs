@@ -959,7 +959,7 @@ fn matches(full: &Path, glob: &Glob) -> bool {
     if anywhere
         && full
             .file_name()
-            .is_some_and(|n| pattern.matches(&n.to_string_lossy()))
+            .is_some_and(|n| pattern.is_match(&*n.to_string_lossy()))
     {
         return true;
     }
@@ -967,17 +967,17 @@ fn matches(full: &Path, glob: &Glob) -> bool {
         return false;
     };
     // An absolute pattern with no glob in it names its root itself.
-    if pattern.as_str().is_empty() {
+    if pattern.glob().glob().is_empty() {
         return true;
     }
     relative
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
         .any(|p| {
-            pattern.matches(&p.to_string_lossy().replace('\\', "/"))
+            pattern.is_match(p.to_string_lossy().replace('\\', "/"))
                 || anywhere
                     && p.file_name()
-                        .is_some_and(|n| pattern.matches(&n.to_string_lossy()))
+                        .is_some_and(|n| pattern.is_match(&*n.to_string_lossy()))
         })
 }
 
@@ -1374,12 +1374,24 @@ pub fn pattern(text: &str) -> Result<glob::Pattern, String> {
     glob::Pattern::new(text.trim().trim_end_matches('/')).map_err(|e| format!("{text}: {e}"))
 }
 
+/// An `exclude` or `per-file-ignores` pattern as Ruff reads one, with the
+/// crate Ruff reads it with: `{a,b}` is either, `[!x]` and `[^x]` are any
+/// character but `x`, `a**.q` is `a*.q`, and a `\` makes the character after
+/// it a literal one (on Windows it separates, as `/` does). `*` and `?`
+/// cross a `/`, as before. `glob::Pattern` read `{gen,vendor}` as that one
+/// name, `[^x]` as `^` or `x`, and refused `a**.q` (#2746).
+fn ruff_glob(text: &str) -> Result<globset::GlobMatcher, String> {
+    globset::Glob::new(text.trim().trim_end_matches('/'))
+        .map(|glob| glob.compile_matcher())
+        .map_err(|e| format!("{text}: {}", e.kind()))
+}
+
 /// An `exclude` or `per-file-ignores` pattern, with the directory it is
 /// relative to: a configuration's own, or the current one for `--exclude`.
 #[derive(Clone, Debug)]
 pub struct Glob {
     root: PathBuf,
-    pattern: glob::Pattern,
+    pattern: globset::GlobMatcher,
     /// A bare name, `generated`, which matches a file or directory of that
     /// name anywhere below the root, not only at it.
     anywhere: bool,
@@ -1397,7 +1409,7 @@ pub struct Glob {
 /// and pass, as an empty one would, so it is refused like one (#803).
 pub fn excluding(root: &Path, text: &str) -> Result<Glob, String> {
     let glob = rooted(root, text)?;
-    if glob.pattern.as_str().is_empty() && absolute(root).starts_with(&glob.root) {
+    if glob.pattern.glob().glob().is_empty() && absolute(root).starts_with(&glob.root) {
         return Err(format!(
             "{}: the pattern names the whole tree, so it would exclude every file",
             text.trim()
@@ -1421,13 +1433,13 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
             .components()
             // Only a name can hold a glob: Windows' `\\?\C:` prefix has a `?`.
             .take_while(|c| {
-                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[']))
+                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[', '{']))
             })
             .collect();
         let tail = written.strip_prefix(&literal).unwrap_or(Path::new(""));
         return Ok(Glob {
             root: absolute(&literal),
-            pattern: pattern(&tail.to_string_lossy().replace('\\', "/"))?,
+            pattern: ruff_glob(&tail.to_string_lossy().replace('\\', "/"))?,
             anywhere: false,
             negated: false,
         });
@@ -1455,7 +1467,7 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     }
     Ok(Glob {
         root,
-        pattern: pattern(rest)?,
+        pattern: ruff_glob(rest)?,
         // Any `/` anchors, a trailing one included (#117): `lib/` is the
         // root's `lib`, not `tests/lib` - Ruff adds the basename match only
         // for a pattern with no separator in it at all.
