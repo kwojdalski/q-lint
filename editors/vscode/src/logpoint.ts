@@ -19,6 +19,8 @@
 // Only a lambda takes a logpoint. A projection or alias made of `f` before
 // the logpoint keeps calling the original, unlogged.
 
+import { FULL_TEXT } from "./qtext";
+
 export const LOGPOINT_COMMANDS = {
   add: "q-lint.addLogpoint",
   remove: "q-lint.removeLogpoint",
@@ -34,8 +36,10 @@ export const LOG_ADD = [
   " if[nm in key@[get;`.qlint.log.orig;{(`$())!()}];'\"it has a logpoint already\"];",
   " p:(value f)1;if[p~enlist`;p:`$()];",
   " s:\";\"sv string p;a:$[0=count p;\"enlist(::)\";1=count p;\"enlist \",s;\"(\",s,\")\"];n:\"`\",string nm;",
-  " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist -3!\",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
+  " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist .qlint.log.text \",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
   " if[not`log in key`.qlint;.qlint.log.orig:(`$())!();.qlint.log.wrap:(`$())!();.qlint.log.hits:()];",
+  // `-3!` stops at the process's `\c` width, 79 characters (#2547).
+  ` .qlint.log.text:${FULL_TEXT}[300];`,
   " .qlint.log.orig[nm]:f;.qlint.log.wrap[nm]:w;",
   " nm set w;string nm}",
 ].join("\n");
