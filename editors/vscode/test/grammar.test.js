@@ -213,8 +213,32 @@ test("an underscore after a literal or a bracket is drop: what it joins keeps it
   assert.deepStrictEqual(await scopesOf("f:{1_x}", "1", true), ["constant.numeric.k"]);
   assert.deepStrictEqual(await scopesOf("f:{1_x}", "x", true), ["variable.language.implicit.k"]);
   assert.deepStrictEqual(await scopesOf("r:(1)_y", "y", true), ["variable.other.k"]);
-  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "x_1", true), ["variable.other.k"]);
-  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "a_b", true), ["variable.other.k"]);
+});
+
+// k has no underscore in a name. On KDB-X, with k)v:5 6 7 and k)n:1,
+// k)n_v is 6 7 (n, drop, v), k){x_y}[1;4 5 6] is 5 6, k){x_1}[1 2 3] is
+// 1 3, and k)a_b:7 is refused ('a): a name ends at an underscore there.
+test("k reads an underscore in n_v as drop, in a k file and on a k) line of a q file (#2904)", async () => {
+  const drop = "keyword.operator.k";
+  assert.deepStrictEqual(await scopesOf("r:n_v", "n", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("r:n_v", "_", true), [drop]);
+  assert.deepStrictEqual(await scopesOf("r:n_v", "v", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("r:n_v", "n_v", true), []);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "x", true), ["variable.language.implicit.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "1", true), ["constant.numeric.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "a", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_1+a_b}", "b", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("f:{x_y}", "y", true), ["variable.language.implicit.k"]);
+  // A dotted name's last part ends at one too.
+  assert.deepStrictEqual(await scopesOf("r:.a.b_c", ".b", true), ["variable.other.k"]);
+  assert.deepStrictEqual(await scopesOf("r:.a.b_c", "c", true), ["variable.other.k"]);
+  // The same on a k) line of a q file, and not on a q line.
+  const g = await grammar;
+  const scoped = (line, text) => g.tokenizeLine(line, tm.INITIAL).tokens.filter((t) => line.slice(t.startIndex, t.endIndex) === text).map((t) => t.scopes[t.scopes.length - 1]);
+  assert.deepStrictEqual(scoped("k)r:n_v", "n_v"), []);
+  assert.deepStrictEqual(scoped("k)r:n_v", "_"), [drop]);
+  assert.deepStrictEqual(scoped("k)r:n_v", "v"), ["variable.other.k"]);
+  assert.deepStrictEqual(scoped("r:n_v", "n_v"), ["variable.other.q"]);
 });
 
 // Checked on KDB-X by evaluating "\<c>" for every printable c and every
