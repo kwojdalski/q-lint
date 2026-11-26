@@ -1022,9 +1022,13 @@ fn renamable_global(
         return Err("nothing here is a name q-lint can rename".into());
     };
     // q keeps every one-letter namespace for itself: `.z.pg` is a callback,
-    // `.q.f` a word of the language.
+    // `.q.f` a word of the language. `.m` is where KDB-X runs a module, and
+    // what a module file assigns there is the workspace's own (#2666).
     if let Some(name) = sorted.iter().find(|name| {
-        name.len() > 2 && name.starts_with('.') && name.as_bytes().get(2) == Some(&b'.')
+        name.len() > 2
+            && name.starts_with('.')
+            && name.as_bytes().get(2) == Some(&b'.')
+            && !name.starts_with(".m.")
     }) {
         return Err(format!(
             "`{name}` is in `{}`, a namespace q keeps for itself, where a name means what q \
@@ -1108,6 +1112,13 @@ fn rename_global(
         let mut done = HashSet::new();
         let mut edited = vec![];
         let all = mentions(&text);
+        // What a module exports: `use` returns it, and `f` of `([f;g])` is
+        // a key of that as much as a read of `f` (#2666).
+        let exports: Vec<(usize, usize)> = all
+            .iter()
+            .filter(|m| m.name == "export" && targets.iter().any(|t| t.starts_with(".m.")))
+            .filter_map(|m| m.definition.as_ref().map(|d| (d.start, d.end)))
+            .collect();
         for m in &all {
             if done.contains(&m.at) {
                 continue;
@@ -1118,6 +1129,20 @@ fn rename_global(
             let Some(part) = sources.spelt(&text, m, placement, &targets) else {
                 continue;
             };
+            if exports
+                .iter()
+                .any(|&(start, end)| start <= m.at && m.at < end)
+                && text[..m.at].trim_end().ends_with(['[', ';'])
+                && text[m.at + m.len..].trim_start().starts_with([';', ']'])
+            {
+                let (line, _) = lines.position(m.at);
+                return Err(format!(
+                    "`{old}` is a key of what the module exports at {}:{}: a file that takes \
+                     the module with `use` reads it as `m.{old}`, which a rename cannot follow",
+                    Path::new(key).display(),
+                    line + 1
+                ));
+            }
             done.insert(m.at);
             edited.push(m.at);
             let spelling = &text[m.at..m.at + part];

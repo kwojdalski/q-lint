@@ -1975,6 +1975,44 @@ fn refused(reply: &Value) -> String {
 }
 
 #[test]
+fn a_modules_own_name_is_renamed_and_an_exported_one_refused() {
+    // KDB-X 5: `key `.m.mymod` is ``` ``helper`f`g`export ```, names the
+    // module's file assigns and none of q's (#2666).
+    let dir = tempfile::tempdir().unwrap();
+    let module = "helper:{[hh] hh+1}\nf:{helper x}\ng:{[a] a*2}\nexport:([f;g])\n";
+    let main = "m:use`mymod\nr:m.f 2\ns:.m.mymod.helper 3\n";
+    let mut server = Server::start(dir.path(), &[("main.q", main)]);
+    let uri = server.open(dir.path(), "mymod/init.q", module);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "helper:",
+        0,
+        json!({"newName": "hp"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("init.q", 0, 0, 6, "hp"),
+            edit("init.q", 1, 3, 9, "hp"),
+            edit("main.q", 2, 11, 17, "hp"),
+        ],
+        "{reply}"
+    );
+    // `([f;g])` keys what `use` returns by `f`, and main.q reads `m.f`.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "f:",
+        0,
+        json!({"newName": "ff"}),
+    );
+    assert!(refused(&reply).contains("exports"), "{reply}");
+}
+
+#[test]
 fn a_global_is_renamed_in_every_file_that_names_it_under_its_context() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
