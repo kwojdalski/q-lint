@@ -711,11 +711,22 @@ impl Index {
         policy: &Policy,
         docs: &Documents,
     ) {
-        self.roots.retain(|r| !removed.contains(r));
-        self.folders.retain(|f| !removed.contains(&f.path));
+        // By the file each names, as the files under them are keyed: a
+        // client that spells a folder another way when it removes it - a
+        // trailing `/`, a `.` in the path, another case where the disk has
+        // none - left it a root, and everything in it indexed (#2962).
+        let gone: Vec<String> = removed.iter().map(|r| file_key(r)).collect();
+        self.roots.retain(|r| !gone.contains(&file_key(r)));
+        self.folders.retain(|f| !gone.contains(&file_key(&f.path)));
+        let mut known: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
         let added: Vec<String> = added
             .into_iter()
-            .filter(|(path, _)| !self.roots.contains(path))
+            .filter(|(path, _)| {
+                let key = file_key(path);
+                let new = !known.contains(&key);
+                known.push(key);
+                new
+            })
             .map(|folder| {
                 let path = folder.0.clone();
                 self.folders.push(Folder::of(folder));
@@ -725,7 +736,7 @@ impl Index {
         // A file no configuration governs is rooted at its own folder.
         policy.set_roots(self.roots.iter().chain(&added));
         let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
-        for gone in removed.iter().map(|r| file_key(r)) {
+        for gone in gone {
             let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
             let stale: Vec<String> = self
                 .files
