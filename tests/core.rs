@@ -2099,3 +2099,24 @@ fn many_unclosed_statements_lint_in_linear_time() {
         );
     }
 }
+/// `statement_view` validated the whole scope as UTF-8 again for each
+/// query in it, so one lambda of many queries was quadratic (#2868).
+#[test]
+fn many_queries_in_one_lambda_lint_in_linear_time() {
+    let time = |n: usize| {
+        let body: String = (0..n)
+            .map(|i| format!(" r{i}:select a from t where b>0;\n"))
+            .collect();
+        let source = format!("f:{{[t]\n{body} }}\n");
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(4000); // warm the allocator and the regex caches
+    let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 queries took {small:?} and 32000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "4000 queries took {small:?} and 32000 {large:?}"
+    );
+}

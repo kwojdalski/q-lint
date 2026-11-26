@@ -451,18 +451,21 @@ fn assigns_value(rest: &str) -> bool {
 /// groups go first, then any qSQL phrase through to the end of its statement.
 /// What is left is the assignments the lambda actually makes.
 fn statement_view(direct: &str) -> String {
-    let mut out = crate::flat_filter(direct).into_bytes();
+    // Searched as it was and blanked in a copy: a phrase is blanked up to
+    // its `;`, which no later match starts before or looks back past, so the
+    // text searched is the same - and read once, where checking the copy as
+    // UTF-8 for each phrase was quadratic in the queries of a scope (#2868).
+    let text = crate::flat_filter(direct);
+    let mut out = text.clone().into_bytes();
     let mut i = 0;
-    while let Some(m) =
-        re!(r"(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
-    {
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b").find(&text[i..]) {
         let start = i + m.start();
         // `1_update` is a query, `x_update` a name: `local_view`'s test (#301).
-        if !boundary(std::str::from_utf8(&out).unwrap_or(""), start) {
+        if !boundary(&text, start) {
             i += m.end();
             continue;
         }
-        let end = out[start..]
+        let end = text.as_bytes()[start..]
             .iter()
             .position(|&b| b == b';')
             .map_or(out.len(), |p| start + p);
