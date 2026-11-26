@@ -211,10 +211,14 @@ function isFile(file: string): boolean {
   }
 }
 
-/// A command line as the output shows it: each argument with a space or a
-/// quote in double quotes.
-export function commandText(plan: Pick<Plan, "command" | "args">): string {
-  return [plan.command, ...plan.args].map((a) => (/[\s"']/.test(a) || a === "" ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
+/// A command line as the output shows it: one a shell reads as the command
+/// that ran - the POSIX shells, and PowerShell on Windows. Each argument
+/// holding anything a shell reads itself is quoted whole: only one with a
+/// blank or a quote was, so `$HOME`, `x;y`, a backtick and `*`, which the
+/// program got as written, were a variable, two commands, a substitution
+/// and a glob to whoever pasted the line into a terminal (#3119).
+export function commandText(plan: Pick<Plan, "command" | "args">, platform: string = globalThis.process.platform): string {
+  return [plan.command, ...plan.args].map((a) => quote(a, platform === "win32" ? "powershell" : "posix")).join(" ");
 }
 
 /// The arguments as Set Launch Definition's Arguments box shows them: one

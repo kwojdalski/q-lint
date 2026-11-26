@@ -117,9 +117,22 @@ test("a launch definition starts its program with its script, -p and its argumen
   assert.match(launchPlan(proc("c", 1), "q", "/w").error, /c has no launch definition/);
   assert.match(launchPlan({ ...proc("d", 1, {}), host: "rdb.example" }, "q", "/w").error, /only a local process can be started/);
   assert.match(launchPlan(proc("e", 1, { cwd: "rel" }), "q", undefined).error, /relative, and there is no workspace folder/);
-  assert.strictEqual(commandText({ command: "q", args: ["a b.q", "-p", "1"] }), 'q "a b.q" -p 1');
+  assert.strictEqual(commandText({ command: "q", args: ["a b.q", "-p", "1"] }, "linux"), "q 'a b.q' -p 1");
   assert.ok(isLocalHost("localhost") && isLocalHost("127.0.0.1") && isLocalHost("::1") && isLocalHost("MyBox", "mybox"));
   assert.ok(!isLocalHost("rdb.example", "mybox"));
+});
+
+test("the command line the output shows is the command that ran, to a shell it is pasted into (#3119)", () => {
+  const plan = { command: "/opt/q/q", args: ["a b", "$HOME", "x;y", "`sym", "*", "-e", "it's", "", "-p", "127.0.0.1:5010", "a=b,c@d%e+f"] };
+  assert.strictEqual(commandText(plan, "linux"), "/opt/q/q 'a b' '$HOME' 'x;y' '`sym' '*' -e 'it'\\''s' '' -p 127.0.0.1:5010 a=b,c@d%e+f");
+  // A shell reads it back as the words that were passed.
+  if (process.platform !== "win32") {
+    const { execFileSync } = require("node:child_process");
+    const read = execFileSync("/bin/sh", ["-c", `printf '%s\\n' ${commandText({ command: "x", args: plan.args }, "linux")}`], { encoding: "utf8" });
+    assert.deepStrictEqual(read.split("\n").slice(1, -1), plan.args);
+  }
+  // On Windows, as PowerShell reads one.
+  assert.strictEqual(commandText({ command: "C:\\q\\w64\\q.exe", args: ["a b", "$env:X", "it's", "-p", "5010"] }, "win32"), "C:\\q\\w64\\q.exe 'a b' '$env:X' 'it''s' -p 5010");
 });
 
 test("this machine by any spelling of it: its short name, the root's dot, a loopback address written short, long, mapped or in brackets (#3115)", () => {
