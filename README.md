@@ -1330,7 +1330,8 @@ default used.
 not hide diagnostics on a document the editor opens. They do decide which
 closed files the workspace index reads, as they decide which files
 `qlinter .` visits, so a name only an excluded file defines is undefined in
-the editor as it is in the terminal. Everything else a configuration says is
+the editor as it is in the terminal, and a file an excluded one loads under
+a `\d` stays where the others put it. Everything else a configuration says is
 read too: the server finds `qlinter.toml` or `pyproject.toml` above each
 document as the command line does, and `--config FILE` replaces that search with the one file,
 whose per-file-ignores are then read relative to the directory the server was

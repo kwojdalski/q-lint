@@ -453,7 +453,28 @@ impl Index {
             .any(|f| f.read.module || f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
         let placements = if contexts {
             let paths: Vec<std::path::PathBuf> = keys.iter().map(Into::into).collect();
-            let reads: Vec<_> = keys.iter().map(|k| &self.files[k].read).collect();
+            // A withheld document loads nothing for the others, as it
+            // defines nothing for them: `qlinter .` never reads it, so its
+            // `\d .a` / `\l lib.q` moves no name of lib.q there (#2825). It
+            // is still put where the files that load it say.
+            let quiet: HashMap<&String, References> = keys
+                .iter()
+                .filter(|k| self.files[*k].withheld)
+                .map(|k| {
+                    let module = self.files[k].read.module;
+                    (
+                        k,
+                        References {
+                            module,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+            let reads: Vec<_> = keys
+                .iter()
+                .map(|k| quiet.get(k).unwrap_or(&self.files[k].read))
+                .collect();
             let cwds = self.cwds();
             guarded(|| q_lint_rs::graph::placements(&paths, &reads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])

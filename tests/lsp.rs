@@ -1311,6 +1311,40 @@ fn an_open_excluded_file_defines_nothing_for_the_others() {
 }
 
 #[test]
+fn an_open_excluded_file_loads_nothing_for_the_others() {
+    // `qlinter .` reads no excluded file, so reader.q's `lf` is lib.q's, at
+    // the root. Opening scratch/try.q, which loads lib.q under `\d .a`,
+    // moved `lf` into `.a` for every other file and reader.q got a QF018
+    // the terminal never reports (#2825). The same load in a file the scan
+    // reads does move it.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::write(root.join("qlinter.toml"), "exclude = [\"scratch\"]\n").unwrap();
+    std::fs::create_dir_all(root.join("scratch")).unwrap();
+    let (loader, user) = ("\\d .a\n\\l lib.q\n", "r:lf\n");
+    std::fs::write(root.join("lib.q"), "lf:{x}\n").unwrap();
+    std::fs::write(root.join("reader.q"), user).unwrap();
+    std::fs::write(root.join("scratch/try.q"), "1\n").unwrap();
+    let (reader, scratch, main) = (
+        file_uri(&root.join("reader.q")),
+        file_uri(&root.join("scratch/try.q")),
+        file_uri(&root.join("main.q")),
+    );
+    let mut server = start_with_workspace(&root);
+    server.open(&reader, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&scratch, loader);
+    server.diagnostics_for(&scratch);
+    server.change(&reader, 2, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&main, loader);
+    // The other two open documents report again, in no set order.
+    let reported = last_published(&mut server, &[&reader, &scratch]);
+    assert_eq!(reported[&reader], ["QF018"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
