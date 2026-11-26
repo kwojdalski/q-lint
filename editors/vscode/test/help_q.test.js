@@ -67,8 +67,8 @@ test("no example or cheat sheet entry leaves a global behind", { skip }, () => {
   const examples = JSON.parse(fs.readFileSync(path.join(root, "help", "examples.json"), "utf8"));
   const sheet = JSON.parse(fs.readFileSync(path.join(root, "help", "cheatsheet.json"), "utf8"));
   const codes = [...Object.values(examples).flatMap((entry) => entry.examples.map((e) => e.code)), ...sheet.flatMap((s) => s.items.filter((i) => i.result !== undefined).map((i) => i.example ?? i.insert))];
-  // The root namespace and the namespaces, but the one kept for the examples: insert's table is there.
-  const defined = "(key `.;(key `) except `qlintex)";
+  // The root namespace and the namespaces: insert's example once left .qlintex behind (#2545).
+  const defined = "(key `.;key `)";
   assert.deepStrictEqual(runChecks(codes.map((code) => `{[e] was:${defined}; value e; was~${defined}} ${stringLiteral(code)}`)), []);
   assert.ok(codes.length >= 230, `${codes.length} examples`);
   // And one that does is found.

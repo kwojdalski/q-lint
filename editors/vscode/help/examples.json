@@ -36,7 +36,7 @@
   "idesc": { "examples": [{ "code": "idesc 30 10 20", "result": "0 2 1" }], "see": ["desc", "iasc"] },
   "ij": { "examples": [{ "code": "([] k:1 2 3; a:`x`y`z) ij ([k:1 3] b:10 30)", "result": "([] k:1 3; a:`x`z; b:10 30)" }], "see": ["lj", "uj", "ej"] },
   "in": { "examples": [{ "code": "2 5 in 1 2 3", "result": "10b" }], "see": ["within", "except", "?"] },
-  "insert": { "examples": [{ "code": ".qlintex.t:([] a:1 2); `.qlintex.t insert 3; .qlintex.t", "result": "([] a:1 2 3)" }], "see": ["upsert"] },
+  "insert": { "examples": [{ "code": "{`qlintex set ([] a:1 2); `qlintex insert 3; t:get `qlintex; delete qlintex from `.; t}[]", "result": "([] a:1 2 3)" }], "see": ["upsert"] },
   "inter": { "examples": [{ "code": "1 2 3 4 inter 4 2 6", "result": "2 4" }], "see": ["union", "except"] },
   "key": { "examples": [{ "code": "key `a`b!1 2", "result": "`a`b" }, { "code": "key 3", "result": "0 1 2" }], "see": ["value", "keys", "!"] },
   "keys": { "examples": [{ "code": "keys ([k:1 2] v:3 4)", "result": "enlist `k" }], "see": ["xkey", "cols"] },
