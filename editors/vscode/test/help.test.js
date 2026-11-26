@@ -124,6 +124,35 @@ test("a line in a block comment, or after the script's end, is commented out", (
   assert.strictEqual(h.commentedOut(["count x"]), false);
 });
 
+test("a word in a string open from the line above is no name, and a / and a no-break space comments out nothing below it (#2910)", () => {
+  const { lineContext } = require("../out/statements.js");
+  const under = (lines, line, character) => {
+    const { commented, quoted } = lineContext(lines.slice(0, line + 1));
+    return commented ? undefined : h.nameAt(lines[line], character, quoted)?.name;
+  };
+  // KDB-X reads the two lines as one string: `from` and `in` are its text.
+  const query = ['s:"select count i', '  from trade where sym in syms"', "n:count s", '  ,"in"', "  ,count s"];
+  assert.strictEqual(under(query, 1, 3), undefined);
+  assert.strictEqual(under(query, 1, 22), undefined);
+  assert.strictEqual(under(query, 2, 3), "count");
+  // After the string closes the line is code again, and a continuation
+  // line's own string is still one.
+  assert.strictEqual(under(query, 3, 5), undefined);
+  assert.strictEqual(under(query, 4, 4), "count");
+  assert.strictEqual(under(['s:"a', '  b",count 1'], 1, 6), "count");
+  // A string an unindented line leaves open does not reach the statement
+  // below it, and a comment's quote opens none.
+  assert.strictEqual(under(['s:"a', "n:count s"], 1, 3), "count");
+  assert.strictEqual(under(['a:1 / "', "  +count a"], 1, 4), "count");
+  // q's blanks only: `/` and a no-break space or a form feed is a line
+  // comment, and the lines under it are run.
+  for (const blank of ["\u00a0", "\f"]) {
+    assert.strictEqual(h.commentedOut(["a:1", `/${blank}`, "n:count a"]), false);
+    assert.strictEqual(under(["a:1", `/${blank}`, "n:count a"], 2, 3), "count");
+    assert.strictEqual(h.commentedOut(["a:1", `\\${blank}`, "n:count a"]), false);
+  }
+});
+
 test("the cheat sheet has its four sections, each item with an example and result", () => {
   const sheet = h.readCheatSheet(read("help", "cheatsheet.json"));
   assert.deepStrictEqual(sheet.map((s) => s.section), ["Iterators", "Joins", "Temporal casts", "Attributes"]);
@@ -231,6 +260,11 @@ test("Show Help opens a page, Try it runs an example, and each refuses when turn
   const doc = { lineAt: (i) => ({ text: block[i] }) };
   assert.strictEqual(ui.hovers[0].provider.provideHover(doc, { line: 1, character: 2 }), undefined);
   assert.ok(ui.hovers[0].provider.provideHover(doc, { line: 3, character: 2 }));
+  // Nor in a string open from the line above (#2910).
+  const text = ['s:"select count i', '  from trade where sym in syms"', "count s"];
+  const strung = { lineAt: (i) => ({ text: text[i] }) };
+  assert.strictEqual(ui.hovers[0].provider.provideHover(strung, { line: 1, character: 22 }), undefined);
+  assert.ok(ui.hovers[0].provider.provideHover(strung, { line: 2, character: 2 }));
   assert.strictEqual(await stub.commands.get(h.HELP.tryExample)("til 4"), true);
   assert.deepStrictEqual(ran, ["til 4"]);
   // Try examples off: no hover, Try it refuses and sends nothing, the open page loses its links.

@@ -8,7 +8,7 @@
 // and related names (`help/examples.json`) and the cheat sheet
 // (`help/cheatsheet.json`) are this extension's, written from what q does,
 // and test/help_q.test.js runs every one on a real q.
-import { blockDepth } from "./statements";
+import { lineContext } from "./statements";
 import { inStringOrComment } from "./temporal";
 
 export interface Builtin {
@@ -179,25 +179,16 @@ export function pageHtml(page: HelpPage, helpCommand: string, tryCommand?: strin
 /// Whether the last of `lines`, a file's lines from its first, is
 /// commented out whole: inside a block comment, a `/` or `\` alone that
 /// opens or closes one, or at or after a `\` alone that ends the script.
+/// Read by statements.ts, with q's blanks: a `/` and a no-break space is a
+/// line comment that opens none (#2910).
 export function commentedOut(lines: string[]): boolean {
-  let depth = 0;
-  for (const [i, raw] of lines.entries()) {
-    const line = raw.replace(/\s+$/, "");
-    if (depth === 0 && line === "\\") {
-      return true;
-    }
-    const after = blockDepth(depth, line);
-    if (i === lines.length - 1) {
-      return depth > 0 || after > 0;
-    }
-    depth = after;
-  }
-  return false;
+  return lineContext(lines).commented;
 }
 
 /// The q name, or glyph, at `character` of `line`: `.Q.s1`, `xbar`, `/:`.
-/// Undefined in a string or a comment.
-export function nameAt(line: string, character: number): { name: string; start: number; end: number } | undefined {
+/// Undefined in a string or a comment; `quoted` when the line starts inside
+/// a string open from the lines above it (#2910).
+export function nameAt(line: string, character: number, quoted = false): { name: string; start: number; end: number } | undefined {
   // Glyphs are cut as q cuts them, an operator and then its iterator:
   // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
   // where no name starts: `:.Q.s1` is `:` and `.Q.s1`. A symbol, `` `max ``
@@ -222,5 +213,5 @@ export function nameAt(line: string, character: number): { name: string; start: 
     }
   }
   // Through `start` itself: a `/` after a blank starts a comment.
-  return found === undefined || /^(?:`|\.?\d(?!:$))/.test(found.name) || inStringOrComment(line, found.start + 1) ? undefined : found;
+  return found === undefined || /^(?:`|\.?\d(?!:$))/.test(found.name) || inStringOrComment(line, found.start + 1, quoted) ? undefined : found;
 }
