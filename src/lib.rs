@@ -3287,6 +3287,42 @@ fn scalar_literal(s: &str) -> bool {
         && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
 }
 
+/// Where in `arg` its value is written, inside the blanks and the
+/// parentheses that wrap all of it: q 5 reads `(1)` and `( (1) )` as the atom
+/// 1, so `f . (1)` is the 'type error `f . 1` is (#2936). `literal` is `arg`
+/// in `comments`, where a string is no blank.
+fn unwrapped(arg: &str, literal: &str) -> std::ops::Range<usize> {
+    let from = literal.len() - literal.trim_start().len();
+    let to = literal.trim_end().len().max(from);
+    let inner = &arg[from..to];
+    if inner.len() > 1
+        && inner.starts_with('(')
+        && matching(inner, 0, b'(', b')') == Some(inner.len())
+    {
+        let within = unwrapped(&arg[from + 1..to - 1], &literal[from + 1..to - 1]);
+        from + 1 + within.start..from + 1 + within.end
+    } else {
+        from..to
+    }
+}
+
+/// Whether `before` ends in an operand, which makes the dot after it an
+/// apply: a name, a number, a string or a closing bracket. Not a word q
+/// reads a phrase after - the `in` of `x in . y`, the `from` of a query -
+/// where the dot begins that phrase.
+fn ends_in_operand(before: &str) -> bool {
+    let before = before.trim_end_matches([' ', '\t']);
+    let word = re!(r"[`.A-Za-z0-9_]+$")
+        .find(before)
+        .map_or("", |m| m.as_str());
+    let phrase = !word.contains('.')
+        && builtin(word).is_some_and(|b| match b.kind {
+            BuiltinKind::Function => b.params.len() == 2,
+            kind => matches!(kind, BuiltinKind::Query | BuiltinKind::Control),
+        });
+    !phrase && before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_)]}\"".contains(c))
+}
+
 /// The length in `comments` of the char atom `s` starts with - a string of
 /// one byte as q counts them, `"a"` or `"\n"` - if it starts with one. In
 /// `code` a string is blanks, so `scalar_literal` never sees it (#738).
@@ -8735,9 +8771,13 @@ fn lint_rules(
     for m in re!(concat!(r"(?:\}[ \t]*|[ \t])\.(?:", blank!(), r"+|\()")).find_iter(code) {
         let dot = m.start() + m.as_str().find('.').unwrap();
         let left = code[..dot].trim_end_matches([' ', '\t']);
-        let Some((rank, id)) = applied(dot, left, left.len()) else {
+        // The rank is for the count below. A scalar is a 'type error after
+        // any operand, as it is in the brackets of `.[count;1]`: q 5
+        // `count . 1`, `(+) . 1`, `v . 0` and `` `f . 1 `` (#2936).
+        let known = applied(dot, left, left.len());
+        if known.is_none() && !ends_in_operand(&v.comments[..dot]) {
             continue;
-        };
+        }
         let quoted = past_blanks(&v.comments, dot + 1);
         if let Some(len) = char_atom(&v.comments[quoted..])
             && operand_ends(code, &v.comments, quoted + len)
@@ -8767,7 +8807,9 @@ fn lint_rules(
         if !operand_ends(code, &v.comments, after + end) {
             continue;
         }
-        if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
+        let atom = unwrapped(arg, &v.comments[after..after + end]);
+        let quoted = &v.comments[after + atom.start..after + atom.end];
+        if scalar_literal(&arg[atom]) || char_atom(quoted) == Some(quoted.len()) {
             add(
                 dot,
                 "QA009",
@@ -8775,7 +8817,9 @@ fn lint_rules(
                  (`enlist` it, or use `@`)"
                     .into(),
             );
-        } else if let Some(detail) = items(arg).and_then(|n| too_many(rank, n)) {
+        } else if let Some((rank, id)) = known
+            && let Some(detail) = items(arg).and_then(|n| too_many(rank, n))
+        {
             add(dot, id, detail);
         }
     }
@@ -8905,13 +8949,14 @@ fn lint_rules(
             from += part.len() + 1;
             empty
         });
-        let quoted = parts.get(1).map_or("", |part| {
-            let second = at + 3 + parts[0].len();
-            v.comments[second..second + part.len()].trim()
-        });
-        if elided
-            || parts.len() < 2
-            || !(scalar_literal(parts[1].trim()) || char_atom(quoted) == Some(quoted.len()))
+        if elided || parts.len() < 2 {
+            continue;
+        }
+        let second = at + 3 + parts[0].len();
+        let literal = &v.comments[second..second + parts[1].len()];
+        let atom = unwrapped(parts[1], literal);
+        if !(scalar_literal(&parts[1][atom.clone()])
+            || char_atom(&literal[atom.clone()]) == Some(atom.len()))
         {
             continue;
         }

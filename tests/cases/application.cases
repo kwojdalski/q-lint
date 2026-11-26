@@ -596,6 +596,48 @@ h:{[f] @[f;1;{x}]}
 f:{x+1}
 a:f . 1
 
+=== QA009 profile: general | after any operand, as in the brackets: a builtin, an operator in parentheses, data, a projection, a symbol, a string (KDB-X: each is 'type, #2936)
+v:1 2 3
+d:`a`b!1 2
+a:count . 1
+b:(+) . 1
+c:v . 0
+e:{x}[1] . 2
+g:`f . 1
+h:d . `a
+i:1 2 3 . 1
+j:"abc" . 1
+k:.Q.dd . 1
+
+=== QA009 profile: general | and an atom in parentheses is that atom (KDB-X: each is 'type)
+f:{x}
+a:f . (1)
+b:f . ((1))
+c:f . ( 1 )
+d:f . ("a")
+e:.[f;(1)]
+g:.[f;("a")]
+h:.[f;( `a )]
+
+=== clean profile: general | a list in parentheses, a string and what is no literal are arguments
+f:{x+y}
+v:1 2 3
+a:f . (enlist 1)
+b:v . (),0
+c:f . ("ab")
+d:.[f;(1 2)]
+e:.[f;(),1]
+g:v . 1#0
+
+=== QE008 profile: general | a dot after a word that takes a phrase, or after an operator, applies nothing before it: that is QE008's line alone (KDB-X: each is '.)
+t:([] a:1 2)
+a:1 2 in . 1
+b:select from . `t
+c:1 + . 1
+
+=== clean profile: general | nor does the dot that ends a number (KDB-X: 3 4. 1 is 3 4 1f)
+d:3 4. 1
+
 === clean | a boolean or byte vector is a list of arguments (q 5: f . 10b is 1i, .[f;0x0102] 3i)
 f:{x+y}
 a:f . 10b
