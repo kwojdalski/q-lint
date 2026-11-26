@@ -1489,6 +1489,18 @@ c:{n:1 2; n,"ab"}
 d:{s:"ab"; n:1 2; s,n}
 e:{v:`a`b; w:"ab"; v,w}
 
+=== QT033 QT034 QT035 | a string on the left of a typed local is read as one on its right is (#2877; q 5: f and h are 'type, g is 0h)
+f:{s:`a; "a"=s}
+g:{n:1 2; "ab",n}
+h:{s:`a; "ab"+s}
+
+=== QT033 | a string holding an escaped quote is one string still (#2877; q 5: 'type)
+f:{s:`a; "a\"b"=s}
+
+=== clean | and the empty string there, or a char beside a char, is not reported (#2877; q 5: f is 1 2 and 7h, g is 0b)
+f:{n:1 2; "",n}
+g:{c:"a"; "b"=c}
+
 === QF022 | a local a `::` multiple assignment writes is no longer typed by its first literal (#2119; q 5: a[] is 3, b[] is 1b, c[] is 3, and no global s after any)
 a:{s:`a; (s;n)::(1;2); s+n}
 b:{s:`a; (s;n)::(1;2); s=1}

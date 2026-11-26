@@ -58,7 +58,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str, comments: &str) -> Vec
             if let Some((op, other, whole_end)) = right_side(code, comments, end, &at_place) {
                 judge(&mut out, path, source, p.at, whole_end, t, op, other, true);
             }
-            if let Some((op, other, start)) = left_side(code, p.at, &at_place) {
+            if let Some((op, other, start)) = left_side(code, comments, p.at, &at_place) {
                 judge(&mut out, path, source, start, end, t, op, other, false);
             }
         }
@@ -221,9 +221,10 @@ fn right_side<'a>(
 /// operand when that is one literal or one typed local, and where that
 /// operand starts. q reads right to left, so a dyad's left operand is the
 /// one noun before it - a name, a symbol or several, a number or a vector
-/// of them - whatever is applied to the result further left.
+/// of them, a string - whatever is applied to the result further left.
 fn left_side(
     code: &str,
+    comments: &str,
     at: usize,
     at_place: &HashMap<usize, Operand>,
 ) -> Option<(&'static str, Option<Operand>, usize)> {
@@ -234,6 +235,15 @@ fn left_side(
         .chain([","].iter())
         .find(|op| before.ends_with(**op))?;
     let left = before[..before.len() - op.len()].trim_end_matches([' ', '\t']);
+    // A string is blank in the code view, quotes and all, so one that ends
+    // the left operand is read from the comments view, which keeps it:
+    // `"a"=s` and `"ab"+s` are 'type (KDB-X).
+    let kept = comments[..before.len() - op.len()].trim_end_matches([' ', '\t']);
+    if kept.len() > left.len() && kept.ends_with('"') {
+        // Blank in the code view from quote to quote, or it is no one string.
+        let start = string_start(kept).filter(|&s| code[s..kept.len()].trim().is_empty())?;
+        return Some((op, literal(&kept[start..]), start));
+    }
     let b = left.as_bytes();
     let token_char = |i: usize| {
         let c = b[i];
@@ -292,4 +302,21 @@ fn left_side(
         is_name.then(|| at_place.get(&start).copied()).flatten()
     });
     Some((op, kind, start))
+}
+
+/// Where the string literal that ends `text` starts: the nearest quote
+/// before its closing one that no backslash escapes.
+fn string_start(text: &str) -> Option<usize> {
+    let b = text.as_bytes();
+    let mut i = b.len().checked_sub(1)?;
+    while i > 0 {
+        i -= 1;
+        if b[i] == b'"' {
+            let slashes = b[..i].iter().rev().take_while(|c| **c == b'\\').count();
+            if slashes % 2 == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
 }
