@@ -616,6 +616,22 @@ f:{x+y}
 a:f . 1 2
 b:f . enlist 1
 
+=== QA012 | too many under a handler too, which is then all that runs (KDB-X: .[f;(1;2;3);{x}] is "rank", #2939)
+f:{[a;b] a+b}
+a:.[f;(1;2;3);{x}]
+b:.[f;1 2 3;{x}]
+
+=== QA002 | and to a lambda written out (KDB-X: "rank" for both, #2939)
+a:.[{[a;b] a+b};(1;2;3);{x}]
+b:.[{[a;b] a+b};1 2 3;{x}]
+
+=== clean | but an amend of data, and a projection of the dot waiting for its handler, are neither (KDB-X: .[f;(1;2;3);] is 104h)
+f:{[a;b] a+b}
+d:(1 2;3 4)
+a:.[d;(0;1;2);{x}]
+b:.[f;(1;2;3);]
+c:.[f;(1;2);{x}]
+
 === QA012 | a vector in parentheses is the vector, and a byte or a clock vector one argument an item (KDB-X: 'rank for each, #2943)
 f:{[a;b] (a;b)}
 a:f . (1 2 3)
@@ -768,7 +784,7 @@ s:@[{[a;b] a+b} -.5;2;{x}]
 f:{'`boom}
 r1:@[f;1;{[e;z] e,z}]
 r2:@[f;1;{x,y}]
-r3:.[f;1 2;{[e;z] e,z}]
+r3:.[f;enlist 1;{[e;z] e,z}]
 r4:@[value;`hook;{[d;p] d,p}]
 
 === clean | a rank-1 or niladic handler, one projected down to rank 1, or an amend (#1142)
@@ -790,7 +806,7 @@ r1:@[f;1;h]
 r2:@[f;1;({[e;z] e,z})]
 r3:@[f;1;{[a;e;z] a,e,z}[`a;]]
 r4:@[f;1;(h)]
-r5:.[f;1 2;h]
+r5:.[f;enlist 1;h]
 r6:@[f;1;{[a;e;z] a,e,z}[;`a;]]
 
 === clean | while a named handler defined twice, or a parameter of the lambda the trap is in, has no rank to read

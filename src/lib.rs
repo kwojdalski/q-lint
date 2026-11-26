@@ -8703,13 +8703,25 @@ fn lint_rules(
         {
             add(at, "QA004", "`.[f;()]`".into());
         }
-        if parts.len() != 2 {
+        // Under a handler the call is as much 'rank, and the handler is all
+        // that ever runs: q 5 `.[{[a;b] a+b};(1;2;3);{x}]` is "rank" (#2939).
+        // An empty third slot is a projection of `.`, waiting for one.
+        let trapped = parts.len() == 3 && !v.comments[at + 2..close - 1].trim_end().ends_with(';');
+        if parts.len() != 2 && !trapped {
             continue;
         }
         if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
             && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
         {
-            add(at, id, detail);
+            add(
+                at,
+                id,
+                if trapped {
+                    format!("{detail}, so the handler is all this ever runs")
+                } else {
+                    detail
+                },
+            );
         }
     }
     // `a -1` is `a` applied to `-1`, not `a` minus one: with whitespace before
