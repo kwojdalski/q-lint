@@ -599,3 +599,21 @@ fn a_dictionary_literal_closed_on_a_later_line_is_one_for_an_older_target() {
         "{err}"
     );
 }
+
+/// `.Q` indexed by the name reaches the removed function as the dotted
+/// name does (#2733): on KDB-X `` .Q`Xf `` and `` .Q[`Cf] `` are null, as
+/// `` `Xf in key .Q `` is 0b. Another name of `.Q` is no such thing.
+#[test]
+fn a_removed_function_reached_by_indexing_its_namespace_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text = "a:.Q`Xf\nb:.Q[`Cf]\nc:.Q `Xf\nd:.Q[ `Cf ]\ne:.Q`Xfoo\nf:.Q`res\ng:.Q[`Cf.x]\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let want: Vec<_> = (1..=4).map(|l| ("QK005".to_string(), l)).collect();
+    for target in ["4.1", "kdbx"] {
+        let (_, found, err) = run(d, &["--isolated", "--target-version", target, "a.q"]);
+        assert_eq!(qk(&found), want, "{target}: {err}");
+    }
+    let (_, found, err) = run(d, &["--isolated", "--target-version", "4.0", "a.q"]);
+    assert_eq!(qk(&found), vec![], "{err}");
+}

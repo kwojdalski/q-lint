@@ -274,6 +274,23 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                     format!("`{}` was removed in q 4.1", &code[i..i + 5]),
                 ));
             }
+            // The namespace indexed by the name reaches the function as
+            // the dotted name does: KDB-X gives null for `` .Q`Xf `` and
+            // `` .Q[`Cf] `` (#2733).
+            b'.' if code[i..].starts_with(".Q") && (i == 0 || !word(b[i - 1])) => {
+                if let Some(m) = re!(r"^\.Q[ \t]*(?:`|\[[ \t]*`)(Xf|Cf)").captures(&code[i..])
+                    && !code[i + m.get(0).unwrap().end()..]
+                        .starts_with(|c: char| word(c as u8) || c == ':')
+                {
+                    out.push(Finding::at(
+                        path,
+                        source,
+                        i,
+                        "QK005",
+                        format!("`.Q.{}` was removed in q 4.1", &m[1]),
+                    ));
+                }
+            }
             _ => {}
         }
     }
