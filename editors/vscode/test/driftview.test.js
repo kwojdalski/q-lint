@@ -251,6 +251,45 @@ test("Check Drift lists what differs, and a pick opens the diff of the two texts
   assert.strictEqual(vscode.provider.provideTextDocumentContent(right), "/ g: in a.q:2\n{y}\n");
 });
 
+// Definitions past the 20000th, and files past the 5000th, were dropped
+// without a word: "0 differ" was shown while a dropped one differed.
+test("Check Drift says when it compared only part of the workspace (#2985)", async () => {
+  const { DRIFT_DEFINITIONS, DRIFT_FILES } = require("../out/driftview.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-drift-"));
+  const n = DRIFT_DEFINITIONS + 5;
+  fs.writeFileSync(path.join(dir, "big.q"), Array.from({ length: n }, (_, i) => `f${i}:{x+${i}}\n`).join(""));
+  fs.writeFileSync(path.join(dir, "one.q"), "g:{x}\n");
+  const held = Object.fromEntries(Array.from({ length: n }, (_, i) => [`f${i}`, `{x+${i}}`]));
+  // The one that differs is past the cap.
+  held[`f${n - 1}`] = "{x+999}";
+  setup(held);
+  const said = () => stub.messages.map(([, m]) => m).join("\n");
+  vscode.workspace.findFiles = async () => [vscode.Uri.file(path.join(dir, "big.q"))];
+  const rows = await stub.commands.get("q-lint.checkDrift")();
+  assert.strictEqual(rows.length, DRIFT_DEFINITIONS);
+  assert.ok(said().includes(`${DRIFT_DEFINITIONS} workspace definitions against dev: 0 differ, 0 not defined there, ${DRIFT_DEFINITIONS} the same. Not the whole workspace: only the first ${DRIFT_DEFINITIONS} definitions found were compared.`), said());
+
+  // As many files as a check reads: there may be more.
+  setup({ g: "{x}" });
+  let asked;
+  vscode.workspace.findFiles = async (_include, _exclude, most) => ((asked = most), Array.from({ length: most }, (_, i) => vscode.Uri.file(path.join(dir, i === 0 ? "one.q" : `gone${i}.q`))));
+  await stub.commands.get("q-lint.checkDrift")();
+  assert.strictEqual(asked, DRIFT_FILES);
+  assert.ok(said().includes(`1 the same. Not the whole workspace: the workspace holds ${DRIFT_FILES} q files or more, and only the first ${DRIFT_FILES} found were read.`), said());
+
+  // The whole workspace read: nothing is added, at the cap exactly too.
+  setup({ g: "{x}" });
+  vscode.workspace.findFiles = async () => [vscode.Uri.file(path.join(dir, "one.q"))];
+  await stub.commands.get("q-lint.checkDrift")();
+  assert.strictEqual(said(), "q-lint: 1 workspace definitions against dev: 0 differ, 0 not defined there, 1 the same.");
+  fs.writeFileSync(path.join(dir, "big.q"), Array.from({ length: DRIFT_DEFINITIONS }, (_, i) => `f${i}:{x+${i}}\n`).join(""));
+  setup(held);
+  vscode.workspace.findFiles = async () => [vscode.Uri.file(path.join(dir, "big.q"))];
+  await stub.commands.get("q-lint.checkDrift")();
+  assert.ok(!/Not the whole workspace/.test(said()), said());
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("drift detection off: the command refuses, says how to turn it on, and reads nothing", async () => {
   const { live } = setup({ f: "{x}" }, { settings: { "processExplorer.driftDetection.enable": false } });
   assert.strictEqual(await stub.commands.get("q-lint.checkDrift")(), undefined);

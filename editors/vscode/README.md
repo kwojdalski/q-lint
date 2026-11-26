@@ -2018,7 +2018,8 @@ list shows the functions that differ, are not defined on the process or
 are not a lambda there; picking one that differs opens a diff of the
 process's text and the file's, and picking another opens the file at its
 definition. An open file is read as the editor has it. It reads up to 5000
-files and 20,000 definitions. Off by default
+files and 20,000 definitions, and its summary says so when the workspace
+has more than it compared. Off by default
 (`q-lint.processExplorer.driftDetection.enable`), since it reads every
 function the workspace defines from the process.
 
