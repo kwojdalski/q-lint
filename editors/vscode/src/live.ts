@@ -49,6 +49,7 @@ import {
   parseTags,
   passwordKey,
   sharedPasswordKey,
+  editedSince,
   passwordsToForget,
   portProblem,
   processThemeColour,
@@ -2436,7 +2437,7 @@ export class Live {
       // connection kept where it was when that was edited (#1443) gets none (#2124).
       const saved = process.server === undefined ? this.processes().find((p) => p.label === process.label) : undefined;
       if (process.user && saved !== undefined && passwordsToForget([process], [saved]).length > 0) {
-        throw new Error(`it was edited to ${address(saved.host, saved.port)} since it was connected, and its password is for that: connect to it again`);
+        throw new Error(`${editedSince(process, saved)} since it was connected, and its password is for that: connect to it again`);
       }
       const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);

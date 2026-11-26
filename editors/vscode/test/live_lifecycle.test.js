@@ -379,7 +379,7 @@ test("a connection kept at its old address is given no password saved for the ne
   assert.strictEqual(await live.open(live.activeProcess()), false);
   assert.deepStrictEqual(a.logins, ["bob:pw-of-a"]);
   assert.deepStrictEqual(b.logins, []);
-  assert.match(stub.messages.at(-1)[1], /edited to 127\.0\.0\.1:\d+ since it was connected/);
+  assert.match(stub.messages.at(-1)[1], /edited to 127\.0\.0\.1:\d+ and its user was changed to carol since it was connected/);
   assert.ok(!JSON.stringify(stub.messages).includes("pw-of"));
 });
 
