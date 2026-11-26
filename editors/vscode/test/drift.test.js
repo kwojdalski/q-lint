@@ -108,6 +108,32 @@ test("definitions: one behind q) prompts is a definition, in its context, and on
   assert.deepStrictEqual(definitions("a:\"q)f:{x}\"\n"), []);
 });
 
+// KDB-X defines each of these from the file (drift_q.test.js); none was read.
+test("definitions sharing a line, and names with _ or a digit after a dot, are read (#2921)", () => {
+  const read = (text) => definitions(text).map((d) => [d.name, d.text, d.line, d.endLine]);
+  assert.deepStrictEqual(read("h:{x};k:{y}\n.ns._g:{x}\n.ns.1a:{x}"), [
+    ["h", "{x}", 0, 0],
+    ["k", "{y}", 0, 0],
+    [".ns._g", "{x}", 1, 1],
+    [".ns.1a", "{x}", 2, 2],
+  ]);
+  // Beside other code, and each on the lines it spans.
+  assert.deepStrictEqual(read("a:1;m:{x*2} / c;n:{x}\nt:{x}[1];u:{z};\nv:{[a;b]\n  a+b};w:{x}"), [
+    ["m", "{x*2}", 0, 0],
+    ["u", "{z}", 1, 1],
+    ["v", "{[a;b]\n  a+b}", 2, 3],
+    ["w", "{x}", 3, 3],
+  ]);
+  // A `;` in a string, a bracket or a lambda separates nothing.
+  assert.deepStrictEqual(read('s:"a;b:{";c:{x;y}\nd:(1;e:{x})'), [["c", "{x;y}", 0, 0]]);
+  // One after a `system "d .ns"` on its line is defined there, as q does it.
+  assert.deepStrictEqual(read('\\d .dd\nq1:{x};system "d .ee";q2:{y}\nq3:{z}').map((d) => d[0]), [".dd.q1", ".ee.q2", ".ee.q3"]);
+  // k's lambdas are not q's to compare or send, and `::` here makes a view.
+  assert.deepStrictEqual(read("k)f:{x};g:{y}\nf::{x+1}\nn :: {x}"), []);
+  // Only those before any switch are a module's own.
+  assert.deepStrictEqual(definitions('h:{x};system "d .o";k:{y}\nexport:([h])', "modd/init.q").map((d) => d.name), [".m.modd.h", ".o.k"]);
+});
+
 test("texts compare without trailing blanks", () => {
   assert.strictEqual(normalized("{[x]   \n  x \t\n }"), "{[x]\n  x\n }");
 });

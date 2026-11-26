@@ -138,6 +138,16 @@ test("a KDB-X module's functions are compared where use put them (#2321)", { ski
   assert.deepStrictEqual([...held.entries()], [[".m.pkg.0sub.k", { state: "lambda", text: "{x+100}" }]]);
 });
 
+test("the process that loaded a file holds every definition read from it (#2921)", { skip }, async (t) => {
+  const file = 'h:{x};k:{y}\n.ns._g:{x}\n.ns.1a:{x+1}\na:1;m:{x*2}\n\\d .dd\nq1:{x};system "d .ee";q2:{y}\n\\d .\nf::{x+1}\n';
+  const c = await connect(t, file);
+  const defs = definitions(file);
+  const rows = driftRows(defs.map((def) => ({ file: "a.q", def })), await states(c, defs));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}`), ["h:same", "k:same", ".ns._g:same", ".ns.1a:same", "m:same", ".dd.q1:same", ".ee.q2:same"]);
+  // `f::{x+1}` at the top level is a view there, which is no lambda (#1865).
+  assert.deepStrictEqual((await c.evaluate("string views[]")).value, ["f"]);
+});
+
 // The process holds a name's last definition, as the file leaves it: one
 // row, the same, where every definition compared gave a "differs" (#1927).
 test("a name the file defines twice compares the same on the process that loaded it (#1927)", { skip }, async (t) => {
