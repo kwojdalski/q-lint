@@ -44,3 +44,21 @@ test("each row's explained match is the row aj matched", { skip }, async (t) => 
   await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("trade"), asCode("quote"), 9), /no row 9 in the left table, which has 5 rows/);
   await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`tm"), asCode("trade"), asCode("quote"), 0), /the left table has no column tm/);
 });
+
+// `0!` of a symbol unkeys the global it names in place: an explanation of
+// aj[`sym`time;trade;`kq] left the user's keyed table unkeyed, and explained
+// a match for a call q's own aj refuses with 'type (#2981).
+test("a table written as its name is refused as aj refuses it, and the table it names is left keyed (#2981)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "kq:`sym`time xkey quote\n");
+  const keys = async () => await connection.call("{[x] string keys`kq}", 0);
+  assert.deepStrictEqual(await keys(), ["sym", "time"]);
+  // q's own aj refuses the name (and unkeys what it names on the way, so it is asked of a copy).
+  await assert.rejects(connection.call("{[x] `kq2 set kq; aj[`sym`time;trade;`kq2]}", 0), /type/);
+  await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("trade"), asCode("`kq"), 0), /the right table is the symbol `kq: aj takes a table, not the name of one/);
+  await assert.rejects(connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("`trade"), asCode("quote"), 0), /the left table is the symbol `trade/);
+  assert.deepStrictEqual(await keys(), ["sym", "time"]);
+  // The keyed table itself is explained as aj joins it.
+  const m = readMatch(await connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("trade"), asCode("kq"), 0));
+  assert.strictEqual(m.matched, 0);
+  assert.deepStrictEqual(await keys(), ["sym", "time"]);
+});

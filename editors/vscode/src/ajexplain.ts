@@ -7,8 +7,9 @@
 //
 // The call's three arguments are the user's expressions, evaluated on the
 // process, so the lambda is sent through the read-only guard with the call
-// as the code it reads. It assigns nothing. Works on kdb+ (KDB-X) and
-// PeachQ; held there by processtools_q.test.js.
+// as the code it reads. It assigns nothing: a table is unkeyed as a value,
+// never by its name. Works on kdb+ (KDB-X) and PeachQ; held there by
+// processtools_q.test.js.
 //
 // A row and a time are written by `FULL_TEXT`, up to 2000 characters:
 // `.Q.s1` cuts a wide row at the process's `\c` width, short of the columns
@@ -25,7 +26,10 @@ export function explainAjLambda(evaluate: Evaluate): string {
   const v = evaluate.value;
   return [
     "{[c;l;r;i]",
-    ` c:(),${v} c; L:0!${v} l; R:0!${v} r; i:\`long$i;`,
+    // A table written as its name is refused, as aj refuses it ('type):
+    // `0!` of a symbol unkeys the global it names, in place (#2981).
+    ' T:{[w;t]if[-11h=type t;\'w," table is the symbol ",(-3!t),": aj takes a table, not the name of one"];0!t};',
+    ` c:(),${v} c; L:T["the left"]${v} l; R:T["the right"]${v} r; i:\`long$i;`,
     ` F:{2000 sublist x y}${FULL_TEXT}[2000];`,
     " if[not i within(0;-1+count L);'\"no row \",string[i],\" in the left table, which has \",string[count L],\" rows\"];",
     " if[not all c in cols L;'\"the left table has no column \",string first c except cols L];",
