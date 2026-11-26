@@ -77,6 +77,18 @@ test("the variables lambda lists a view as a view, and does not evaluate it (#18
   assert.deepStrictEqual(readVariables(await connection.call(VARS, 0)), { variables: [], total: 3 });
 });
 
+// A keyed table was a "dictionary" of N "items" (#2384), and a list mapped
+// with get "type 77 list" (#2385).
+test("the variables view calls a keyed table one, of rows, and a mapped list a mapped list (#2384, #2385)", { skip }, async (t) => {
+  const q = await startQ('kt:([k:1 2 3] v:4 5 6)\nd:`a`b!1 2\nnested:get `:nest set (1 2;3 4 5;6 7)\nstrs:get `:strs set ("ab";"cde")\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const { variables } = readVariables(await connection.call(VARS, 1000));
+  const by = Object.fromEntries(variables.map((v) => [v.name, describeVariable(v).replace(/ · \d+ B$/, "")]));
+  assert.deepStrictEqual(by, { kt: "keyed table · 3 rows", d: "dictionary · 2 items", nested: "mapped list · 3 items", strs: "mapped list · 2 items" });
+});
+
 test("notebook features against a real q process", { skip }, async (t) => {
   const a = await startQ('t:([] i:til 3; s:("a";"<b>";"c"));f:{x+1};d:2024.01.01;sp:get (hsym `$":db/sp/") set ([] n:1 2 3)\n');
   const b = await startQ("");
