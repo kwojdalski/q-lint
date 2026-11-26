@@ -40,6 +40,28 @@ s:select from t where date within (d0;d1), size>500
 === clean | an aggregate before it: moving date first changes the rows avg sees
 r:select from t where price>avg price, date=2024.01.05
 
+=== clean | the late constraint aggregates too: first, `max date` is over every row, not the rows the sym kept (KDB-X: one row against none, #2923)
+r:select from t where sym=`b, date=max date
+s:select from t where sym=`b, date=last date
+u:select from t where sym=`b, date in -2#date
+v:select from t where sym=`b, date=(max;date) fby sym
+w:select from t where size>500, date>prev settle
+
+=== QV001 | a late constraint that reads no row but its own
+r:select from t where sym=`a, date=.z.d-1
+s:select from t where sym=`a, date in .z.d-til 5
+u:select from t where sym=`a, date within (sd;ed)
+
+=== clean | a table literal or a query in parentheses is in memory, as update's table is (#2924)
+a:select from ([] sym:`a`b; date:2020.01.01 2020.01.02) where sym=`a, date=2020.01.01
+b:select from (select from t where date=2020.01.01) where sym=`a, date=2020.01.01
+c:exec from ([]date:1#.z.d;sym:1#`a) where sym=`a, date=.z.d
+d:select from ( [k:1 2] sym:`a`b; date:2#.z.d) where sym=`a, date=.z.d
+e:select from (update x:1 from t) where sym=`a, date=.z.d
+
+=== QV001 | a name in parentheses is still a table that may be partitioned
+r:select from (t) where sym=`a, date=d
+
 === clean | no partition column at all, or only one constraint
 r:select from t where sym=`a, size>500
 s:select from t where date=2024.01.05

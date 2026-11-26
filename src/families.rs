@@ -1729,6 +1729,16 @@ fn condition(code: &str, at: usize) -> bool {
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
 const PARTITION_COLUMNS: [&str; 4] = ["date", "month", "year", "int"];
+/// The keywords whose answer for one row depends on the rows beside it - the
+/// aggregates, the running and moving ones, the sorts, `fby` and the row
+/// number `i` - so a where constraint using one cannot move past another.
+const OVER_ROWS: &[&str] = &[
+    "all", "any", "asc", "avg", "avgs", "cor", "count", "cov", "deltas", "desc", "dev", "differ",
+    "distinct", "ema", "fby", "fills", "first", "i", "iasc", "idesc", "last", "mavg", "max",
+    "maxs", "mcount", "mdev", "med", "min", "mins", "mmax", "mmin", "msum", "next", "prd", "prds",
+    "prev", "rank", "ratios", "reverse", "rotate", "scov", "sdev", "sum", "sums", "svar", "var",
+    "wavg", "wsum", "xprev", "xrank",
+];
 
 /// The atomic monadic builtins: each applies item by item to a list, a
 /// dictionary or a table, so `f each x` gives what `f x` gives - one call
@@ -1810,6 +1820,15 @@ fn partition_filter_late(
         let Some(from) = top_level_word(rest, re!(r"\bfrom\b")) else {
             continue;
         };
+        // A table literal or a query in parentheses is a table in memory,
+        // as `update`'s is: nothing is read partition by partition (#2924).
+        let table = rest[from.end()..].trim_start();
+        if table
+            .strip_prefix('(')
+            .is_some_and(|inner| re!(r"^\s*(?:\[|(?:select|exec|update|delete)\b)").is_match(inner))
+        {
+            continue;
+        }
         froms.push(q.end() + from.end());
     }
     // Each query's phrase ends where `crate::phrase_end` says, and its where
@@ -1899,7 +1918,17 @@ fn partition_filter_late(
                     .any(|m| m.as_str() == *p)
             }) && plain_comparison(kept)
         });
-        if !plain || !reported.insert(offset(constraints[late])) {
+        // And the late one reads no more than its own row: `date=max date`
+        // after `sym=s` is the last date `s` has, and first it is the last
+        // of every row - q 5 gives one row and none for the two (#2923).
+        let row_wise = flipped || {
+            let c = bare[late];
+            let own = re!(r"^\s*[a-z]+").find(c).map_or(0, |m| m.end());
+            !re!(r"[A-Za-z][A-Za-z0-9_.]*")
+                .find_iter(&c[own..])
+                .any(|m| PARTITION_COLUMNS.contains(&m.as_str()) || OVER_ROWS.contains(&m.as_str()))
+        };
+        if !plain || !row_wise || !reported.insert(offset(constraints[late])) {
             continue;
         }
         let first = constraints[0].trim();
