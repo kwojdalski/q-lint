@@ -256,3 +256,25 @@ test("a saved chart's legend wraps to rows inside the image, the plot giving way
   assert.deepStrictEqual(many.map((row) => row.map((e) => e.label)), [names.slice(0, 5), names.slice(5, 9).concat(["and 11 more"])]);
   assert.ok(many[1][4].x + "and 11 more".length * 6.5 <= 780 && many[1][4].colour === null);
 });
+
+test("a table keyed by several columns charts its values only, each row named by every key (#3123)", () => {
+  // select avg price by sym, hour from t
+  const g = {
+    columns: [{ name: "sym", numeric: false, key: true, type: 11 }, { name: "hour", numeric: true, key: true, type: 7 }, { name: "price", numeric: true, key: false, type: 9 }],
+    cells: [["a", "a", "b", "b"], ["9", "10", "9", "10"], ["1", "2", "3", "4"]],
+    values: [null, [9, 10, 9, 10], [1, 2, 3, 4]],
+  };
+  const rows = [0, 1, 2, 3];
+  assert.deepStrictEqual(C.chartable(g, "line"), [2]);
+  assert.deepStrictEqual(C.chartable(g, "histogram"), [1, 2], "a histogram counts any column's values");
+  for (const kind of ["line", "bar"]) {
+    const d = C.chartData(g, rows, kind, C.chartable(g, kind), 20);
+    assert.deepStrictEqual(d.labels, ["a 9", "a 10", "b 9", "b 10"]);
+    assert.deepStrictEqual(d.datasets.map((s) => s.label), ["price"]);
+    assert.strictEqual(C.chartConfig(g, rows, kind, d, { colours: ["#f00"] }, "").options.scales.x.title.text, "sym hour");
+    assert.match(C.chartSvg(g, rows, kind, d, { colours: ["#f00"] }, {}), />sym hour<\/text>/);
+  }
+  // One key, or none: the first column alone, as before.
+  const one = { columns: [{ name: "sym", numeric: false, key: true, type: 11 }, { name: "n", numeric: true, key: false, type: 7 }], cells: [["a", "b"], ["1", "2"]], values: [null, [1, 2]] };
+  assert.deepStrictEqual(C.chartData(one, [0, 1], "line", C.chartable(one, "line"), 20).labels, ["a", "b"]);
+});

@@ -102,12 +102,38 @@
     return candleColumns(grid).columns || null;
   }
 
+  /// The columns that name a row on a category axis: the first, and the
+  /// other keys of a table keyed by several (`select ... by sym, hour`).
+  function nameColumns(grid) {
+    const out = [0];
+    grid.columns.forEach(function (c, i) {
+      if (i > 0 && c.key) {
+        out.push(i);
+      }
+    });
+    return out;
+  }
+
+  /// Row `r` as a category axis names it: its first column's text, and with
+  /// several keys every key's (`a 9`) - the first alone called both of
+  /// `a`'s rows `a` (#3123).
+  function rowName(grid, r) {
+    return nameColumns(grid).map(function (c) { return grid.cells[c][r]; }).join(" ");
+  }
+
+  /// The title of an axis of rowName()s: the columns' names.
+  function axisName(grid) {
+    return nameColumns(grid).map(function (c) { return grid.columns[c].name; }).join(" ");
+  }
+
   /// The columns a chart can plot: the numeric ones, and for every kind but
-  /// a histogram not the first, which is the x axis, unless it is the only.
+  /// a histogram not the first, which is the x axis, unless it is the only,
+  /// and no other key either: a key names the row, and is no series beside
+  /// the values it groups (#3123).
   function chartable(grid, kind) {
     const out = [];
     grid.columns.forEach(function (c, i) {
-      if (c.numeric && (kind === "histogram" || i > 0 || byRow(grid))) {
+      if (c.numeric && (kind === "histogram" || byRow(grid) || (i > 0 && !c.key))) {
         out.push(i);
       }
     });
@@ -307,7 +333,7 @@
       const name = function (c) { return grid.columns[c].name; };
       return {
         type: "bar",
-        labels: rows.map(function (r) { return rowAxis ? String(r) : grid.cells[0][r]; }),
+        labels: rows.map(function (r) { return rowAxis ? String(r) : rowName(grid, r); }),
         ohlc: ohlc,
         rowAxis: rowAxis,
         datasets: [
@@ -335,7 +361,7 @@
     }
     return {
       type: kind === "bar" ? "bar" : "line",
-      labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
+      labels: rows.map(function (r) { return byRow(grid) ? String(r) : rowName(grid, r); }),
       datasets: columns.map(function (c) { return { label: name(c), column: c, data: values(c) }; }),
     };
   }
@@ -410,7 +436,7 @@
         interaction: { mode: kind === "scatter" ? "nearest" : "index", intersect: false },
         scales: {
           x: {
-            title: { display: kind !== "histogram", text: rowAxis ? "row" : x.name },
+            title: { display: kind !== "histogram", text: rowAxis ? "row" : kind === "scatter" ? x.name : axisName(grid) },
             type: kind === "scatter" ? "linear" : "category",
             // A month, date, minute or second is a whole number: a tick
             // between two would repeat one's label, or name no month.
@@ -473,7 +499,7 @@
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { title: { display: true, text: data.rowAxis ? "row" : grid.columns[0].name }, ticks: { autoSkip: true, maxRotation: 0 } },
+          x: { title: { display: true, text: data.rowAxis ? "row" : axisName(grid) }, ticks: { autoSkip: true, maxRotation: 0 } },
           // Prices: the axis spans the candles, not down to zero as bars'.
           y: { beginAtZero: false, title: { display: false } },
         },
@@ -817,7 +843,7 @@
       });
     }
     // The x axis's title and the legend, under it.
-    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) || (kind === "candlestick" && data.rowAxis) ? "row" : grid.columns[0].name;
+    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) || (kind === "candlestick" && data.rowAxis) ? "row" : kind === "scatter" ? grid.columns[0].name : axisName(grid);
     if (xTitle) {
       out.push('<text x="' + (left + pw / 2) + '" y="' + (top + ph + 34) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(xTitle) + "</text>");
     }
