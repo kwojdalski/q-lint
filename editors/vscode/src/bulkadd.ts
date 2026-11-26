@@ -7,7 +7,9 @@
 //   brackets (`[::1]:5000:local`), tags split as Tag Process splits them;
 //   or a q handle, `` `:host:port[:user[:password]] ``, in q's order;
 // - CSV with a header row naming its columns: `host` and `port`, and any of
-//   `label`, `tags` (split at spaces, `;` or `|`), `user` and `tls`.
+//   `label` (or `name`), `tags` (split at spaces, `;` or `|`), `user` (or
+//   `username`, `user name`) and `tls`. A column of another name is not
+//   read, and is said not to be.
 // A blank line, or one starting `#` or `/`, is skipped. A password column
 // is never read: a password is asked for on connect and kept in VS Code's
 // secret storage.
@@ -85,20 +87,41 @@ type Column = (typeof COLUMNS)[number];
 /// A column that holds a secret: never read, nor shown back.
 const SECRET = /^(password|passwd|pwd|pass|secret|token|apikey|api_key|credentials?)$/i;
 
+/// The other names a column is read by, as a spreadsheet's export has
+/// them: ignored, `name` and `username` left the process labelled by its
+/// address and with no user, the first connect anonymous (#3113).
+const ALIASES: Partial<Record<Column, string[]>> = { label: ["name"], user: ["username", "user name"] };
+
 /// The CSV header's columns, when `line` is one: it names `host` and `port`.
-function header(line: string): (Partial<Record<Column, number>> & { secret: number[] }) | undefined {
-  const names = csvFields(line).map((f) => f.toLowerCase());
+/// `unread`: its columns of no name that is read, as it writes them.
+function header(line: string): (Partial<Record<Column, number>> & { secret: number[]; unread: string[] }) | undefined {
+  const written = csvFields(line);
+  // `User Name` and `user_name` are one name.
+  const names = written.map((f) => f.toLowerCase().replace(/[\s_]+/g, " "));
   if (!names.includes("host") || !names.includes("port")) {
     return undefined;
   }
-  const at: Partial<Record<Column, number>> & { secret: number[] } = { secret: names.flatMap((n, i) => (SECRET.test(n) ? [i] : [])) };
+  const at: Partial<Record<Column, number>> & { secret: number[]; unread: string[] } = { secret: names.flatMap((n, i) => (SECRET.test(n) ? [i] : [])), unread: [] };
   for (const c of COLUMNS) {
-    const i = names.indexOf(c);
-    if (i >= 0) {
+    const i = [c, ...(ALIASES[c] ?? [])].map((n) => names.indexOf(n)).find((n) => n >= 0);
+    if (i !== undefined) {
       at[c] = i;
     }
   }
+  const read = new Set<number>([...at.secret, ...COLUMNS.flatMap((c) => (at[c] !== undefined ? [at[c]!] : []))]);
+  at.unread = written.filter((name, i) => name !== "" && !read.has(i));
   return at;
+}
+
+/// The columns of `text`'s CSV header that are not read, as it names them:
+/// none when it has no header.
+export function columnsNotRead(text: string): string[] {
+  const first = text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l !== "" && !l.startsWith("#") && !l.startsWith("/"));
+  return (first === undefined ? undefined : header(first))?.unread ?? [];
 }
 
 /// What a `tls` cell says, in lower case: yes, and no (an empty one too).
@@ -235,10 +258,12 @@ export function rowStatus(row: BulkRow): string {
 
 const escape = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/// The rows as the form's table, every value escaped.
-export function rowsHtml(rows: BulkRow[]): string {
+/// The rows as the form's table, every value escaped; under it the columns
+/// `unread` of a CSV header, when there are any.
+export function rowsHtml(rows: BulkRow[], unread: string[] = []): string {
+  const columns = unread.length > 0 ? `<p class="unread">Column${unread.length === 1 ? "" : "s"} not read: ${escape(unread.join(", "))}.</p>` : "";
   if (rows.length === 0) {
-    return '<p class="empty">Nothing to add yet.</p>';
+    return `<p class="empty">Nothing to add yet.</p>${columns}`;
   }
   const body = rows
     .map((r) => {
@@ -248,5 +273,5 @@ export function rowsHtml(rows: BulkRow[]): string {
     })
     .join("");
   const n = toAdd(rows).length;
-  return `<table><thead><tr><th>Line</th><th>Label</th><th>Address</th><th>Tags</th><th>Status</th></tr></thead><tbody>${body}</tbody></table><p class="summary">${n} process${n === 1 ? "" : "es"} to add.</p>`;
+  return `<table><thead><tr><th>Line</th><th>Label</th><th>Address</th><th>Tags</th><th>Status</th></tr></thead><tbody>${body}</tbody></table><p class="summary">${n} process${n === 1 ? "" : "es"} to add.</p>${columns}`;
 }

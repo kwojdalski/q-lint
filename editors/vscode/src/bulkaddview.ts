@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { ViewColumn, commands, window, workspace, type ExtensionContext, type WebviewPanel } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
-import { leftOver, parseBulk, rowsHtml, toAdd } from "./bulkadd";
+import { columnsNotRead, leftOver, parseBulk, rowsHtml, toAdd } from "./bulkadd";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
 
@@ -27,7 +27,7 @@ tr.bad td { color: var(--vscode-errorForeground); }
 tr.dup td { color: var(--vscode-descriptionForeground); }
 button { margin-top: 8px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: none; padding: 4px 12px; }
 </style></head><body>
-<p>One process a line, <code>host:port[:label[:tags]]</code> (a q handle, <code>\`:host:port:user</code>, in q's order), or CSV with a header row naming <code>host</code>, <code>port</code> and any of <code>label</code>, <code>tags</code>, <code>user</code>, <code>tls</code>. No passwords: each is asked for on connect.</p>
+<p>One process a line, <code>host:port[:label[:tags]]</code> (a q handle, <code>\`:host:port:user</code>, in q's order), or CSV with a header row naming <code>host</code>, <code>port</code> and any of <code>label</code> (or <code>name</code>), <code>tags</code>, <code>user</code> (or <code>username</code>), <code>tls</code>. No passwords: each is asked for on connect.</p>
 <textarea id="text" spellcheck="false" placeholder="localhost:5010:rdb:dev&#10;tick.example.com:5000:tp:prod,torq"></textarea>
 <div id="rows"></div>
 <button id="add">Add</button>
@@ -92,7 +92,7 @@ export class BulkAdd {
   async handle(message: { type?: string; text?: unknown }): Promise<void> {
     const text = typeof message.text === "string" ? message.text : "";
     if (message.type === "check") {
-      void this.panel?.webview.postMessage({ type: "rows", html: rowsHtml(parseBulk(text, this.live.processes())) });
+      void this.panel?.webview.postMessage({ type: "rows", html: rowsHtml(parseBulk(text, this.live.processes()), columnsNotRead(text)) });
     } else if (message.type === "add") {
       const { added, rest } = await this.adding(text);
       // Closed once everything was added; else the lines skipped are kept
@@ -126,7 +126,10 @@ export class BulkAdd {
       return { added: 0, rest: text };
     }
     await this.live.saveProcesses([...now, ...adding]);
-    void window.showInformationMessage(plainMessage(`q-lint: added ${adding.length} q process(es)${skipped > 0 ? `; skipped ${skipped} line(s)` : ""}.`));
+    const unread = columnsNotRead(text);
+    void window.showInformationMessage(
+      plainMessage(`q-lint: added ${adding.length} q process(es)${skipped > 0 ? `; skipped ${skipped} line(s)` : ""}${unread.length > 0 ? `; column${unread.length === 1 ? "" : "s"} not read: ${unread.join(", ")}` : ""}.`),
+    );
     return { added: adding.length, rest: leftOver(text, rows) };
   }
 }
