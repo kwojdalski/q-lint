@@ -171,6 +171,11 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     // Unwrapped mode decodes the value and makes the same tree here.
     const here = await runUnwrapped(connection, [code], { size: SIZE, limit: 100, unlimited: false, grid: true });
     assert.deepStrictEqual(here.grid.tree, tree);
+    // A keyed table inside is a table, marked keyed, both ways (#2503).
+    const kcode = "`cfg`book!(`a`b!1 2;([sym:`EUR`GBP] px:1.1 1.3))";
+    const ktree = (await connection.queryGrid(statements(kcode), SIZE, 100, true)).grid.tree;
+    assert.deepStrictEqual([ktree.children[1].key, ktree.children[1].text, ktree.children[1].type, ktree.children[1].count], ["book", "keyed", 98, 2]);
+    assert.deepStrictEqual((await runUnwrapped(connection, [kcode], { size: SIZE, limit: 100, unlimited: false, grid: true })).grid.tree, ktree);
     // Wide: cut to the budget at every level, and the counts say how much.
     const wide = (await connection.queryGrid(statements("10000#enlist til 100"), SIZE, 10, true)).grid.tree;
     const nodes = (n) => 1 + n.children.reduce((k, c) => k + nodes(c), 0);

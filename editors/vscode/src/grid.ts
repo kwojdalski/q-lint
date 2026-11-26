@@ -140,8 +140,8 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
   "     g:{[g;e;b;k;v]u:type v;d:$[99h=u;98h<>type key v;0b];x:d|(0h=u)|(u within 1 76h)&u<>10h;",
   "       m:$[x;count[v]&0|b-1;0];c:$[m;(b-1) div m;0];f:{$[200<count x;(197#x),\"...\";x]};",
   "       l:$[d;{[f;x]$[-11h=type x;string x;f -3!x]}[f] each m#key v;string til m];",
-  "       s:$[x|u in 98 99h;\"\";10h=u;$[1=count v;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist v],\"\\\"\",$[200<count v;\"...\";\"\"];f -3!v];",
-  "       (k;s;u;count v;$[m;g[g;e;c]'[l;$[d;m#value v;m#v]];()])};"]),
+  "       s:$[t:(99h=u)&not d;\"keyed\";x|u in 98 99h;\"\";10h=u;$[1=count v;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist v],\"\\\"\",$[200<count v;\"...\";\"\"];f -3!v];",
+  "       (k;s;$[t;98h;u];count v;$[m;g[g;e;c]'[l;$[d;m#value v;m#v]];()])};"]),
   "     $[98h<>type t;t;",
   "       [m:count t;",
   ...(hold !== undefined
@@ -205,6 +205,8 @@ export interface GridPayload {
 /// One node of a value's tree: its key in its parent (a dictionary's key,
 /// a list's index), q's text of it when it is a leaf, its type and count,
 /// and the children sent - fewer than `count` when the tree was cut.
+/// A keyed table is a leaf of type 98 with the text `keyed`, not a
+/// dictionary that has no children to open (#2503).
 export interface TreeNode {
   key: string;
   text: string;
