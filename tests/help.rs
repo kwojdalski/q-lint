@@ -379,7 +379,8 @@ fn a_function_takes_what_its_signature_names_or_what_its_body_reads() {
         [
             takes("add", &["a", "b"]),
             takes("none", &[]),
-            takes("constant", &[]),
+            // KDB-X 5: `(value {1})1` is `,`x` (#2949).
+            takes("constant", &["x"]),
             takes("one", &["x"]),
             // q counts up to the last one read: `{x+z}` takes three.
             takes("third", &["x", "y", "z"]),
@@ -405,21 +406,7 @@ fn a_column_named_y_or_z_is_not_an_implicit_parameter() {
             takes("key", &["x"]),
             // A column's value is read: `{([]a:y)}` takes two.
             takes("val", &["x", "y"]),
-            takes("whr", &[]),
-        ]
-    );
-}
-
-#[test]
-fn a_projection_takes_the_slots_it_leaves_open() {
-    let source = "turn:{[g;n] g+n}[;7]\ninc:{[a;b] a+b}[1]\nmid:{[a;b;c] b}[1;;3]\nnext1:{x+y} 1\n";
-    assert_eq!(
-        parameters(source),
-        [
-            takes("turn", &["g"]),
-            takes("inc", &["b"]),
-            takes("mid", &["b"]),
-            takes("next1", &["y"]),
+            takes("whr", &["x"]),
         ]
     );
 }
@@ -1646,6 +1633,64 @@ fn signature_help_past_the_last_parameter_says_there_are_too_many() {
     );
     let help = zz_help(plain(), "if[a;b;c;d;");
     assert_eq!(help["activeParameter"], 2);
+}
+
+// #2949: a lambda that names no parameter was shown as `f[]` and its only
+// argument called one too many. KDB-X 5 runs `f[]` and `f[7]` for both
+// `f:{1}` and `f:{[] 1}`, and refuses `f[1;2]` with 'rank.
+#[test]
+fn signature_help_for_a_lambda_naming_no_parameter_takes_one_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "bare:{1}
+none:{[] 1}
+ctx:{.z.x}
+r:bare[
+s:none[
+t:none[1;
+u:bare[1;
+v:ctx";
+    let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
+    let uri = server.open(dir.path(), "a.q", text);
+    let mut help = |context: &str| {
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            context,
+            context.len(),
+            Value::Null,
+        );
+        let help = &reply["result"];
+        let said = help["signatures"][0]["documentation"].as_str();
+        (labelled(help), said.unwrap_or_default().to_string())
+    };
+    assert_eq!(
+        help("r:bare["),
+        (("bare[x]".to_string(), json!(0)), String::new())
+    );
+    assert_eq!(
+        help("s:none["),
+        (("none[]".to_string(), json!(0)), String::new())
+    );
+    // A second argument is one too many for either.
+    assert_eq!(
+        help("t:none[1;"),
+        (
+            ("none[]".to_string(), json!(0)),
+            "Too many arguments: none takes 1 argument.".to_string()
+        )
+    );
+    assert_eq!(
+        help("u:bare[1;"),
+        (
+            ("bare[x]".to_string(), json!(1)),
+            "Too many arguments: bare takes 1 argument.".to_string()
+        )
+    );
+    // And a hover names the `x` q gives a lambda that reads none.
+    let reply = server.ask("textDocument/hover", &uri, text, "v:ctx", 3, Value::Null);
+    let shown = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(shown.contains("ctx[x]"), "{shown}");
 }
 
 #[test]

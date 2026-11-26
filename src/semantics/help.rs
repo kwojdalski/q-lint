@@ -17,13 +17,14 @@ const MAX_COMMENT: usize = 40;
 /// The parameters of what is assigned at `brace`, a lambda, as whoever calls
 /// the name sees them: the signature's slots as written, or - with no
 /// signature - x, y and z as far as the body reads them, which is how q
-/// counts them (`{x+z}` takes three). A projection takes what it leaves
-/// open: `{[g;n] ...}[;7]` takes `g`, and `{[a;b] a+b}[1]` takes `b`.
+/// counts them (`{x+z}` takes three, and `{1}` takes `x`). A projection
+/// takes what it leaves open: `{[g;n] ...}[;7]` takes `g`, and
+/// `{[a;b] a+b}[1]` takes `b`.
 pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) -> Vec<String> {
     let sig = signature(code, raw, brace);
     let params: Vec<String> = if sig.named {
         match sig.slots.as_slice() {
-            // `{[] ...}` names none.
+            // `{[] ...}` names none, though q still takes one argument.
             [only] if only.trim().is_empty() => vec![],
             slots => slots.iter().map(|slot| slot.trim().to_string()).collect(),
         }
@@ -46,12 +47,14 @@ pub(super) fn parameters(code: &str, raw: &str, scopes: &[Scope], brace: usize) 
                 .find_iter(direct)
                 .any(|m| m.as_str() == name && boundary(direct, m.start()))
         };
+        // A lambda that reads none of them takes `x` all the same: KDB-X 5
+        // gives `(value {1})1` as `,`x`, and `{1}[]` is a call (#2949).
         let taken = if reads("z") {
             3
         } else if reads("y") {
             2
         } else {
-            usize::from(reads("x"))
+            1
         };
         ["x", "y", "z"][..taken]
             .iter()

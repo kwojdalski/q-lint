@@ -508,6 +508,15 @@ struct Signature {
     open: bool,
 }
 
+impl Signature {
+    /// How many arguments a call may write. One where no parameter is
+    /// named: KDB-X 5 runs `f[]` and `f[1]` for `f:{[] 1}`, and refuses
+    /// `f[1;2]` with 'rank (#2949).
+    fn rank(&self) -> usize {
+        self.params.len().max(1)
+    }
+}
+
 /// The signatures of the name called at `at..at + len` of the cursor's
 /// document: the workspace's functions of that name, one for each list of
 /// parameters, or q's own.
@@ -662,9 +671,9 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
     // has several definitions.
     let active = found
         .iter()
-        .position(|s| s.open || call.argument < s.params.len())
+        .position(|s| s.open || call.argument < s.rank())
         .unwrap_or(0);
-    let over = |s: &Signature| !s.open && call.argument >= s.params.len();
+    let over = |s: &Signature| !s.open && call.argument >= s.rank();
     let parameter = |s: &Signature| {
         if s.open {
             json!(call.argument.min(s.params.len() - 1))
@@ -700,7 +709,7 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
                 "activeParameter": parameter(s),
             });
             let said = if over(s) {
-                let takes = match s.params.len() {
+                let takes = match s.rank() {
                     1 => "1 argument".to_string(),
                     n => format!("{n} arguments"),
                 };
