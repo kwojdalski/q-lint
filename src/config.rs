@@ -594,12 +594,6 @@ impl Policy {
         }))
     }
 
-    /// Whether the rule `code` reports on `path`.
-    pub fn enabled(&self, code: &str, path: &Path) -> Result<bool, String> {
-        let settings = self.settings(path)?;
-        Ok(self.selected(&settings, code) && !per_file_ignored(&settings, code, path))
-    }
-
     fn selected(&self, settings: &Settings, code: &str) -> bool {
         self.configured(settings, code)
             && self
@@ -717,6 +711,39 @@ impl Policy {
             }
         }
         Ok(found)
+    }
+
+    /// The configuration's say over the findings another backend made for
+    /// one file - qls's - as `lint` has it over its own: which are selected
+    /// there, which the baseline in force passes over, and what severity
+    /// each reports with. They joined the run after the last two, so
+    /// `--write-baseline` wrote them and `--baseline` never took them back
+    /// (#2754), and a `[severity]` for QLS001 was read and did nothing
+    /// (#2755).
+    pub fn adopt(&self, source: &str, path: &str, found: &mut Vec<Finding>) -> Result<(), String> {
+        let file = Path::new(path);
+        let settings = self.settings(file)?;
+        found.retain(|f| {
+            self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
+        });
+        if let Some(file) = self.baseline_file(&settings) {
+            match &*self.baseline(&file) {
+                Ok(b) => {
+                    let n = b.filter(path, source, found);
+                    self.baselined.set(self.baselined.get() + n);
+                }
+                Err(e) if self.lenient => {
+                    self.warn(format!("{e}; reporting every finding"), e);
+                }
+                Err(e) => return Err(e.clone()),
+            }
+        }
+        for f in found {
+            if let Some(level) = severity_of(&settings, &f.code) {
+                f.severity = level.to_string();
+            }
+        }
+        Ok(())
     }
 
     /// Refuses a selection with QP008 and QP005 or QP007 both on for

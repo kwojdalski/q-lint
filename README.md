@@ -341,7 +341,8 @@ new. A line that is edited is new, which is the point. Paths are written
 relative to the baseline file, so it means the same in every checkout. A
 baseline that is missing or is not one is an error (exit 2), not a run that
 silently reports everything; the language server says so once and shows
-every finding.
+every finding. A finding from qls (`--backend qls` or `all`) is written and
+passed over as a built-in rule's is.
 
 A file whose brackets do not balance reports its first QE001 and nothing
 else. A baseline that holds that QE001 accepts it as a `noqa` on its line
@@ -437,7 +438,8 @@ QS006 = "warning"    # except this one
 The text, `json`, `sarif` and `github` reports and the language server all
 show it, and only an `error` or a `warning` fails the run (exit 1). It changes
 how a finding is reported, never whether: that is `select` and `ignore`. An
-editor's own `lint.severity` overrides it again, for that user.
+editor's own `lint.severity` overrides it again, for that user. `QLS001` sets
+every qls finding, whatever severity qls gave it.
 
 `[rules.<CODE>]` holds a rule's own options, for the few rules with a
 threshold or a word list of their own:

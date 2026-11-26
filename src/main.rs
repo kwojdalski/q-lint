@@ -997,8 +997,15 @@ fn run(args: Args) -> Result<u8, String> {
     // are reported, and the run ends in 2 (#2871).
     let mut silent = false;
     if args.backend != "builtin" {
+        // qls reports on its own; the configuration still decides what is
+        // shown, file by file as it does for the built-in rules.
+        let mut external: std::collections::HashMap<String, Vec<_>> = Default::default();
         match qls::lint(sources.clone(), &args.qls_executable, args.qls_timeout) {
-            Ok(found) => findings.extend(found),
+            Ok(found) => {
+                for f in found {
+                    external.entry(f.path.clone()).or_default().push(f);
+                }
+            }
             Err(e) if args.backend == "all" => {
                 eprintln!("qlinter: {e}; reporting the builtin findings only");
                 silent = true;
@@ -1006,15 +1013,13 @@ fn run(args: Args) -> Result<u8, String> {
             }
             Err(e) => return Err(e),
         }
-    }
-    // qls reports on its own; the configuration still decides what is shown.
-    let mut kept = vec![];
-    for f in findings {
-        if policy.enabled(&f.code, Path::new(&f.path))? {
-            kept.push(f);
+        for (path, source) in &sources {
+            if let Some(mut found) = external.remove(path) {
+                policy.adopt(source, path, &mut found)?;
+                findings.extend(found);
+            }
         }
     }
-    let mut findings = kept;
     findings.sort_by(|a, b| {
         (&a.path, a.line, a.column, &a.source, &a.rule)
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
