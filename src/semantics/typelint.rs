@@ -161,7 +161,7 @@ fn literal(text: &str) -> Option<Operand> {
 }
 
 /// The words for a q type number.
-fn kind_name(k: i16) -> String {
+pub(crate) fn kind_name(k: i16) -> String {
     let base = match k.abs() {
         1 => "boolean",
         2 => "guid",

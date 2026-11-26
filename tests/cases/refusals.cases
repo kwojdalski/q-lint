@@ -1229,6 +1229,49 @@ a:hopen 1.5e
 b:hopen `
 c:hopen ""
 
+=== QT029 profile: general | a string needs the leading colon as a symbol does (#2885; q 5: each is 'type)
+a:hopen "localhost:5000"
+b:hopen["localhost:5000"]
+c:hopen "a"
+d:hopen " :localhost:5000"
+
+=== clean profile: general | with the colon it is a handle, and a string joined to something is not one literal (#2885; q 5: 'hop, if nothing listens)
+a:hopen ":localhost:5000"
+b:hopen "localhost:",string p
+c:hopen":unix://5000"
+
+=== QT029 profile: general | a symbol that runs on over a slash, without its colon (#2886; q 5: each is 'type)
+a:hopen `unix://5000
+b:hopen `tcps://localhost:5000
+c:hopen[`unix://5000]
+
+=== clean profile: general | and with it (#2886; q 5: 'hop, if nothing listens)
+a:hopen `:unix://5000
+b:hopen `:tcps://localhost:5000
+
+=== QT029 profile: general | a null or infinite long is no handle, nor any other literal that is no long (#2887; q 5: 'domain for the first four, 'type each after)
+a:hopen 0N
+b:hopen 0W
+c:hopen -0W
+d:hopen 0Nj
+e:hopen 0n
+f:hopen 2024.01.01
+g:hopen 1b
+h:hopen 0x01
+i:hopen 12:00
+j:hopen `a`b
+k:hopen 1 2
+l:hopen 0D00:00:01
+m:hopen 0Ni
+n:hopen `:a`:b
+o:hopen 010b
+
+=== clean profile: general | while a long, a handle and its timeout, or an int are left to run (#2887; q 5: 'hop, if nothing listens, for the first three)
+a:hopen 5000j
+b:hopen (`:localhost:5000;100)
+c:hopen 05
+d:hopen 5000i
+
 === QT025 profile: general | a list cannot be signalled (q 5: '(1;2), '() and '`a`b are 'stype)
 a:{'(1;2)}
 b:{'()}

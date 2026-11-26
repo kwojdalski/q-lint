@@ -2858,8 +2858,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // call is 'type and the new one connects - a different program, so
         // only in the editor.
         "QT029" => {
-            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.]").find(source.get(start..)?)?;
-            let old = &source[start..start + m.end() - 1];
+            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.][A-Za-z0-9_.:/]*")
+                .find(source.get(start..)?)?;
+            // A vector of symbols is no handle with a colon either (#2887).
+            if source[start + m.end()..].starts_with('`') {
+                return None;
+            }
+            let old = &source[start..start + m.as_str().find('`')? + 1];
             (
                 old,
                 format!("{old}:").into(),

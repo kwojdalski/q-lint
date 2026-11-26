@@ -1164,6 +1164,11 @@ fn whole_sub_phrase(code: &str, sub: usize, name: usize, colon: usize) -> bool {
 /// negative number, or a symbol without the `:` every handle starts with.
 /// `hopen 1.5` and `` hopen `abc `` are 'type and `hopen -1` 'domain;
 /// anything else can only fail at run time, if nothing is listening.
+/// A string needs the colon as a symbol does (`hopen "localhost:5000"` is
+/// 'type, #2885), and so does a symbol that runs on over `/` past a colon
+/// (`` hopen `unix://5000 ``, #2886). Any other literal is refused too: a
+/// null or infinite long with 'domain, and a date, a time, a boolean, a
+/// byte, a guid or a vector of anything with 'type (KDB-X, #2887).
 fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     for m in
         // A symbol may hold `:` after its first character - `` `localhost:5000 ``
@@ -1177,7 +1182,10 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         re!(concat!(
             r"\bhopen",
             blank!(),
-            r#"*(?:\[\s*)?(-?(?:\d+\.\d*|\.\d+|\d+)(?:e[+-]?\d*)?|`(?:[A-Za-z0-9_.][A-Za-z0-9_.:]*)?|"")"#
+            r"*(?:\[\s*)?(",
+            r"-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*",
+            r"|(?:`(?:[A-Za-z0-9_.]*(?::[A-Za-z0-9_.:/]*)?))+",
+            r#"|"(?:[^"\\]|\\.)*")"#
         ))
         .captures_iter(comments)
     {
@@ -1187,7 +1195,9 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
             continue;
         }
         // A plain handle number is what hopen takes.
-        if !crate::operand_ends(code, comments, value.end()) || re!(r"^\d+$").is_match(value.as_str()) {
+        if !crate::operand_ends(code, comments, value.end())
+            || re!(r"^\d+$").is_match(value.as_str())
+        {
             continue;
         }
         // `-0` is the integer 0, and q 5 tries to connect: 'hop, not
@@ -1195,16 +1205,50 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
         if re!(r"^-0+$").is_match(value.as_str()) {
             continue;
         }
-        let (what, error) = if value.as_str() == "`" {
+        let text = value.as_str();
+        let other;
+        let (what, error) = if text == "`" {
             ("the empty symbol", "'type")
-        } else if value.as_str() == "\"\"" {
+        } else if text == "\"\"" {
             ("the empty string", "'type")
-        } else if value.as_str().starts_with('`') {
+        } else if let Some(name) = text.strip_prefix('"') {
+            // With the colon it is a handle, and only the network can
+            // refuse it: `hopen ":localhost:5000"`.
+            if name.starts_with(':') {
+                continue;
+            }
+            ("a string without the leading `:` a handle needs", "'type")
+        } else if text.matches('`').count() > 1 {
+            ("a symbol vector", "'type")
+        } else if let Some(name) = text.strip_prefix('`') {
+            if name.starts_with(':') {
+                continue;
+            }
             ("a symbol without the leading `:` a handle needs", "'type")
-        } else if value.as_str().contains(['.', 'e']) {
-            ("a float", "'type")
         } else {
-            ("a negative number", "'domain")
+            match crate::semantics::infer::literal_type(text) {
+                // A long is a handle unless it is negative, null or
+                // infinite: `hopen 0N`, `hopen 0W` and `hopen -0W` are
+                // 'domain.
+                Some(-7) if text.contains(['N', 'W']) => ("a null or infinite long", "'domain"),
+                Some(-7) if text.starts_with('-') => ("a negative number", "'domain"),
+                Some(-8 | -9) => ("a float", "'type"),
+                // An int or a short is left to the version that runs it,
+                // but for its null and its infinities.
+                Some(-5 | -6) if text.contains(['N', 'W']) => {
+                    ("a null or an infinity that is no long", "'type")
+                }
+                // An exponent is a float too, which `literal_type` leaves
+                // alone: `1e3`, `-1e3` (#504).
+                None if re!(r"^-?(?:\d+\.\d*|\.\d+|\d+)e[+-]?\d*$").is_match(text) => {
+                    ("a float", "'type")
+                }
+                Some(-7..=-5) | None => continue,
+                Some(k) => {
+                    other = crate::semantics::typelint::kind_name(k);
+                    (other.as_str(), "'type")
+                }
+            }
         };
         out.push(Finding::at(
             path,
