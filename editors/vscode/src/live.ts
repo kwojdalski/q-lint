@@ -3305,13 +3305,45 @@ export class Live {
   /// stops this call's wait to be sent, and nothing else's (#2560). With
   /// `lambda`, for a feature that needs q-lint's lambda, a direct
   /// connection is refused before the guard asks: nothing would be sent.
-  async runOnActive<T>(
+  /// `unasked`: nobody sent this run now - `.qlint.view` defined on connect
+  /// - so a query sent meanwhile waits for it, and is not refused for it
+  /// (`yielding`, #3027).
+  runOnActive<T>(
     code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
     signal?: AbortSignal,
     lambda = false,
+    unasked = false,
+  ): Promise<{ process: string; value: T } | undefined> {
+    const run = this.runOnActiveNow(code, query, guard, expect, signal, lambda, unasked);
+    return unasked ? this.yieldedTo(run) : run;
+  }
+
+  /// `run`, as the run of q-lint's own that queries wait for until it ends.
+  private yieldedTo<T>(run: Promise<T>): Promise<T> {
+    const yielding = run.then(
+      () => {},
+      () => {},
+    );
+    this.yielding = yielding;
+    void yielding.then(() => {
+      if (this.yielding === yielding) {
+        this.yielding = undefined;
+      }
+    });
+    return run;
+  }
+
+  private async runOnActiveNow<T>(
+    code: GuardCode,
+    query: (connection: QConnection) => Promise<T>,
+    guard: "ask" | "refuse",
+    expect: string | undefined,
+    signal: AbortSignal | undefined,
+    lambda: boolean,
+    own: boolean,
   ): Promise<{ process: string; value: T } | undefined> {
     // Checked before `ready` would connect and before the guard asks: no
     // question about a process nothing will be sent to. `stillReady` keeps
@@ -3320,7 +3352,7 @@ export class Live {
       throw movedFrom(expect);
     }
     const asked = this.active ?? this.connectingAs;
-    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal);
+    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal, own);
     if (first === undefined) {
       return undefined;
     }
@@ -3733,16 +3765,10 @@ export class Live {
     const first = watched.runs === 0;
     watched.runs++;
     watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
-    const run = this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
-    const yielding = run.then(() => {}, () => {});
-    this.yielding = yielding;
     try {
-      await run;
+      await this.yieldedTo(this.run(watched.code, first ? "watch" : "watched", watched.serverTypes));
     } finally {
       watched.running = false;
-      if (this.yielding === yielding) {
-        this.yielding = undefined;
-      }
     }
   }
 
