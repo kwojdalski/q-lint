@@ -234,10 +234,9 @@ never the one it writes: one reached through a symlink or a hard link, or by
 another case of its name on a disk that ignores case, and the file
 `--stdin-filename` names, are refused with exit 2 and left as they were, and
 so are the configuration the run reads, a file that one extends and the
-baseline in force. So
-is a name that ends `.q`, `.k` or `.qnb`, read or not: `--output-file a.q b.q`
-is a path to lint taken for the flag's value far more often than a report
-meant for `a.q`.
+baseline in force. So is a name that ends `.q`, `.k` or `.qnb`, read or not:
+`--output-file a.q b.q` is a path to lint taken for the flag's value far more
+often than a report meant for `a.q`.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -327,9 +326,10 @@ are not in it, says on standard error how many it passed over, and exits 0
 when nothing is new. Name the file in a configuration, `baseline =
 "qlinter-baseline.json"`, and every run under it - the language server's
 included - uses it without the flag; `--write-baseline` reads no baseline, so
-it always writes everything. It never writes over a file the run lints, nor
-to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
-lints the tree, is refused with exit 2 and leaves `o.q` as it was. Nor
+it always writes everything. It never writes over a file the run lints or a
+configuration it reads, nor to a name ending `.q`, `.k`, `.qnb` or `.toml`:
+`qlinter --write-baseline o.q`, which lints the tree, is refused with exit 2
+and leaves `o.q` as it was, and so is `--write-baseline pyproject.toml`. Nor
 does a run that could not read one of its inputs write anything: it exits 2
 and keeps the baseline there, which a partial one would replace.
 

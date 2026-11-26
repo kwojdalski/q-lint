@@ -770,6 +770,25 @@ fn run(args: Args) -> Result<u8, String> {
         &read,
         CONFIGURED_BY,
     )?;
+    // The baseline in force is the one file here `--write-baseline` is for,
+    // and reading none, it has none; the configuration it does read was
+    // replaced with JSON, a `pyproject.toml` with its `[project]` (#2752).
+    refuse_overwrite(
+        "--write-baseline",
+        args.write_baseline.as_deref(),
+        &read,
+        "a configuration this run reads",
+    )?;
+    if let Some(file) = &args.write_baseline
+        && file
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
+    {
+        return Err(format!(
+            "--write-baseline {}: a baseline is JSON, not a configuration; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
+    }
     if let Some(file) = args
         .write_baseline
         .as_deref()

@@ -203,6 +203,49 @@ fn a_baseline_is_never_written_over_q_source() {
     }
 }
 
+/// Nor over the configuration the run reads, which `--write-baseline
+/// pyproject.toml` replaced with JSON, `[project]` and all, and exited 0
+/// (#2752). A `.toml` name is refused read or not, as a `.q` one is; the
+/// baseline a configuration names is the file the flag is for.
+#[test]
+fn a_baseline_is_never_written_over_a_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let project = "[project]\nname = \"x\"\n\n[tool.qlinter]\nextend = \"base.cfg\"\n";
+    fs::write(d.join("pyproject.toml"), project).unwrap();
+    fs::write(d.join("base.cfg"), "baseline = \"known.json\"\n").unwrap();
+    for (name, why) in [
+        ("pyproject.toml", "a configuration this run reads"),
+        ("base.cfg", "a configuration this run reads"),
+        ("new.toml", "a baseline is JSON, not a configuration"),
+        ("new.TOML", "a baseline is JSON, not a configuration"),
+    ] {
+        let (status, _, err) = run(d, &["--write-baseline", name, "a.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains(why), "{name}: {err}");
+    }
+    assert_eq!(
+        fs::read_to_string(d.join("pyproject.toml")).unwrap(),
+        project
+    );
+    assert!(!d.join("new.toml").exists() && !d.join("new.TOML").exists());
+    let (status, _, err) = run(
+        d,
+        &["--isolated", "--write-baseline", "qlinter.toml", "a.q"],
+    );
+    assert_eq!(status, Some(2), "{err}");
+    assert!(!d.join("qlinter.toml").exists());
+    // The baseline the configuration names is written, and again over itself.
+    for _ in 0..2 {
+        let (status, _, err) = run(d, &["--write-baseline", "known.json", "a.q"]);
+        assert_eq!(status, Some(0), "{err}");
+        assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    }
+    let (status, found, err) = run(d, &["a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+}
+
 /// A run that cannot read one of its inputs writes no baseline: one without
 /// that file's findings would replace the good one, and they would all come
 /// back as new once the file reads again (#2180).
