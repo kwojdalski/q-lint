@@ -200,9 +200,9 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
     // `` `s#3 ``, `` `u#`a ``, `` `p#"a" `` and `` `g#1b `` are 'type, where
     // `` `s#enlist 3 ``, `` `s#() `` and `` `s#"" `` are lists and run
     // (#2891). A string is read from `comments` here too.
-    for m in re!(concat!(
+    for m in re!(
         r#"`([spug])#[ \t]*(-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*|"(?:[^"\\]|\\.)")"#
-    ))
+    )
     .captures_iter(comments)
     {
         let whole = m.get(0).unwrap();
