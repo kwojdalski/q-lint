@@ -178,3 +178,45 @@ test("the heartbeat times a real process, and a process that restarts is reconne
   for (let i = 0; i < 100 && live.latency === undefined; i++) await sleep(20);
   assert.ok(live.latency !== undefined, "the heartbeat restarted");
 });
+
+test("Run Current Statement, Line and Selection run in the context the file's \\d left above them (#2911)", { skip }, async (t) => {
+  const q = await startQ(".ns.v:42\n");
+  t.after(() => q.stop());
+  const { live, last } = await setUp(t, [proc("q", q.port), proc("prod", q.port, { tags: ["prod"] })]);
+  const vscode = require("vscode");
+  const lines = ["\\d .ns", "f:{x+1}", "g:{", "  x+2}", "h:3", "v", "\\d .", "k:4", "(1_key `.ns;`f`g`h`k inter key `.)"];
+  const answers = [];
+  live.onDidAnswer((a) => answers.push(a.answer.ok ? a.answer.text.join(" ") : `'${a.answer.error}`));
+  /// The cursor on `line`, or lines `line` to `to` selected.
+  const at = (line, to) => {
+    const selection = to === undefined ? { active: { line }, isEmpty: true } : { active: { line: to }, isEmpty: false, start: { line, character: 0 }, end: { line: to, character: lines[to].length } };
+    vscode.window.activeTextEditor = {
+      document: { uri: vscode.Uri.file("/w/a.q"), version: 1, lineAt: (n) => ({ text: lines[n] }), getText: (sel) => (sel ? lines.slice(sel.start.line, sel.end.line + 1).join("\n") : lines.join("\n")) },
+      selection,
+    };
+  };
+  assert.strictEqual(await live.connectTo("q"), true);
+  at(1);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  // Kept with its \d, so Run Query Again runs it there too.
+  assert.strictEqual(last(), "ok \\d .ns\nf:{x+1}");
+  // The statement starts a line above the cursor: read from there.
+  at(3);
+  await stub.commands.get("q-lint.queryBlock")();
+  at(4, 4);
+  await stub.commands.get("q-lint.querySelection")();
+  // Below the \d . the file is in the root again.
+  at(7);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(last(), "ok k:4");
+  at(8);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(answers.at(-1), "`v`f`g`h ,`k");
+  // The guard reads the code, not the \d put before it: a read is not asked about.
+  assert.strictEqual(await live.connectTo("prod"), true);
+  stub.messages = [];
+  at(5);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(answers.at(-1), "42");
+  assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "warning"), []);
+});
