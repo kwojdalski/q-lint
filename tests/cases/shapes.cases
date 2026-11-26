@@ -1593,8 +1593,7 @@ h:{[cb] {[x] string cb}[1]; cb set 2}
 
 === QT036 | null of getenv tests each character (q 5: null getenv`UNSET is `boolean$(), and if on it is 'type; #1143)
 a:{$[null getenv`HOME;1;0]}
-b:null getenv`X
-c:null[getenv`X]
+b:{if[null[getenv`X]; :0]; 1}
 d:{if[null getenv x; :0]; 1}
 
 === clean | "" match, count, or all and any reducing the vector (#1143)
@@ -1602,6 +1601,35 @@ a:""~getenv`X
 b:0=count getenv`X
 c:all null getenv`X
 d:any null getenv`X
+
+=== clean | all and any reduce it in brackets, in parentheses, with @ and as .q.all too (#2896; q 5: each runs)
+a:{if[all[null getenv`X]; :0]; 1}
+b:{if[all (null getenv`X); :0]; 1}
+c:{if[all@null getenv`X; :0]; 1}
+d:{if[.q.all null getenv`X; :0]; 1}
+e:{if[any[null getenv`X]; :0]; 1}
+
+=== clean | and a vector nothing tests is a vector: assigned, reduced by another word, or a branch's value (#2897; q 5: each runs)
+a:null getenv`X
+b:sum null getenv`X
+c:count where null getenv`X
+d:max null getenv`X
+e:{if[0<sum null getenv`X; :0]; 1}
+f:$[1b;null getenv`X;2]
+g:$[0b;1;null getenv`X]
+h:?[null getenv`X;1;2]
+i:{if[x; :null getenv`X]; 1}
+
+=== QT036 | while every condition is tested: a while, a do, a later test of $[...], and under not or beside and (#2897; q 5: each 'type)
+a:{while[null getenv`X; :0]; 1}
+b:{do[null getenv`X; :0]; 1}
+c:$[0b;1;null getenv`X;2;3]
+d:{if[not null getenv`X; :0]; 1}
+e:{if[x and (null getenv`X); :0]; 1}
+
+=== QT036 | null applied with @ is the same null (#2898; q 5: 'type)
+a:{if[null@getenv`X; :0]; 1}
+b:{$[null @ getenv`X;1;0]}
 
 === clean | an empty string joined to a typed list takes that list's type, either side (#2118; q 5: each is the simple list - 7h, 11h, 9h, 1h, 4h, 14h, 17h, 6h, 7h)
 a:{s:""; s,1 2}

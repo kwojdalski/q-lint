@@ -1413,13 +1413,15 @@ fn past_blanks_inline(text: &str, at: usize) -> usize {
 /// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
 /// 'type whether or not X is set. `all null` or `any null` in front reduces
 /// it to an atom, and is left alone.
+///
+/// Only where the vector is the condition, which is where q refuses it:
+/// KDB-X runs `r:null getenv`X`, `sum null getenv`X` and
+/// `$[1b;null getenv`X;2]`, and `all[null getenv`X]`, `all (null getenv`X)`
+/// and `all@null getenv`X` as it runs `all null getenv`X` (#2896, #2897).
+/// `null@getenv`X` is the same `null`, and 'type in `if` too (#2898).
 fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
-    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
-        let before = code[..m.start()].trim_end_matches([' ', '\t']);
-        let reduced = ["all", "any"]
-            .iter()
-            .any(|w| before.ends_with(w) && boundary(code, before.len() - w.len()));
-        if !boundary(code, m.start()) || reduced {
+    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(@][ \t]*)getenv\b").find_iter(code) {
+        if !boundary(code, m.start()) || !condition(code, m.start()) {
             continue;
         }
         out.push(Finding::at(
@@ -1433,6 +1435,57 @@ fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
                 .into(),
         ));
     }
+}
+
+/// Whether the expression that starts at `at` is, still a vector, what an
+/// `if`, a `while`, a `do` or a `$[...]` tests: it leads a condition slot,
+/// with nothing in front but a parenthesis, `not`, or an operand joined by
+/// `and`, `or`, `&` or `|`, none of which reduces a vector (KDB-X:
+/// `if[not null getenv`X;...]` and `if[1b and null getenv`X;...]` are
+/// 'type). Any other word in front may reduce it, as `all` and `count` do.
+fn condition(code: &str, at: usize) -> bool {
+    let bytes = code.as_bytes();
+    let (mut depth, mut slot, mut later, mut i) = (0usize, None, 0usize, at);
+    // Back to the bracket around `at`, counting the slots before it.
+    let open = loop {
+        if i == 0 {
+            return false;
+        }
+        i -= 1;
+        match bytes[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            // An item of a list, or a statement of a lambda.
+            b'(' if slot.is_some() => return false,
+            b'{' => return false,
+            b'[' => break i,
+            b';' if depth == 0 => {
+                slot.get_or_insert(i + 1);
+                later += 1;
+            }
+            _ => {}
+        }
+    };
+    let front = &code[slot.unwrap_or(open + 1)..at];
+    if !re!(
+        r"^(?:\s|\(|not\b|(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*)[ \t]*(?:[&|]|\b(?:and|or)\b))*$"
+    )
+    .is_match(front)
+    {
+        return false;
+    }
+    let word = code[..open].trim_end_matches([' ', '\t']);
+    if ["if", "while", "do"]
+        .iter()
+        .any(|w| word.ends_with(w) && boundary(code, word.len() - w.len()))
+    {
+        return later == 0;
+    }
+    // `$[c;a;c2;b;d]` tests every other slot, and never the last.
+    word.ends_with('$')
+        && later % 2 == 0
+        && matching(code, open, b'[', b']')
+            .is_some_and(|close| later + 1 < slots(&code[open + 1..close - 1]).len())
 }
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
