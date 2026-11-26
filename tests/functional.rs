@@ -463,6 +463,114 @@ fn a_select_naming_a_column_as_its_group_is_one_q_refuses() {
     }
 }
 
+/// What KDB-X says of `form`, where a q is here: its error, or `ran`.
+fn q_says(form: &str) -> Option<String> {
+    let out = run_q(&format!(
+        "{TABLE}\nc:(>;`px;2);\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+        quoted(form)
+    ))?;
+    Some(out.trim().to_string())
+}
+
+#[test]
+fn a_functional_form_of_a_shape_q_refuses_is_not_written_as_qsql() {
+    // #2801: each was written as qSQL that runs - `delete px from t`,
+    // `select a:px from t`, `update a, b by sym from t` - where KDB-X
+    // refuses the form: a delete takes a list of columns, a dictionary of
+    // columns lists its values, and a `!` is grouped by a boolean or a
+    // dictionary (by a symbol, q signals that symbol).
+    for (form, why, error) in [
+        ("![t;();0b;`px]", "not a list of them", "type"),
+        ("?[t;();0b;(enlist `a)!`px]", "not a list", "type"),
+        ("?[t;();`sym;(enlist `a)!`px]", "not a list", "type"),
+        (
+            "?[t;();(enlist`sym)!`sym;(enlist`a)!enlist `px]",
+            "not a list",
+            "type",
+        ),
+        ("![t;();`sym;`a`b!(`px;`size)]", "grouped by", "sym"),
+        ("![t;();();`a`b!(`px;`size)]", "grouped by", "type"),
+        ("![t;();`sym;enlist`px]", "grouped by", "sym"),
+        ("![t;();();enlist`px]", "grouped by", "type"),
+        (
+            "![t;enlist (>;`px;2);`sym;`symbol$()]",
+            "grouped by",
+            "type",
+        ),
+        ("![t;enlist (>;`px;2);();`symbol$()]", "grouped by", "type"),
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains(why), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(said) = q_says(form) {
+            assert_eq!(said, error, "{form}");
+        }
+    }
+    // The shapes q takes are written as before: a list of columns, a
+    // dictionary of two symbols, a delete grouped by `1b` or a dictionary.
+    for (form, qsql) in [
+        ("![t;();0b;enlist`px]", "delete px from t"),
+        ("![t;();0b;`px`size]", "delete px,size from t"),
+        ("![t;();1b;enlist`px]", "delete px from t"),
+        ("?[t;();0b;`a`b!`px`size]", "select a:px, b:size from t"),
+        (
+            "![t;enlist (>;`px;2);(enlist`sym)!enlist `sym;`symbol$()]",
+            "delete from t where px>2",
+        ),
+    ] {
+        let got = functional_to_qsql(&format!("r:{form}\n"), 3)
+            .unwrap()
+            .unwrap_or_else(|e| panic!("{form}: {e}"));
+        assert_eq!(got.text, qsql, "{form}");
+        if let Some(out) = run_q(&format!("{TABLE}\n-1 string ({form})~{qsql};\n\\\\\n")) {
+            assert_eq!(out.trim(), "1", "{form}");
+        }
+    }
+}
+
+#[test]
+fn a_where_argument_that_lists_no_constraints_is_not_written_as_qsql() {
+    // #2802: one constraint that is not enlisted is 'type on KDB-X, and
+    // its items were written as constraints, `where >, px, 2`. A name is
+    // no constraint written out either: q evaluates `c`, and `where c`
+    // reads a column.
+    for (form, error) in [
+        ("?[t;(>;`px;2);0b;()]", "type"),
+        ("![t;(>;`px;2);0b;`symbol$()]", "type"),
+        ("?[t;enlist enlist (>;`px;2);0b;()]", "type"),
+        ("?[t;(1;2);0b;()]", "type"),
+        ("?[t;enlist 1;0b;()]", "type"),
+        ("?[t;enlist c;0b;()]", "ran"),
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("not a list of constraints"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(said) = q_says(form) {
+            assert_eq!(said, error, "{form}");
+        }
+    }
+    // A constraint is a parse tree, a column or a boolean constant.
+    for (form, qsql) in [
+        (
+            "?[t;((>;`px;2);`flag);0b;()]",
+            "select from t where px>2, flag",
+        ),
+        ("?[t;enlist `flag;0b;()]", "select from t where flag"),
+        ("?[t;enlist 10101b;0b;()]", "select from t where 10101b"),
+        ("?[t;enlist 1b;0b;()]", "select from t where 1b"),
+    ] {
+        let got = functional_to_qsql(&format!("r:{form}\n"), 3)
+            .unwrap()
+            .unwrap_or_else(|e| panic!("{form}: {e}"));
+        assert_eq!(got.text, qsql, "{form}");
+        if let Some(out) = run_q(&format!("{TABLE}\n-1 string ({form})~{qsql};\n\\\\\n")) {
+            assert_eq!(out.trim(), "1", "{form}");
+        }
+    }
+}
+
 #[test]
 fn a_column_named_with_a_word_of_q_is_not_written_as_qsql() {
     // #2023. A functional form names a column with any symbol; qSQL reads a
