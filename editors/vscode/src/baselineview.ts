@@ -19,6 +19,12 @@ import { assertWritable, linkProblem } from "./workspacewrite";
 
 export const BASELINE_FILE = "qlinter-baseline.json";
 
+/// `file` as a TOML basic string: JSON's escapes are TOML's, so a folder
+/// named with a `"` or `\` stays one path and the file stays TOML (#2416).
+export function tomlString(file: string): string {
+  return JSON.stringify(file);
+}
+
 /// `text`, a `qlinter.toml`, with `baseline = "<file>"` as its first key -
 /// a top-level key has to come before any `[table]` - or undefined when it
 /// names a baseline already.
@@ -32,7 +38,7 @@ export function tomlWithBaseline(text: string, file = BASELINE_FILE): string | u
   while (at < lines.length && /^\s*(#.*)?$/.test(lines[at]) && lines[at].trim() !== "") {
     at++;
   }
-  lines.splice(at, 0, `baseline = "${file}"`);
+  lines.splice(at, 0, `baseline = ${tomlString(file)}`);
   return lines.join("\n");
 }
 
@@ -51,7 +57,7 @@ export function writtenCount(stderr: string): { findings: number; files: number 
 /// to be added by hand.
 export function pyprojectWithBaseline(text: string, file = BASELINE_FILE): string | undefined | null {
   const lines = text.split("\n");
-  const line = `baseline = "${file}"`;
+  const line = `baseline = ${tomlString(file)}`;
   const header = (l: string): RegExpExecArray | null =>
     /^\s*\[\s*tool\s*\.\s*("?)(qlinter|q-lint)\1\s*(\.[^\]]*)?\]\s*(#.*)?$/.exec(l);
   const tableEnd = (at: number): number => {
@@ -203,6 +209,11 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
         if (answer !== write) {
           return undefined;
         }
+        // Turned off while it asked: nothing is written (#2422).
+        if (!on()) {
+          void window.showInformationMessage(plainMessage(languageOff("baseline")));
+          return undefined;
+        }
         // Rewritten to be relative to the folder: the draft's paths are
         // relative to the scratch directory, through `..` (#1191, #1275).
         const text = absolutePaths(readFileSync(draft, "utf8"), canonicalDir(scratch));
@@ -213,7 +224,7 @@ export function registerBaseline(context: ExtensionContext, qlinter: () => { com
           void window.showErrorMessage(plainMessage(`q-lint: could not write ${target}: ${error instanceof Error ? error.message : String(error)}`));
           return undefined;
         }
-        await offerConfiguration(dir, target, command, args);
+        await offerConfiguration(dir, target, command, args, on);
         return target;
       } finally {
         rmSync(scratch, { recursive: true, force: true });
@@ -280,7 +291,7 @@ function canonicalDir(dir: string): string {
 /// only when asked. A new `qlinter.toml` only where none governs: one beside
 /// another would hide it (#1602). Under q-lint.configFile (`--config`) the
 /// line is only shown: that file is the user's to change.
-async function offerConfiguration(dir: string, target: string, command: string, args: string[]): Promise<void> {
+async function offerConfiguration(dir: string, target: string, command: string, args: string[], on: () => boolean): Promise<void> {
   const shown = await runQlinter(command, [...args, "--show-settings", "."], dir).catch(() => undefined);
   const governing = shown === undefined ? undefined : governingConfiguration(shown.stdout);
   const config = governing ?? join(dir, "qlinter.toml");
@@ -298,7 +309,7 @@ async function offerConfiguration(dir: string, target: string, command: string, 
   // change, so the line is only shown (#2296).
   if (args.some((a) => a === "--config" || a.startsWith("--config="))) {
     void window.showInformationMessage(
-      plainMessage(`q-lint: wrote ${BASELINE_FILE}. q-lint.configFile names the configuration: add \`baseline = "${file}"\` to ${config} for the editor and qlinter to use it.`),
+      plainMessage(`q-lint: wrote ${BASELINE_FILE}. q-lint.configFile names the configuration: add \`baseline = ${tomlString(file)}\` to ${config} for the editor and qlinter to use it.`),
     );
     return;
   }
@@ -310,17 +321,19 @@ async function offerConfiguration(dir: string, target: string, command: string, 
     return;
   }
   if (after === null) {
-    void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to the qlinter table in ${config} for the editor and qlinter to use it.`));
+    void window.showInformationMessage(plainMessage(`q-lint: wrote ${BASELINE_FILE}. Add \`baseline = ${tomlString(file)}\` to the qlinter table in ${config} for the editor and qlinter to use it.`));
     return;
   }
   const add = "Add";
   const answer = await window.showInformationMessage(
     plainMessage(
-      `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = "${file}"\` to ${existsSync(config) ? `${config}${pyproject ? `'s [tool.${/^\s*\[\s*tool\s*\.\s*"?q-lint/m.test(before) ? "q-lint" : "qlinter"}]` : ""}` : `a new ${config}`}, so the editor and qlinter use it?`,
+      `q-lint: wrote ${BASELINE_FILE}. Add \`baseline = ${tomlString(file)}\` to ${existsSync(config) ? `${config}${pyproject ? `'s [tool.${/^\s*\[\s*tool\s*\.\s*"?q-lint/m.test(before) ? "q-lint" : "qlinter"}]` : ""}` : `a new ${config}`}, so the editor and qlinter use it?`,
     ),
     add,
   );
-  if (answer === add) {
+  if (answer === add && !on()) {
+    void window.showInformationMessage(plainMessage(languageOff("baseline")));
+  } else if (answer === add) {
     try {
       // The configuration may govern from above the folder: not a link either.
       assertWritable(dirname(config), config);
