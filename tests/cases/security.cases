@@ -40,6 +40,12 @@ tableKey:"id"
 === clean | a prompt is a message, not a secret
 passwordPrompt:"Enter password"
 
+=== QX002 | a name that merely holds the letters of such a word names a credential still, as does one with the word first (#2736)
+profileToken:"ghp_abc123def456"
+contextSecret:"s3cr3tvalue"
+protocolPassword:"hunter2"
+envPassword:"hunter2"
+
 === clean | read from the environment, where it belongs
 password:getenv`PASS
 

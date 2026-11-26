@@ -180,9 +180,29 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
     let secret = options.name_pattern.as_ref().unwrap_or(re!(
         r"(?i)(?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$"
     ));
+    // What a name says after its credential word makes it a message or a
+    // place, `passwordPrompt`, `tokenUrl` - as a whole word of the name, and
+    // only after: `profileToken` holds no `file`, and `envPassword` is a
+    // password (#2736).
     let message = re!(
-        r"(?i)prompt|msg|message|label|text|field|name|hint|key[s]?name|file|path|url|env|var|col"
+        r"(?i)^(?:prompt|msg|message|label|text|field|name|hint|file|filename|path|url|env|var|col)s?$"
     );
+    let described = |rest: &str| {
+        let b = rest.as_bytes();
+        let mut from = 0;
+        for i in 1..=b.len() {
+            if i == b.len()
+                || b[i] == b'_'
+                || b[i].is_ascii_uppercase() && !b[i - 1].is_ascii_uppercase()
+            {
+                if message.is_match(rest[from..i].trim_matches('_')) {
+                    return true;
+                }
+                from = i;
+            }
+        }
+        false
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*\x22").captures_iter(comments) {
         let name = m.get(1).unwrap();
         // The assignment has to be code - the quote is blank there - and the
@@ -191,7 +211,10 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             continue;
         }
         let last = name.as_str().rsplit('.').next().unwrap_or("");
-        if !secret.is_match(last) || message.is_match(last) {
+        let Some(word) = secret.find_iter(last).last() else {
+            continue;
+        };
+        if described(&last[word.end()..]) {
             continue;
         }
         // A column, not a variable: `update password:"***" from users`
