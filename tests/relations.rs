@@ -885,6 +885,61 @@ fn a_function_two_files_define_is_prepared_as_both() {
     assert_eq!(server.summaries("outgoingCalls", &go).len(), 2);
 }
 
+// #2953: one definition a name and file was listed, the first, so the
+// `.z.ts` assigned second - the one q keeps - could not be asked about, and
+// what it calls was in no list.
+#[test]
+fn a_function_one_file_defines_twice_is_prepared_as_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "f:{.z.ts[]}
+.z.ts:{h[x]}
+.z.ts:{g[x]}
+g:{x}
+h:{x}
+";
+    let uri = server.open(dir.path(), "timer.q", text);
+    let lines = |items: &Value| -> Vec<u64> {
+        let items = items.as_array().unwrap_or_else(|| panic!("{items}"));
+        items
+            .iter()
+            .map(|item| span(&item["selectionRange"]).0)
+            .collect()
+    };
+    // From a call, each in the order written; from an assignment, that one
+    // first.
+    let called = server.prepare(&uri, text, ".z.ts[]", 1);
+    assert_eq!(lines(&called), [1, 2]);
+    let first = server.prepare(&uri, text, ".z.ts:{h", 1);
+    assert_eq!(lines(&first), [1, 2]);
+    let second = server.prepare(&uri, text, ".z.ts:{g", 1);
+    assert_eq!(lines(&second), [2, 1]);
+    // Each calls what its own statement names.
+    assert_eq!(
+        server.summaries("outgoingCalls", &second[0]),
+        [call("g", FUNCTION, "timer.q", &[(2, 7, 8)])]
+    );
+    assert_eq!(
+        server.summaries("outgoingCalls", &second[1]),
+        [call("h", FUNCTION, "timer.q", &[(1, 7, 8)])]
+    );
+    // And what calls the name calls both of them.
+    let f = server.item(&uri, text, "f:", 0);
+    assert_eq!(
+        server.summaries("outgoingCalls", &f),
+        [
+            call(".z.ts", FUNCTION, "timer.q", &[(0, 3, 8)]),
+            call(".z.ts", FUNCTION, "timer.q", &[(0, 3, 8)]),
+        ]
+    );
+    for item in second.as_array().unwrap() {
+        assert_eq!(
+            server.summaries("incomingCalls", item),
+            [call("f", FUNCTION, "timer.q", &[(0, 3, 8)])]
+        );
+    }
+}
+
 #[test]
 fn a_call_by_a_string_is_not_seen_and_a_recursive_one_is() {
     let dir = tempfile::tempdir().unwrap();

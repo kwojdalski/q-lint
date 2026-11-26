@@ -438,11 +438,12 @@ fn of_item<'a>(sources: &Sources<'a>, item: &Value) -> Option<(Read<'a>, Option<
     Some((read, Some(i)))
 }
 
-/// Each place a file assigns a lambda to one of `names`, once a name and
-/// file, where it first does, as the outline lists them. Only the files the
-/// index has defining one as a function are read. `each` gets the file, its
-/// lines, the definition's place in `Read::mentions` and the names it
-/// answers to.
+/// Each place a file assigns a lambda to one of `names` - every one, a
+/// second assignment in a file as much as one in a second file: q keeps
+/// the last to run, and reading does not say which that is (#2953). Only
+/// the files the index has defining one as a function are read. `each` gets
+/// the file, its lines, the definition's place in `Read::mentions` and the
+/// names it answers to.
 fn functions(
     sources: &Sources,
     names: &HashSet<&str>,
@@ -457,9 +458,8 @@ fn functions(
             continue;
         };
         let lines = Lines::new(&file.text);
-        let mut listed = HashSet::new();
         for (i, m) in file.mentions.iter().enumerate() {
-            if !m.definition.as_ref().is_some_and(|d| d.function) || !listed.insert(&m.name) {
+            if !m.definition.as_ref().is_some_and(|d| d.function) {
                 continue;
             }
             let answers = file.names(sources, m);
@@ -471,9 +471,11 @@ fn functions(
 }
 
 /// `textDocument/prepareCallHierarchy`: the function under the cursor, as
-/// each file that assigns the name a lambda - every one, since which
-/// assignment ran last is not something reading says. `null` for a local,
-/// and for a global no indexed file defines as a function.
+/// each place a file assigns the name a lambda - every one, since which
+/// assignment ran last is not something reading says. With the cursor on
+/// one of those assignments, that one comes first: it is the one asked
+/// about, and a client that shows a single item shows the first. `null` for
+/// a local, and for a global no indexed file defines as a function.
 fn prepare(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
@@ -486,7 +488,14 @@ fn prepare(params: &Value, sources: &Sources) -> Value {
     functions(
         sources,
         &targets.iter().map(String::as_str).collect(),
-        |file, lines, i, _| items.push(file.item(sources, lines, i)),
+        |file, lines, i, _| {
+            let item = file.item(sources, lines, i);
+            if file.mentions[i].at == at && file_key(&path_of(&file.uri)) == cursor.key {
+                items.insert(0, item);
+            } else {
+                items.push(item);
+            }
+        },
     );
     if items.is_empty() {
         Value::Null
