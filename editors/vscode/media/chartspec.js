@@ -125,7 +125,8 @@
     const day = 86400000;
     const stamp = function (ms, sep) {
       const d = new Date(946684800000 + ms);
-      return d.getUTCFullYear() + "." + pad(d.getUTCMonth() + 1) + "." + pad(d.getUTCDate()) +
+      // The year in four digits, as q writes one before 1000: `0001.01.01` (#1235, #3146).
+      return pad(d.getUTCFullYear(), 4) + "." + pad(d.getUTCMonth() + 1) + "." + pad(d.getUTCDate()) +
         (sep ? sep + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) : "");
     };
     const clock = function (s) {
@@ -166,7 +167,7 @@
     }
     switch (type) {
       case 12: return stamp(v / 1e6, "D");
-      case 13: v = Math.floor(v); return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
+      case 13: v = Math.floor(v); return pad(2000 + Math.floor(v / 12), 4) + "." + pad(((v % 12) + 12) % 12 + 1);
       case 14: return stamp(v * day);
       case 15: return stamp(v * day, "T");
       case 16: return (v < 0 ? "-" : "") + Math.floor(Math.abs(v) / 864e11) + "D" + clock((Math.abs(v) % 864e11) / 1e9);

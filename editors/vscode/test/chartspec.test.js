@@ -123,3 +123,12 @@ test("a range across zero ticks 0 itself, not the residue of adding the step (#2
     }
   }
 });
+
+test("a year before 1000 is labelled in four digits, as q writes it (#3146)", () => {
+  assert.strictEqual(C.temporalLabel(14, -730119, 1), "0001.01.01");
+  assert.strictEqual(C.temporalLabel(14, -365243, 1), "0999.12.31");
+  assert.strictEqual(C.temporalLabel(13, -23988, 1), "0001.01");
+  assert.strictEqual(C.temporalLabel(15, -730119, 1), "0001.01.01T00:00:00");
+  assert.strictEqual(C.temporalLabel(12, -730119 * 86400e9), "0001.01.01D00:00:00");
+  assert.strictEqual(C.temporalLabel(14, 9820), "2026.11.20");
+});
