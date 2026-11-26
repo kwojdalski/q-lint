@@ -62,13 +62,19 @@ export const EVALUATE: Evaluate = { value: "value", system: "system" };
 /// Under `reval`: a write the code would make is a q error (`refusedByReval`).
 export const EVALUATE_READ_ONLY: Evaluate = { value: "{reval(value;x)}", system: "{reval(system;x)}" };
 
+/// `.Q.S[size;0j]` of a value, trapped: q-lint's lambda is a few frames
+/// deeper than the console, so a value nested about 1000 deep raises
+/// 'stack there, after the statements ran - then `-3!` writes it, and
+/// failing that, a line says so (#2651). Applied to the size and the value.
+export const LAID_TEXT = "{[size;v]@[.Q.S[\"j\"$size;0j];v;{[v;e]@[{enlist -3!x};v;{enlist\"q-lint: the value could not be laid out: '\",x}]}[v]]}";
+
 /// `RUN`, its statements evaluated under `reval` when `readOnly`.
 function runLambda(readOnly: boolean): string {
   return [
     "{[s;size]",
     ...trapLines(readOnly),
     " $[r 0;",
-    "   `ok`type`text!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1);",
+    `   \`ok\`type\`text!(1b;type r 1;${LAID_TEXT}[size;r 1]);`,
     "   `ok`error`trace!(0b;r 1;r 2)]}",
   ].join("\n");
 }

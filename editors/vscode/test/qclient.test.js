@@ -117,6 +117,13 @@ test("queries, blocks, errors, abort and close against a real q process", { skip
     assert.deepStrictEqual((await connection.query([".ns.zz"], SIZE)).text, ["42"]);
   });
 
+  await t.test("a value nested 1000 deep is shown, not the query failing with 'stack after it ran (#2651)", async () => {
+    const answer = await connection.query(["deep:{enlist x}/[1000;1]", "deep"], SIZE);
+    assert.strictEqual(answer.ok, true, JSON.stringify(answer).slice(0, 200));
+    assert.match(answer.text[0], /^,,,,/);
+    assert.strictEqual((await connection.query(["count deep"], SIZE)).text[0], "1");
+  });
+
   await t.test("a result larger than the console is cut by the process", async () => {
     const answer = await connection.query(["til 100000"], SIZE);
     assert.strictEqual(answer.text.length, 1);
