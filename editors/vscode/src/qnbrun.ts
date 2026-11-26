@@ -22,8 +22,9 @@ import { cellDirective, type CellMode } from "./celldirectives";
 import { valued, type GuardCode } from "./guard";
 import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { GridAnswer, GridPayload } from "./grid";
-import { formatValue, oneLine } from "./qformat";
+import { formatValue, gridOfQ, headOf, oneLine } from "./qformat";
 import type { Gatewayed } from "./gateway";
+import type { QValue } from "./qdecode";
 import { answerOf, directMode, evaluateAll } from "./querycontrols";
 import type { RowLimitFrom } from "./liveconfig";
 import { address, readProcessFile, type Process } from "./processes";
@@ -71,10 +72,19 @@ async function directCellAnswer(connection: QConnection, mode: CellMode, cut: st
     const failed: GridAnswer = { ok: false, error: ran.error, trace: "" };
     return [false, mode.mode === "chart" ? chartCellOutputs(mode, failed, settings.rowLimitFrom) : cellOutputs(mode, failed, settings.rowLimitFrom)];
   }
-  const { typed } = ran.last;
+  const { typed, precision } = ran.last;
   const tabular = typed !== undefined && (typed.kind === "table" || (typed.kind === "dict" && typed.k.kind === "table" && typed.v.kind === "table"));
-  const answer = answerOf(ran.last, { size: settings.consoleSize, limit: Infinity, unlimited: false, grid: mode.mode === "chart" || tabular });
-  const grid = answer.ok && answer.grid !== undefined ? rowsOf(answer.grid, settings.rows) : undefined;
+  // Only the rows shown are made grid cells, and none for a console cell,
+  // which shows text (#2486).
+  const gridded = mode.mode === "chart" || (mode.mode !== "console" && tabular);
+  const answer = answerOf(ran.last, { size: settings.consoleSize, limit: Infinity, unlimited: false, grid: gridded && typed === undefined });
+  const grid = !answer.ok || !gridded
+    ? undefined
+    : typed !== undefined
+      ? gridOfQ(typed, Math.abs(settings.rows), precision, settings.rows < 0)
+      : answer.grid !== undefined
+        ? rowsOf(answer.grid, settings.rows)
+        : undefined;
   if (mode.mode === "chart") {
     const shown: GridAnswer = grid === undefined ? answer : { ...answer, grid };
     return [true, chartCellOutputs(mode, shown, settings.rowLimitFrom)];
@@ -141,18 +151,32 @@ async function directLiveValues(connection: QConnection, exprs: string[], gatewa
       values[expr] = { error: ran.error };
       continue;
     }
-    const { value, type, typed } = ran.last;
-    const text =
-      typed?.kind === "chars"
-        ? Buffer.from(typed.v).toString("utf8")
-        : type === -11 && typeof value === "string"
-          ? value
-          : typed !== undefined
-            ? oneLine(typed)
-            : formatValue(value, type).join(" ");
-    values[expr] = { text: Array.from(text).slice(0, VALUE_LIMIT).join("") };
+    const { value, type, typed, precision } = ran.last;
+    const text = liveText(typed, value, type, precision);
+    values[expr] = { text: Array.from(text.slice(0, 2 * VALUE_LIMIT)).slice(0, VALUE_LIMIT).join("") };
   }
   return values;
+}
+
+/// A direct live value's text, as `LIVE` writes it: a string or a char
+/// its characters (#2479), a symbol its name - the null one, which the
+/// codec makes null, none (#2574) - and anything else on one line. Only
+/// what is kept is written: a character is at most 4 bytes, and any other
+/// item at least one character (#2480).
+function liveText(typed: QValue | undefined, value: unknown, type: number | undefined, precision: number): string {
+  if (typed?.kind === "chars") {
+    return Buffer.from(typed.v.subarray(0, 4 * VALUE_LIMIT)).toString("utf8");
+  }
+  if (typed?.kind === "atom" && typed.t === -10) {
+    return Buffer.from([Number(typed.v ?? 32)]).toString("utf8");
+  }
+  if (typed?.kind === "atom" && typed.t === -11) {
+    return String(typed.v ?? "");
+  }
+  if (type === -11 && typeof value === "string") {
+    return value;
+  }
+  return typed !== undefined ? oneLine(headOf(typed, VALUE_LIMIT), precision) : formatValue(value, type).join(" ");
 }
 
 /// An output as the file keeps it: an error as VS Code writes one.
@@ -608,7 +632,10 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
     const port = Number(m[2]);
     // The loopback is one host however it is named: localhost, 127.x, ::1 (#1739).
     const same = (h: string): string => (/^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i.test(h) ? "localhost" : h.toLowerCase());
-    const tags = [...new Set(listed.filter((p) => same(p.host) === same(host) && p.port === port).flatMap((p) => p.tags))];
+    const at = listed.filter((p) => same(p.host) === same(host) && p.port === port);
+    const tags = [...new Set(at.flatMap((p) => p.tags))];
+    // Direct as the list has it, as its tags are taken (#2491).
+    direct ||= at.some((p) => p.evaluation === "direct");
     return {
       label: name,
       host,

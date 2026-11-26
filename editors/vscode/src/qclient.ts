@@ -28,13 +28,20 @@ export class QError extends Error {}
 export interface DirectMode {
   label: string;
   from: "process" | "setting";
+  /// For a process a discovery server or the shared list gives, that list,
+  /// as a message names it:
+  /// its `"evaluation"` is set there, and Set Process Evaluation, which
+  /// changes saved processes, cannot change it (#2488).
+  list?: string;
 }
 
 /// What a direct connection says of a call that needs q-lint's own lambda:
 /// it was refused here, before anything was sent.
 export function directRefusal(mode: DirectMode): string {
   const how =
-    mode.from === "process"
+    mode.list !== undefined
+      ? `Its "evaluation" in ${mode.list} changes that`
+      : mode.from === "process"
       ? `Set Process Evaluation on ${mode.label} (its "evaluation" in the process list) changes that`
       : `q-lint.query.unwrapped (Toggle Unwrapped Query) changes that, or Set Process Evaluation for ${mode.label} alone`;
   return `this needs q-lint's own evaluator lambda, and ${mode.label} uses direct evaluation, which sends only your code, as plain strings: nothing was sent. ${how}.`;
@@ -338,6 +345,13 @@ export class QConnection {
     body.copy(message, 14);
     const value = await this.send(message);
     return { value, type: this.answerType, message: this.answerMessage };
+  }
+
+  /// Send `expression`, a string applied to nothing, and resolve with what
+  /// q answers: with `call`, or on a direct connection with `evaluate`,
+  /// since it is a plain string either way (#2482, #2483).
+  async callPlain(expression: string): Promise<unknown> {
+    return this.isDirect ? (await this.evaluate(expression)).value : this.call(expression);
   }
 
   /// Send `expression` applied to `args` as a sync message, and resolve with

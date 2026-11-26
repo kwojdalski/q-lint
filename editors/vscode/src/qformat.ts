@@ -245,7 +245,12 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 15: {
       // KDB-X rounds the float days to the microsecond and cuts that to the
       // millisecond: 0.99999999999 is 23:59:59.999, not the next day (#1757).
-      return ymdhms(new Date(EPOCH_MS + Math.floor(Math.round(n * DAY_MS * 1000) / 1000)));
+      // The microseconds are the days times 8.64e10 in one product, rounded
+      // half away from zero as C's llround rounds: days times 86400000 and
+      // then 1000 rounds twice, a millisecond out far from 2000 (#2577).
+      const product = n * 8.64e10;
+      const micros = Math.trunc(product + Math.sign(product) * 0.5);
+      return ymdhms(new Date(EPOCH_MS + Math.floor(micros / 1000)));
     }
     case 17:
       return clock(n, "minute");
@@ -401,7 +406,7 @@ function listText(values: unknown, t: number, precision: number): string {
 }
 
 /// An atom of q type `t` (-1 to -19) as q's console writes it.
-export function atomText(x: unknown, t: number): string {
+export function atomText(x: unknown, t: number, precision = 7): string {
   const p = -t;
   if (p === 10) {
     return quoted(x === null ? " " : typeof x === "number" ? [x] : String(x));
@@ -409,7 +414,7 @@ export function atomText(x: unknown, t: number): string {
   if (p === 11) {
     return `\`${x ?? ""}`;
   }
-  const text = itemText(x, p);
+  const text = itemText(x, p, precision);
   if (text === undefined) {
     return p === 9 ? "0n" : p === 8 ? "0Ne" : p === 2 ? NULL_GUID : p === 7 ? "0N" : `0N${letter(p)}`;
   }
@@ -549,29 +554,60 @@ function cutCell(text: string): string {
 
 /// A value decoded with its types on one line, as q's `-3!` writes it:
 /// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
-export function oneLine(q: QValue): string {
+export function oneLine(q: QValue, precision = 7): string {
   switch (q.kind) {
     case "atom":
-      return atomText(q.v, q.t);
+      return atomText(q.v, q.t, precision);
     case "vector":
-      return vectorText(q.v, q.t, q.attr);
+      return vectorText(q.v, q.t, q.attr, precision);
     case "chars":
       return vectorText(q.v, 10, q.attr);
     case "list":
-      return q.v.length === 1 ? `,${oneLine(q.v[0])}` : `(${q.v.map(oneLine).join(";")})`;
+      return q.v.length === 1 ? `,${oneLine(q.v[0], precision)}` : `(${q.v.map((x) => oneLine(x, precision)).join(";")})`;
     case "dict": {
       // A key that is an empty or one-item vector, a table or a dictionary is
       // put in parentheses, as `-3!` puts them: `` `symbol$()!() `` is read as
       // `` `symbol$(()!()) ``. A general list's `,1 2` or `()` needs none (#2573).
-      const k = oneLine(q.k);
+      const k = oneLine(q.k, precision);
       const short = (q.k.kind === "vector" || q.k.kind === "chars") && q.k.v.length <= 1;
-      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v)}`;
+      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision)}`;
     }
     case "table":
-      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } })}`;
+      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision)}`;
     case "func":
-      return q.text ?? (q.t === 101 ? "::" : "func");
+      return funcText(q, precision);
   }
+}
+
+/// The iterators' glyphs, by type from 106: `'`, `/`, `\`, `':`, `/:`, `\:`.
+const ITERATORS = ["'", "/", "\\", "':", "/:", "\\:"];
+
+/// A function as `-3!` writes it (#2477): a lambda or a primitive its
+/// text; a projection its function and arguments, `{x+y}[1;]`; a
+/// composition its functions in turn, a unary primitive before another
+/// without its colon, `-sum`; a derived function its function and
+/// iterator, `+/`.
+function funcText(q: QValue & { kind: "func" }, precision: number): string {
+  if (q.text !== undefined) {
+    return q.text;
+  }
+  const parts = q.parts ?? [];
+  const text = (x: QValue): string => oneLine(x, precision);
+  if (q.t === 104 && parts.length > 0) {
+    return `${text(parts[0])}[${parts.slice(1).map(text).join(";")}]`;
+  }
+  if (q.t === 105 && parts.length > 0) {
+    return parts
+      .map((x, i) => {
+        const s = text(x);
+        return i < parts.length - 1 && x.kind === "func" && x.t === 101 && /^[^:]:$/.test(s) ? s.slice(0, -1) : s;
+      })
+      .join("");
+  }
+  if (q.t >= 106 && q.t <= 111 && parts.length === 1) {
+    return text(parts[0]) + ITERATORS[q.t - 106];
+  }
+  return q.t === 101 ? "::" : "func";
 }
 
 /// How many items a decoded list has; 1 for anything else.
@@ -602,24 +638,24 @@ function lineUp(n: number, y: string[]): string[] {
 /// blank); a general list's with `-3!`, or as rows lined up when every item
 /// is a list of the same count; a table's names, a rule and its rows; a
 /// dictionary's keys and values with `| ` between.
-function nested(q: QValue): string[] {
+function nested(q: QValue, precision = 7): string[] {
   switch (q.kind) {
     case "atom":
     case "func":
-      return [oneLine(q)];
+      return [oneLine(q, precision)];
     case "vector":
-      return q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t) ?? (q.t === 2 ? NULL_GUID : ""))));
+      return q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t, precision) ?? (q.t === 2 ? NULL_GUID : ""))));
     case "chars":
       return [...q.v].map((c) => String.fromCharCode(c));
     case "dict": {
-      const d = nested(q.v);
-      const k = lineUp(d.length, nested(q.k));
+      const d = nested(q.v, precision);
+      const k = lineUp(d.length, nested(q.k, precision));
       const v = lineUp(k.length, d);
       const width = k.reduce((w, line) => Math.max(w, line.length), 0);
       return k.map((line, i) => `${line.padEnd(width)}| ${v[i] ?? ""}`);
     }
     case "table": {
-      const columns = q.data.map(nested);
+      const columns = q.data.map((c) => nested(c, precision));
       const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? ""));
       // The rule is as wide as the padded names; no line keeps the spaces
       // that pad its last column.
@@ -631,16 +667,23 @@ function nested(q: QValue): string[] {
       if (items.length === 0) {
         return [];
       }
-      const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
-      const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
-      const counts = new Set(items.map(countOf));
-      const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
-      if (atomic || counts.size > 1 || same) {
-        return items.map(oneLine);
+      if (oneLineItems(items)) {
+        return items.map((x) => oneLine(x, precision));
       }
-      return tabulate(items.map(nested)).map((line) => line.trimEnd());
+      return tabulate(items.map((x) => nested(x, precision))).map((line) => line.trimEnd());
     }
   }
+}
+
+/// Whether `.Q.s2` writes a general list's items with `-3!`, one a line,
+/// rather than as rows lined up: when one is an atom, a dictionary or a
+/// table, their counts differ, or all are of a type it writes whole.
+function oneLineItems(items: QValue[]): boolean {
+  const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
+  const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
+  const counts = new Set(items.map(countOf));
+  const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
+  return atomic || counts.size > 1 || same;
 }
 
 /// The lines q's console would show for a value decoded with its types
@@ -650,16 +693,16 @@ function nested(q: QValue): string[] {
 /// table keeps its columns when it has no rows. A lambda is its text; any
 /// other function is left to `formatValue`, which writes the codec's
 /// `value` of it, of q type `type`.
-export function formatQ(q: QValue, value: unknown, type?: number): string[] {
+export function formatQ(q: QValue, value: unknown, type?: number, precision = 7): string[] {
   if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
-    return [oneLine(q)];
+    return [oneLine(q, precision)];
   }
   if (q.kind === "func") {
     // A lambda arrives with its text; any other function as no more than
     // its kind.
-    return q.text !== undefined ? q.text.split("\n") : formatValue(value, type);
+    return q.text !== undefined || q.parts !== undefined ? funcText(q, precision).split("\n") : formatValue(value, type);
   }
-  return nested(q);
+  return nested(q, precision);
 }
 
 /// The lines q's console of `size` (height, width) shows for a value
@@ -667,7 +710,7 @@ export function formatQ(q: QValue, value: unknown, type?: number): string[] {
 /// or a dictionary, or a list, to the rows that fit - so its columns are as
 /// wide as the rows shown, not as rows cut off - then `..`, and each line
 /// at the width. `value` and `type` are as `formatQ` takes them.
-export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number): string[] {
+export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number, precision = 7): string[] {
   const [height, width] = size;
   let shown = q;
   let more = false;
@@ -686,8 +729,12 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
       shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, m), v: firstOf(q.v, m) } : firstOf(q, m);
     }
   }
-  const lines = formatQ(shown, value, type);
-  return cutLines(more ? [...lines, ".."] : lines, [Infinity, width]);
+  const lines = formatQ(shown, value, type, precision);
+  // A line `-3!` writes - an atom, a simple list, a general list's item -
+  // q cuts a character short of the width; a table's or a dictionary's
+  // rows at it (#2571).
+  const short = q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || (q.kind === "list" && q.v.length > 0 && oneLineItems(q.v));
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, short ? width - 1 : width]);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
@@ -852,24 +899,37 @@ function columnTypeOf(q: QValue): number {
   return q.kind === "vector" ? q.t : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : 0;
 }
 
-/// The first `n` items of a decoded list.
-function firstOf(q: QValue, n: number): QValue {
-  if (q.kind === "vector" || q.kind === "list") {
-    return { ...q, v: q.v.slice(0, n) } as QValue;
+/// The first `n` items of a decoded list; the last `n` when `last`.
+function firstOf(q: QValue, n: number, last = false): QValue {
+  const from = (length: number): [number, number] => (last ? [Math.max(0, length - n), length] : [0, n]);
+  if (q.kind === "vector") {
+    const [a, b] = from(q.v.length);
+    return { ...q, v: q.v.slice(a, b), ...(q.bytes !== undefined ? { bytes: q.bytes.slice(a, b) } : {}) };
+  }
+  if (q.kind === "list") {
+    return { ...q, v: q.v.slice(...from(q.v.length)) };
   }
   if (q.kind === "chars") {
-    return { ...q, v: q.v.subarray(0, n) };
+    return { ...q, v: q.v.subarray(...from(q.v.length)) };
   }
   if (q.kind === "table") {
-    return { ...q, data: q.data.map((c) => firstOf(c, n)) };
+    return { ...q, data: q.data.map((c) => firstOf(c, n, last)) };
   }
   return q;
+}
+
+/// The first `n` items of a decoded value - a dictionary's first `n` keys
+/// and values - for text that is cut after `n` characters anyway, each
+/// item writing at least one (#2480).
+export function headOf(q: QValue, n: number): QValue {
+  return q.kind === "dict" ? { ...q, k: firstOf(q.k, n), v: firstOf(q.v, n) } : firstOf(q, n);
 }
 
 /// The items of a decoded list as values: a table's rows, a list's items.
 function itemsOf(q: QValue): QValue[] {
   if (q.kind === "vector") {
-    return q.v.map((v) => ({ kind: "atom", t: -q.t, v }));
+    const bytes = q.bytes;
+    return q.v.map((v, i) => (bytes?.[i] ? { kind: "atom", t: -q.t, v, bytes: bytes[i] as number[] } : { kind: "atom", t: -q.t, v }));
   }
   if (q.kind === "chars") {
     return [...q.v].map((v) => ({ kind: "atom", t: -10, v }));
@@ -878,14 +938,30 @@ function itemsOf(q: QValue): QValue[] {
     return q.v;
   }
   if (q.kind === "table") {
+    const columns = q.data.map(itemsOf);
     return Array.from({ length: countOf(q) }, (_, r) => ({
       kind: "dict",
       sorted: false,
       k: { kind: "vector", t: 11, attr: 0, v: q.cols },
-      v: { kind: "list", attr: 0, v: q.data.map((c) => itemsOf(c)[r]) },
+      v: collapsed(columns.map((c) => c[r])),
     }));
   }
   return [q];
+}
+
+/// `items` as q makes a row's values: a simple list where every one is an
+/// atom of one type, `` `x`y!1 3 ``, not `` `x`y!(1;3) `` (#2582).
+function collapsed(items: QValue[]): QValue {
+  const atoms = items.filter((x): x is QValue & { kind: "atom" } => x.kind === "atom");
+  const t = atoms[0]?.t;
+  if (t === undefined || atoms.length !== items.length || atoms.some((x) => x.t !== t)) {
+    return { kind: "list", attr: 0, v: items };
+  }
+  if (t === -10) {
+    return { kind: "chars", attr: 0, v: Buffer.from(atoms.map((x) => Number(x.v ?? 32))) };
+  }
+  const bytes = atoms.some((x) => x.bytes !== undefined) ? atoms.map((x) => x.bytes ?? false) : undefined;
+  return { kind: "vector", t: -t, attr: 0, v: atoms.map((x) => x.v), ...(bytes !== undefined ? { bytes } : {}) };
 }
 
 /// Each row's place among the distinct values of a simple column sorted
@@ -941,7 +1017,17 @@ function qOrder(a: QValue, b: QValue): number {
     return itemOrder(a.v, b.v);
   }
   if (a.kind === "dict" && b.kind === "dict") {
-    return qOrder(a.v, b.v);
+    // Item by item, whatever the value lists' own types: q sorts
+    // `a`b!1 2 before `a`b!(1;`x) (#2575).
+    const xs = itemsOf(a.v);
+    const ys = itemsOf(b.v);
+    for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+      const order = qOrder(xs[i], ys[i]);
+      if (order !== 0) {
+        return order;
+      }
+    }
+    return xs.length - ys.length;
   }
   if (a.kind === "func" || b.kind === "func" || a.kind === "dict" || b.kind === "dict") {
     return 0;
@@ -966,8 +1052,10 @@ function same(a: QValue, b: QValue): boolean {
   if (a.kind === "table" && b.kind === "table") {
     return a.cols.join("\u0000") === b.cols.join("\u0000") && a.data.every((c, i) => same(c, b.data[i]));
   }
+  // Two functions are one value when q writes them alike: (::) and (::)
+  // too, which has no text (#2576).
   if (a.kind === "func" && b.kind === "func") {
-    return a.text !== undefined && a.text === b.text;
+    return a.t === b.t && oneLine(a) === oneLine(b);
   }
   if (a.kind === "list" && b.kind === "list") {
     return a.v.every((x, i) => same(x, b.v[i]));
@@ -987,8 +1075,11 @@ function listRanks(items: QValue[]): number[] {
   }
   const order = items.map((_, i) => i).sort((a, b) => qOrder(items[a], items[b]) || a - b);
   const rank = new Array<number>(items.length);
+  // (::) is ranked as a null is, as GRID ranks it (#2576).
   const empty = (q: QValue): boolean =>
-    q.kind === "atom"
+    q.kind === "func"
+      ? q.t === 101 && q.text === undefined
+      : q.kind === "atom"
       ? q.v === null || q.v === false || q.v === "" || (q.v === 0 && q.t === -4) || (q.v === 32 && q.t === -10)
       : q.kind === "list"
         ? q.v.every(empty)
@@ -1007,8 +1098,9 @@ function listRanks(items: QValue[]): number[] {
 /// `GRID` would send them for the same value: a table (keyed: its keys
 /// marked), a dictionary as `key` and `value` columns (keyed by a table, its
 /// key columns and `value`), or a list other than a string as one `value`
-/// column; at most `limit` rows. Undefined for anything else.
-export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
+/// column; at most `limit` rows, the last ones when `last`. Undefined for
+/// anything else.
+export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): GridPayload | undefined {
   let columns: TypedColumn[];
   let keys = 0;
   const tableColumns = (t: QValue & { kind: "table" }): TypedColumn[] => t.cols.map((name, i) => ({ name, q: t.data[i] }));
@@ -1029,13 +1121,13 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
     return undefined;
   }
   const count = columns.length > 0 ? countOf(columns[0].q) : 0;
-  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit) }));
+  const shown = columns.map((c) => ({ ...c, q: firstOf(c.q, limit, last) }));
   const types = shown.map((c) => columnTypeOf(c.q));
   const cells = shown.map((c) =>
     c.q.kind === "vector" || c.q.kind === "chars"
-      ? nested(c.q)
+      ? nested(c.q, precision)
       : itemsOf(c.q).map((x) => {
-          return cutCell(oneLine(x));
+          return cutCell(oneLine(x, precision));
         }),
   );
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
@@ -1047,6 +1139,9 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
   const raw = shown.map((c, i): unknown[] =>
     c.q.kind === "chars"
       ? [...c.q.v]
+      : // A symbol column's bytes where one is past ASCII, as GRID sends them (#2578).
+        c.q.kind === "vector" && c.q.t === 11
+        ? (c.q.bytes ?? [])
       : c.q.kind === "list"
         ? c.q.v.map((x) => (x.kind === "atom" && (x.t === -9 || x.t === -8) ? (typeof x.v === "number" && !Number.isNaN(x.v) ? x.v : false) : exactOf(x)))
         : c.q.kind === "vector" && [2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19].includes(types[i])
@@ -1073,7 +1168,7 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
       c.q.v.map((x) => (x === null ? (c.q.kind === "vector" && [2, 11].includes(c.q.t) ? "" : null) : typeof x === "boolean" ? Number(x) : x)),
     );
   });
-  const tree = q.kind === "list" || (q.kind === "dict" && q.k.kind !== "table") ? treeOfQ(q) : undefined;
+  const tree = q.kind === "list" || (q.kind === "dict" && q.k.kind !== "table") ? treeOfQ(q, TREE_NODES, "", precision) : undefined;
   return { count, keys, names: shown.map((c) => c.name), types, cells, raw, rank, ...(tree !== undefined ? { tree } : {}) };
 }
 
@@ -1086,6 +1181,17 @@ export function gridOfQ(q: QValue, limit: number): GridPayload | undefined {
 function exactOf(q: QValue): unknown[] | false {
   if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
     return [q.t === -9 ? "f" : "e", q.v];
+  }
+  // A symbol past ASCII as its bytes, or symbols as theirs (#2578).
+  if (q.kind === "atom" && q.t === -11 && q.bytes !== undefined) {
+    return ["s", q.bytes];
+  }
+  if (q.kind === "vector" && q.t === 11 && q.bytes !== undefined && q.v.length <= 200) {
+    return ["S", q.bytes.map((b, i) => (b === false ? [...Buffer.from(String(q.v[i] ?? ""), "utf8")] : b))];
+  }
+  const cast = castOf(q);
+  if (cast !== undefined) {
+    return ["c", cast];
   }
   if (q.kind === "vector" && (q.t === 9 || q.t === 8) && q.v.length <= 200) {
     return [q.t === 9 ? "F" : "E", q.v];
@@ -1107,25 +1213,57 @@ function exactOf(q: QValue): unknown[] | false {
   return false;
 }
 
+/// Timestamps KDB-X reads a literal of: 1709.01.01 to 2290.12.31, in
+/// nanoseconds from 2000.
+const TIMESTAMP_FROM = BigInt(Date.UTC(1709, 0, 1) - Date.UTC(2000, 0, 1)) * 1_000_000n;
+const TIMESTAMP_TO = BigInt(Date.UTC(2291, 0, 1) - Date.UTC(2000, 0, 1)) * 1_000_000n - 1n;
+
+/// A minute, second, time, datetime or timestamp atom or vector that `-3!`
+/// writes as q cannot read back, as `GRID`'s `("c";(t;n))` sends it, `n` its
+/// count: past 99 hours (`**`), finer than a millisecond, or outside
+/// 1709-2290 (#2579). Undefined for anything else, or one q reads back.
+function castOf(q: QValue): [number, unknown] | undefined {
+  if ((q.kind !== "atom" && q.kind !== "vector") || (q.kind === "vector" && q.v.length > 200)) {
+    return undefined;
+  }
+  const t = Math.abs(q.t);
+  const items = q.kind === "atom" ? [q.v] : q.v;
+  const n = (f: (x: Item) => unknown): unknown => (q.kind === "atom" ? f(q.v) : q.v.map(f));
+  const finite = (x: Item): x is number | bigint => (typeof x === "number" && Number.isFinite(x)) || typeof x === "bigint";
+  if (t >= 17 && t <= 19) {
+    const from = [6000, 360000, 360000000][t - 17];
+    return items.some((x) => finite(x) && Math.abs(Number(x)) >= from && Math.abs(Number(x)) <= 2147483646) ? [q.t, n((x) => x)] : undefined;
+  }
+  if (t === 15) {
+    return items.some((x) => finite(x) && Math.abs(86400000 * Number(x) - Math.round(86400000 * Number(x))) > 0.001) ? [q.t, n((x) => x)] : undefined;
+  }
+  if (t === 12) {
+    const outside = items.some((x) => typeof x === "bigint" && (x < TIMESTAMP_FROM || x > TIMESTAMP_TO));
+    const long = (x: Item): unknown => (typeof x === "bigint" ? (Number.isSafeInteger(Number(x)) ? Number(x) : x.toString()) : x);
+    return outside ? [q.t, n(long)] : undefined;
+  }
+  return undefined;
+}
+
 /// A value decoded with its types as the tree `GRID` sends for it: a
 /// dictionary's entries and a list's items as children, at most `budget`
 /// nodes, each node's share divided among its children as `GRID` divides it.
-export function treeOfQ(q: QValue, budget = TREE_NODES, key = ""): TreeNode {
+export function treeOfQ(q: QValue, budget = TREE_NODES, key = "", precision = 7): TreeNode {
   const dict = q.kind === "dict" && q.k.kind !== "table";
   const open = dict || q.kind === "list" || q.kind === "vector";
   const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
   const shown = open ? Math.min(count, Math.max(0, budget - 1)) : 0;
   const share = shown > 0 ? Math.floor((budget - 1) / shown) : 0;
   const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : q.t;
-  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q));
+  const text = open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q, precision));
   let children: TreeNode[] = [];
   if (shown > 0) {
     const items = itemsOf(firstOf(q.kind === "dict" ? q.v : q, shown));
     const keys =
       q.kind === "dict"
-        ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cutCell(oneLine(k))))
+        ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cutCell(oneLine(k, precision))))
         : items.map((_, i) => String(i));
-    children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i]));
+    children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i], precision));
   }
   return { key, text, type, count, children };
 }

@@ -124,7 +124,7 @@ export function registerLocalsAtError(
         const restored = readRestored(await connection.call(restore));
         replaced = false;
         return { captured, answer, restored, text: state.text };
-      }, "ask", failure.process);
+      }, "ask", failure.process, undefined, true);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
       let back = "";

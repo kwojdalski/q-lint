@@ -519,7 +519,8 @@ test("a compressed answer keeps its q type (#894)", async (t) => {
   // So an unwrapped query writes it as q does, on one line.
   const { runUnwrapped } = require("../out/querycontrols.js");
   const answer = await runUnwrapped(connection, ["1000#7"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
-  assert.deepStrictEqual(answer.text, [`${"7 ".repeat(39)}..`]);
+  // Cut a character short of the width, as KDB-X cuts a -3! line (#2571).
+  assert.deepStrictEqual(answer.text, [`${"7 ".repeat(38)}7..`]);
 });
 
 /// `text` as a q message of `kind` (0 async, 1 sync, 2 response): a char

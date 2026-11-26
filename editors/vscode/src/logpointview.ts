@@ -126,7 +126,7 @@ export function registerLogpoints(
     const fn = target.trim();
     try {
       // Turned off at the name box, the pick or the guard: nothing is wrapped (#1453).
-      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))));
+      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))), "ask", undefined, undefined, true);
       if (done === undefined || done.value === undefined) {
         return;
       }
@@ -143,7 +143,7 @@ export function registerLogpoints(
   /// Remove `fn`'s logpoint on `from`, the process it was listed on and
   /// no other (#1294); whether it was sent.
   const removeOne = async (fn: string, from: string): Promise<boolean> => {
-    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true, "ask", from);
+    const done = await live.runOnActive(LOG_REMOVE, async (connection) => (await connection.call(LOG_REMOVE, fn)) === true, "ask", from, undefined, true);
     if (done === undefined) {
       return false;
     }

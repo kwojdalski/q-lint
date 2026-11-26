@@ -94,7 +94,7 @@ export function registerJoinAssistant(
       const ran = await live.runOnActive(shapeGuardCode(expressions), async (connection) => [
         readShape(await connection.call(TABLE_SHAPE, asCode(expressions[0])), expressions[0]),
         readShape(await connection.call(TABLE_SHAPE, asCode(expressions[1])), expressions[1]),
-      ]);
+      ], "ask", undefined, undefined, true);
       if (ran === undefined) {
         return "nothing was run";
       }

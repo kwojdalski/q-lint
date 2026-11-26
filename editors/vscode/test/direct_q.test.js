@@ -5,7 +5,8 @@
 // the wrapped process beside it. Needs a q binary, so it runs only when
 // QLINT_TEST_Q names one (a command line, run by the shell, as for
 // qclient.test.js) and is skipped otherwise - CI has no q. Each q listens on
-// a port from 54200 to 54219 and is killed when the test ends.
+// a port from 54200 to 54219 (or QLINT_TEST_PORTS) and is killed when the
+// test ends.
 const { stub } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
@@ -38,9 +39,13 @@ refused:{lambdas+:1;'"pm: no read permission on [",$[10h=type first x;first x;-3
 .z.ps:{$[10h=type x;value x;[lambdas+:1;'"pm: no async lambdas"]]}
 `;
 
-/// A free port from 54200 to 54219.
+/// The ports the q processes may take: 54200 to 54219, or the range
+/// QLINT_TEST_PORTS names ("54320-54339"), for a machine shared by runs.
+const [LOW, HIGH] = (process.env.QLINT_TEST_PORTS ?? "54200-54219").split("-").map(Number);
+
+/// A free port from LOW to HIGH.
 async function freePort(taken) {
-  for (let port = 54200; port <= 54219; port++) {
+  for (let port = LOW; port <= HIGH; port++) {
     if (taken.has(port)) continue;
     const free = await new Promise((resolve) => {
       const s = net.createServer().once("error", () => resolve(false)).listen(port, "127.0.0.1", () => s.close(() => resolve(true)));
@@ -50,7 +55,7 @@ async function freePort(taken) {
       return port;
     }
   }
-  throw new Error("no free port from 54200 to 54219");
+  throw new Error(`no free port from ${LOW} to ${HIGH}`);
 }
 
 async function startQ(t, source, taken) {
@@ -210,6 +215,20 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
       "pm: no read permission on [\\f .priv]",
       "pm: no read permission on [\\v .priv]",
     ]);
+    // A hover on an unread table states no rows or columns it never read (#2490).
+    const vscode = require("vscode");
+    const Hover = vscode.Hover;
+    vscode.Hover = class {
+      constructor(contents) {
+        this.contents = contents;
+      }
+    };
+    stub.config.user["processExplorer.editorTableHover.enable"] = true;
+    const hover = await explorer.hover({ lineAt: () => ({ text: "t" }) }, { line: 0, character: 0 });
+    delete stub.config.user["processExplorer.editorTableHover.enable"];
+    vscode.Hover = Hover;
+    assert.match(hover.contents.value, /^\*\*t\*\* on pm: table, not read/);
+    assert.doesNotMatch(hover.contents.value, /0 columns/);
     // Preview of a table answers too.
     const r = await run("5 sublist t");
     assert.strictEqual(r.outcome, "ok");
@@ -265,6 +284,9 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
   await t.test("q-lint.query.unwrapped is every unset process's mode; a process's own evaluation wins", async () => {
     stub.config.user["query.unwrapped"] = true;
     assert.deepStrictEqual(live.activeDirect(), { label: "rdb", from: "setting" });
+    // The connection's tooltip says so at once, as the flags item does (#2489).
+    stub.changeConfig("q-lint.query.unwrapped");
+    assert.match(live.status.tooltip, /Evaluation on rdb: direct \(q-lint\.query\.unwrapped\)/);
     assert.strictEqual((await run("a:10;b:20;a+b")).text, "30");
     await stub.commands.get("q-lint.setProcessEvaluation")("rdb", "wrapped");
     assert.strictEqual(live.processes().find((p) => p.label === "rdb").evaluation, "wrapped");
@@ -277,4 +299,79 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
     delete stub.config.user["query.unwrapped"];
     assert.strictEqual(live.activeDirect(), undefined);
   });
+});
+
+test("a feature that sends only a plain string answers on a direct process: Copy Value as JSON, Run SQL (#2482, #2483)", { skip }, async (t) => {
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const { live } = await setUp(t, [{ label: "pm", host: "127.0.0.1", port: pm, tags: ["perm"], evaluation: "direct" }]);
+  const { registerPaste } = require("../out/pasteview.js");
+  const { registerSql } = require("../out/sqlview.js");
+  const { PASTE } = require("../out/pastetable.js");
+  const { LANGUAGE_COMMANDS } = require("../out/languagefeatures.js");
+  const vscode = require("vscode");
+  const context = stub.newContext();
+  registerPaste(context, live);
+  vscode.languages.registerCompletionItemProvider = () => ({ dispose() {} });
+  registerSql(context, live);
+  assert.strictEqual(await live.connectTo("pm"), true);
+  stub.messages.length = 0;
+  const json = await stub.commands.get(PASTE.copyJson)("t");
+  assert.deepStrictEqual(JSON.parse(json), [{ sym: "a", px: 1.5 }, { sym: "b", px: 2.5 }, { sym: "c", px: 3.5 }], JSON.stringify(stub.messages));
+  // Run SQL: the probe for the engine and the query go as plain strings,
+  // and the command never throws.
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  vscode.window.activeTextEditor = { document: { languageId: "sql", uri: { toString: () => "untitled:2483" }, getText: () => "select * from t" }, selection: { isEmpty: true } };
+  const code = await stub.commands.get(LANGUAGE_COMMANDS.runSql)();
+  assert.match(code, /^\.s\.e "select \* from t"/);
+  assert.strictEqual(live.history()[0].code, code);
+  assert.strictEqual(await ask(pm, "0=lambdas"), true);
+});
+
+test("on a guarded direct process, a feature that needs q-lint's lambda is refused before the guard asks (#2485)", { skip }, async (t) => {
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const { live, benchmark } = await setUp(t, [{ label: "pm", host: "127.0.0.1", port: pm, tags: ["perm"], evaluation: "direct" }]);
+  stub.config.user["processes.readOnlyGuard.tags"] = ["perm"];
+  t.after(() => delete stub.config.user["processes.readOnlyGuard.tags"]);
+  assert.strictEqual(await live.connectTo("pm"), true);
+  stub.messages.length = 0;
+  const said = await benchmark.benchmark("zz:1", "", "10 2");
+  assert.match(said, /this needs q-lint's own evaluator lambda, and pm uses direct evaluation.*nothing was sent/);
+  // Not asked "Run it anyway?" about a change that could not be sent.
+  assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "warning"), []);
+  assert.strictEqual(await ask(pm, "0=lambdas"), true);
+});
+
+test("the Process Explorer reads a process again once its evaluation changes, and says the new mode's (#2495)", { skip }, async (t) => {
+  const taken = new Set();
+  const rdb = await startQ(t, TABLES, taken);
+  const { live, explorer, view } = await setUp(t, [{ label: "rdb", host: "127.0.0.1", port: rdb, tags: [], evaluation: "direct" }]);
+  const until = async (f) => {
+    for (let i = 0; i < 60 && !f(); i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await until(() => view.message !== undefined);
+  assert.match(view.message, /rdb is evaluated directly/);
+  await stub.commands.get("q-lint.setProcessEvaluation")("rdb", "wrapped");
+  await until(() => explorer.rows().length > 0);
+  assert.strictEqual(view.message, undefined);
+  assert.ok(explorer.rows().some((n) => n.label === "."));
+});
+
+test("the command-line chart queries a process that refuses lambdas with --direct (#2494)", { skip }, async (t) => {
+  const { main } = require("../out/chartcli.js");
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-chart-"));
+  const out = path.join(dir, "x.svg");
+  const said = [];
+  const io = { out: (s) => said.push(s), err: (s) => said.push(s), stdin: () => "" };
+  const args = ["--host", "127.0.0.1", "--port", String(pm), "--query", "select from t", "-o", out];
+  // Wrapped, the process refuses the grid lambda.
+  assert.strictEqual(await main(args, io), 1);
+  assert.match(said.join(""), /pm: no read permission/);
+  assert.strictEqual(await main([...args, "--direct"], io), 0, said.join(""));
+  assert.match(fs.readFileSync(out, "utf8"), /^<svg/);
+  assert.strictEqual(await ask(pm, "1=lambdas"), true);
 });

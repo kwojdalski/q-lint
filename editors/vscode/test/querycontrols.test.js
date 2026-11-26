@@ -276,6 +276,22 @@ test("an unwrapped query sends each statement as a string and shows the last val
   assert.deepStrictEqual(grid.grid.cells, [["0", "1", "2"]]);
 });
 
+test("an unwrapped statement after a \\d is sent with the \\d in front, since q reads each message in the root (#2476)", async () => {
+  const sent = [];
+  const fake = { evaluate: async (text) => (sent.push(text), { value: null, type: 101 }) };
+  const options = { size: [25, 80], limit: 10, unlimited: false, grid: false };
+  await runUnwrapped(fake, ["\\d .lib", 'h1:{x+"a"}', "x", 'system "d .b"', "y", "\\d .", "z"], options);
+  assert.deepStrictEqual(sent, [
+    "\\d .lib",
+    'system"d .lib";value "h1:{x+\\"a\\"}"',
+    'system"d .lib";value enlist "x"',
+    'system"d .lib";value "system \\"d .b\\""',
+    'system"d .b";value enlist "y"',
+    'system"d .b";value "\\\\d ."',
+    "z",
+  ]);
+});
+
 test("a file's connection is kept by URI, and shown only when it is not the active one", () => {
   const stored = withBinding(undefined, "file:///a.q", "rdb");
   assert.deepStrictEqual(stored, { "file:///a.q": "rdb" });
@@ -470,6 +486,26 @@ test("an unwrapped table is cut to the console's rows before it is laid out, as 
   assert.deepStrictEqual((await run([25, 80])).text.length, 22);
 });
 
+test("an unwrapped float is written to the process's \\P, asked as a plain string, as its console writes it (#2570)", async () => {
+  // -8!0.1+0.2, and -8!([] a:1%3 7)
+  const table = fromQ("0x010000002f0000006200630b00010000006100000001000000090002000000555555555555d53f922449922449c23f");
+  const run = async (answer, precision) => {
+    const sent = [];
+    const fake = { evaluate: async (text) => (sent.push(text), text === "\\P" ? { value: precision, type: -6 } : answer) };
+    const ran = await runUnwrapped(fake, ["x"], { size: [25, 80], limit: 10, unlimited: false, grid: true });
+    return { ran, sent };
+  };
+  const atom = fromQ("0x0100000011000000f7343333333333d33f");
+  assert.deepStrictEqual((await run(atom, 0)).ran.text, ["0.30000000000000004"]);
+  assert.deepStrictEqual((await run(atom, 7)).ran.text, ["0.3"]);
+  const at0 = (await run(table, 0)).ran;
+  assert.deepStrictEqual(at0.text, ["a", "-------------------", "0.33333333333333331", "0.14285714285714285"]);
+  assert.deepStrictEqual(at0.grid.cells, [["0.33333333333333331", "0.14285714285714285"]]);
+  assert.deepStrictEqual((await run(table, 3)).ran.text, ["a", "-----", "0.333", "0.143"]);
+  // A value with no float in it asks nothing more.
+  assert.deepStrictEqual((await run(fromQ("0x010000000d000000fa01000000"), 0)).sent, ["x"]);
+});
+
 test("an unlimited float list is written to the process's \\P, as its console writes it", () => {
   const floats = (value, precision, type = 9) => readUnlimited({ ok: true, type, text: [], value, attr: null, precision }).text[0];
   assert.ok(UNLIMITED.includes('system"P"'));
@@ -578,4 +614,40 @@ test("an unwrapped line cut at the width never ends in half an astral character 
   assert.deepStrictEqual(cutLines(["a".repeat(77) + smile + smile], [25, 80]), ["a".repeat(77) + ".."]);
   assert.deepStrictEqual(cutLines(["a".repeat(76) + smile + smile + "b"], [25, 80]), ["a".repeat(76) + smile + ".."]);
   assert.deepStrictEqual(cutLines(["a".repeat(78) + smile], [25, 80]), ["a".repeat(78) + smile]);
+});
+
+test("a datetime far from 2000 is cut to the millisecond as KDB-X cuts it, not a millisecond out (#2577)", () => {
+  // KDB-X: "z"$82203.9 -43797.3 -101962.1 73121.93
+  assert.deepStrictEqual(
+    [82203.9, -43797.3, -101962.1, 73121.93].map((n) => atomText(n, -15)),
+    ["2225.01.24T21:36:00.000", "1880.02.01T16:47:59.999", "1720.11.01T21:35:59.999", "2200.03.14T22:19:12.000"],
+  );
+});
+
+test("a line -3! writes is cut a character short of the width, as q cuts it; a table's or dictionary's at it (#2571)", () => {
+  const til = (n) => ({ kind: "vector", t: 7, attr: 0, v: Array.from({ length: n }, (_, i) => BigInt(i)) });
+  const width = (q) => consoleLines(q, [25, 80]).map((l) => l.length);
+  // KDB-X: count each .Q.S[25 80;0j] of each.
+  assert.deepStrictEqual(width(til(100)), [79]);
+  assert.ok(consoleLines(til(100), [25, 80])[0].endsWith("28 .."));
+  assert.deepStrictEqual(width({ kind: "chars", attr: 0, v: Buffer.alloc(200, "x") }), [79]);
+  assert.deepStrictEqual(width({ kind: "list", attr: 0, v: [til(100), { kind: "atom", t: -11, v: "a" }] }), [79, 2]);
+  assert.deepStrictEqual(width({ kind: "list", attr: 0, v: [til(50), til(50)] }), [80, 80]);
+  assert.deepStrictEqual(width({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: ["a", "b"] }, v: { kind: "list", attr: 0, v: [til(100), til(100)] } }), [80, 80]);
+});
+
+test("the process's \\P is asked once a connection, again after a statement that sets it, and never of a gateway call (#2570)", async () => {
+  const atom = { value: 0.1 + 0.2, type: -9, message: Buffer.from("0100000011000000f7343333333333d33f", "hex") };
+  const sent = [];
+  let p = 0;
+  const fake = { evaluate: async (text) => (sent.push(text), text === "\\P" ? { value: p, type: -6 } : text.startsWith("\\P ") ? ((p = Number(text.slice(3))), { value: null, type: 101 }) : atom) };
+  const options = { size: [25, 80], limit: 10, unlimited: false, grid: false };
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
+  assert.deepStrictEqual(sent, ["x", "\\P", "x"]);
+  assert.deepStrictEqual((await runUnwrapped(fake, ["\\P 3", "x"], options)).text, ["0.3"]);
+  assert.deepStrictEqual(sent.slice(3), ["\\P 3", "x", "\\P"]);
+  sent.length = 0;
+  await runUnwrapped({ evaluate: async (text) => (sent.push(text), atom) }, ['.gw.syncexec["x";`rdb]'], options);
+  assert.deepStrictEqual(sent, ['.gw.syncexec["x";`rdb]']);
 });

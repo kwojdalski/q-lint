@@ -140,11 +140,14 @@ export class QueryControls {
       this.flags.hide();
     } else {
       this.flags.text = flags;
+      // A listed process's evaluation is its list's to change (#2488).
       this.flags.command = this.unlimitedOn
         ? CONTROL_COMMANDS.toggleUnlimited
-        : direct?.from === "process"
-          ? CONTROL_COMMANDS.setEvaluation
-          : CONTROL_COMMANDS.toggleUnwrapped;
+        : direct?.list !== undefined
+          ? undefined
+          : direct?.from === "process"
+            ? CONTROL_COMMANDS.setEvaluation
+            : CONTROL_COMMANDS.toggleUnwrapped;
       this.flags.tooltip = [
         this.unlimitedOn ? "Unlimited query: console text is not cut at q-lint.output.consoleSize, and a grid or chart is sent every row." : "",
         direct !== undefined && label !== undefined
@@ -154,9 +157,11 @@ export class QueryControls {
             : "",
         this.unlimitedOn
           ? "Click to turn unlimited off."
-          : direct?.from === "process"
-            ? `Click to set the evaluation of ${label}.`
-            : "Click to turn unwrapped off.",
+          : direct?.list !== undefined
+            ? ""
+            : direct?.from === "process"
+              ? `Click to set the evaluation of ${label}.`
+              : "Click to turn unwrapped off.",
       ].filter(Boolean).join("\n");
       this.flags.show();
     }

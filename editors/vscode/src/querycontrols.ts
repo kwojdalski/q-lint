@@ -24,13 +24,17 @@
 // strings (`QConnection.direct`), so a feature that needs q-lint's lambda
 // is refused before it sends.
 import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
-import { decode, type QValue } from "./qdecode";
+import { ByReference, decode, type QValue } from "./qdecode";
 import { readAnswer, trapLines, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError, type DirectMode } from "./qclient";
 import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
+import { contextSwitch } from "./statements";
+import { SHARED_SOURCE } from "./discovery";
+import { isGatewayCall } from "./gateway";
+import { qString, stringLiteral } from "./qliteral";
 
 export const CONTROL_COMMANDS = {
   queryFile: "q-lint.queryEntireFile",
@@ -66,11 +70,18 @@ export function readControls(get: <T>(key: string, fallback: T) => T): ControlSe
   };
 }
 
+/// The list a listed process is from, as a message names it.
+function listName(server: string): string {
+  return server === SHARED_SOURCE ? "the workspace's shared process list" : `${server}'s process list`;
+}
+
 /// Whether, and why, `process` is evaluated directly (#2470): its own
 /// `evaluation` when it sets one, else `q-lint.query.unwrapped`.
-export function directMode(process: Pick<Process, "label" | "evaluation">, unwrapped: boolean): DirectMode | undefined {
+export function directMode(process: Pick<Process, "label" | "evaluation" | "server">, unwrapped: boolean): DirectMode | undefined {
   if (process.evaluation !== undefined) {
-    return process.evaluation === "direct" ? { label: process.label, from: "process" } : undefined;
+    return process.evaluation !== "direct"
+      ? undefined
+      : { label: process.label, from: "process", ...(process.server !== undefined ? { list: listName(process.server) } : {}) };
   }
   return unwrapped ? { label: process.label, from: "setting" } : undefined;
 }
@@ -157,16 +168,75 @@ export interface Evaluated {
   value: unknown;
   type: number | undefined;
   typed: QValue | undefined;
+  /// The process's `\P`, the digits its console writes a float to (#2570):
+  /// asked only of a value that holds one, and 7, q's default, otherwise.
+  precision: number;
+}
+
+/// Whether `q` holds a float or a real anywhere, which its text writes to `\P`.
+function holdsFloat(q: QValue): boolean {
+  switch (q.kind) {
+    case "atom":
+    case "vector":
+      return Math.abs(q.t) === 8 || Math.abs(q.t) === 9;
+    case "list":
+      return q.v.some(holdsFloat);
+    case "table":
+      return q.data.some(holdsFloat);
+    case "dict":
+      return holdsFloat(q.k) || holdsFloat(q.v);
+    default:
+      return false;
+  }
+}
+
+/// Each connection's `\P`, once asked: asked again only after a statement
+/// that may set it.
+const precisions = new WeakMap<Evaluator, number>();
+
+/// A statement that may set `\P`: `\P n`, or `system` naming it.
+const SETS_PRECISION = /^\s*\\P\s|system\s*"\s*P/;
+
+/// The process's `\P`, asked as a plain string once a connection; 7, q's
+/// default, when it refuses to say.
+async function precisionOf(connection: Evaluator): Promise<number> {
+  const kept = precisions.get(connection);
+  if (kept !== undefined) {
+    return kept;
+  }
+  let p: number;
+  try {
+    p = Number((await connection.evaluate("\\P"))?.value);
+  } catch (error) {
+    if (!(error instanceof QError)) {
+      throw error;
+    }
+    p = NaN;
+  }
+  const precision = Number.isInteger(p) && p >= 0 ? p : 7;
+  precisions.set(connection, precision);
+  return precision;
+}
+
+/// `statement` as the plain string that runs it in `context`: q reads each
+/// message in the root again, so a `\d` sent as one statement is gone by
+/// the next (#2476), and one after it is sent with the `\d` in front, in
+/// the same message.
+export function inContextText(statement: string, context: string): string {
+  return context === "." ? statement : `system${stringLiteral(`d ${context}`)};value ${qString(statement)}`;
 }
 
 /// Send `statements` as plain strings, each in order, stopping at the first
 /// q error, which is answered as q sent it, with no trace: the process sends
-/// none. Anything else - the connection closing, an abort - throws.
+/// none. Anything else - the connection closing, an abort - throws. A `\d`
+/// among them holds for the statements after it, as in q's console.
 export async function evaluateAll(connection: Evaluator, statements: string[]): Promise<{ ok: true; last: Evaluated } | { ok: false; error: string }> {
   let last: { value: unknown; type: number | undefined; message?: Buffer } = { value: null, type: 101 };
+  let context = ".";
   for (const statement of statements) {
     try {
-      last = await connection.evaluate(statement);
+      last = await connection.evaluate(inContextText(statement, context));
+      context = contextSwitch(statement) ?? context;
     } catch (error) {
       if (error instanceof QError) {
         return { ok: false, error: error.message };
@@ -179,10 +249,21 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
   let typed: QValue | undefined;
   try {
     typed = last.message === undefined ? undefined : decode(last.message);
-  } catch {
+  } catch (error) {
+    // The codec's value of one is its path's characters (#2569).
+    if (error instanceof ByReference) {
+      return { ok: false, error: error.message };
+    }
     typed = undefined;
   }
-  return { ok: true, last: { value: last.value, type: last.type, typed } };
+  if (statements.some((s) => SETS_PRECISION.test(s))) {
+    precisions.delete(connection);
+  }
+  // A gateway's answer is its servers' values, which its own `\P` does
+  // not write: 7, as q's default, and the gateway is asked nothing more.
+  const gatewayed = statements.length > 0 && isGatewayCall(statements.join("\n"));
+  const precision = typed !== undefined && !gatewayed && holdsFloat(typed) ? await precisionOf(connection) : 7;
+  return { ok: true, last: { value: last.value, type: last.type, typed, precision } };
 }
 
 /// Run `statements` unwrapped: each sent as a plain string, in order,
@@ -211,7 +292,9 @@ export function answerOf(last: Evaluated, options: { size: [number, number]; lim
     const lines = formatValue(last.value, last.type);
     text = options.unlimited ? lines : cutLines(lines, options.size);
   } else {
-    text = options.unlimited ? formatQ(typed, last.value, last.type) : consoleLines(typed, options.size, last.value, last.type);
+    text = options.unlimited
+      ? formatQ(typed, last.value, last.type, last.precision)
+      : consoleLines(typed, options.size, last.value, last.type, last.precision);
   }
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {
@@ -220,7 +303,7 @@ export function answerOf(last: Evaluated, options: { size: [number, number]; lim
   // A string is shown as text, as `GRID` shows one.
   const limit = options.unlimited ? Infinity : options.limit;
   const grid =
-    typed !== undefined ? gridOfQ(typed, limit) : typeof last.value === "string" ? undefined : gridOf(last.value, last.type, limit);
+    typed !== undefined ? gridOfQ(typed, limit, last.precision) : typeof last.value === "string" ? undefined : gridOf(last.value, last.type, limit);
   return grid === undefined ? answer : { ...answer, grid };
 }
 
@@ -287,7 +370,12 @@ export function evaluationText(label: string, mode: DirectMode | undefined, pinn
   if (mode === undefined) {
     return `Evaluation on ${label}: wrapped${pinned ? " (its \"evaluation\")" : ""} - q-lint's lambda runs your code, with q's backtrace and, on a guarded process, reval.`;
   }
-  const where = mode.from === "process" ? 'its "evaluation": "direct"' : "q-lint.query.unwrapped";
+  const where =
+    mode.list !== undefined
+      ? `its "evaluation": "direct" in ${mode.list}`
+      : mode.from === "process"
+        ? 'its "evaluation": "direct"'
+        : "q-lint.query.unwrapped";
   return `Evaluation on ${label}: direct (${where}) - your code is sent as plain strings and the result formatted by q-lint: no backtrace, no reval, and features that need q-lint's lambda are refused.`;
 }
 

@@ -428,9 +428,18 @@ export function passwordsToForget(processes: Process[], incoming: Process[]): st
     .map((p) => p.label);
 }
 
+/// Whether `process` comes to be evaluated directly where `old` was not, on
+/// a process the read-only guard covers: that turns off the guard's `reval`
+/// backstop there (#2496).
+function madeDirect(process: Process, old: Process, guardTags: string[]): boolean {
+  const guarded = [...old.tags, ...process.tags].some((t) => guardTags.includes(t.trim().toLowerCase()));
+  return guarded && process.evaluation === "direct" && old.evaluation !== "direct";
+}
+
 /// The processes in `incoming` that take away what protects the one of
-/// their label in `before`: its TLS, its SSH tunnel, or a tag of
-/// `guardTags` (the read-only guard's). An import asks before taking them,
+/// their label in `before`: its TLS, its SSH tunnel, a tag of `guardTags`
+/// (the read-only guard's), or on a guarded one the reval backstop, by
+/// making it `"evaluation": "direct"`. An import asks before taking them,
 /// since a list written elsewhere drops them silently (#1269).
 export function protectionsRemoved(before: Process[], incoming: Process[], guardTags: string[]): { label: string; what: string[] }[] {
   const had = new Map(before.map((p) => [p.label, p]));
@@ -438,6 +447,9 @@ export function protectionsRemoved(before: Process[], incoming: Process[], guard
     .map((p) => {
       const old = had.get(p.label);
       const what: string[] = [];
+      if (old !== undefined && madeDirect(p, old, guardTags)) {
+        what.push('reval backstop ("evaluation": "direct")');
+      }
       if (old?.tls === true && p.tls !== true) {
         what.push("TLS");
       }
@@ -455,15 +467,19 @@ export function protectionsRemoved(before: Process[], incoming: Process[], guard
 }
 
 /// `process` with the TLS, SSH tunnel and guarded tags `old` has and it
-/// does not: an import taken without removing them.
+/// does not, and on a guarded process `old`'s evaluation where it would be
+/// made direct: an import taken without removing them.
 export function withProtections<P extends Process>(process: P, old: Process | undefined, guardTags: string[]): P {
   if (old === undefined) {
     return process;
   }
   const kept = new Set(process.tags.map((t) => t.trim().toLowerCase()));
   const tags = old.tags.filter((t) => guardTags.includes(t.trim().toLowerCase()) && !kept.has(t.trim().toLowerCase()));
+  const { evaluation: _e, ...rest } = process;
+  void _e;
+  const evaluated = madeDirect(process, old, guardTags) ? ({ ...rest, ...(old.evaluation !== undefined ? { evaluation: old.evaluation } : {}) } as P) : process;
   return {
-    ...process,
+    ...evaluated,
     ...(old.tls === true ? { tls: true } : {}),
     ...(process.ssh === undefined && old.ssh !== undefined ? { ssh: old.ssh } : {}),
     tags: [...process.tags, ...tags],

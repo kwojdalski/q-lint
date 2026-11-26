@@ -70,7 +70,7 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, QConnection, QError, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
@@ -819,7 +819,8 @@ export class Live {
         if (event.affectsConfiguration("q-lint.queryHistory.search") && !this.setting(readHistorySearch).enabled) {
           this.setHistoryFilter({});
         }
-        if (event.affectsConfiguration("q-lint.query.progress")) {
+        // The tooltip says the active process's evaluation, which the setting can change (#2489).
+        if (event.affectsConfiguration("q-lint.query.progress") || event.affectsConfiguration("q-lint.query.unwrapped")) {
           this.showStatus();
         }
         if (event.affectsConfiguration("q-lint.query.watch") && !this.setting(readWatch).enabled) {
@@ -2871,6 +2872,12 @@ export class Live {
       chosen = picked.value;
     } else {
       chosen = evaluationOf(mode);
+      // Only "" and null mean neither: anything else unknown, a typo in a
+      // keybinding, is refused rather than taken as that (#2487).
+      if (chosen === undefined && mode !== "" && mode !== null) {
+        void window.showErrorMessage(plainMessage(`q-lint: ${JSON.stringify(mode) ?? String(mode)} is no evaluation: give "direct", "wrapped", or "" (or null) to follow q-lint.query.unwrapped. ${process.label} was not changed.`));
+        return;
+      }
     }
     const now = this.processes();
     if (!now.some((p) => p.label === process.label)) {
@@ -2885,6 +2892,8 @@ export class Live {
     await this.save(now.map((p) => (p.label === process.label ? set(p) : p)));
     if (this.active?.label === process.label && this.active.server === undefined) {
       this.active = set(this.active);
+      // What is read of it depends on its evaluation (#2495).
+      this.changed.fire("edited");
     }
     this.showStatus();
     const effective = this.directOf(set(process)) === undefined ? "wrapped" : "direct";
@@ -2909,6 +2918,16 @@ export class Live {
     if (process?.gateway === undefined) {
       void window.showInformationMessage(
         plainMessage(`q-lint: ${process === undefined ? "not connected to a q process" : `${process.label} is not marked as a TorQ gateway`}. Set Gateway Server Types marks one.`),
+      );
+      return;
+    }
+    // The file's code goes to the process it is bound to: not the gateway
+    // asked about, it would run there without the types (#2370).
+    const file = window.activeTextEditor?.document.uri;
+    const bound = file === undefined ? undefined : this.fileBinding(file);
+    if (bound !== undefined && bound !== process.label) {
+      void window.showInformationMessage(
+        plainMessage(`q-lint: this file's queries go to ${bound}, not the gateway ${process.label}; nothing was run. Clear or change the file's connection to query ${process.label} on server types.`),
       );
       return;
     }
@@ -3061,13 +3080,16 @@ export class Live {
   /// refused outright for a caller that cannot ask (`guard` "refuse").
   /// With `expect`, the label of the process a question asked about, it
   /// throws `movedFrom` instead of running on any other (#1081). `signal`
-  /// stops this call's wait to be sent, and nothing else's (#2560).
+  /// stops this call's wait to be sent, and nothing else's (#2560). With
+  /// `lambda`, for a feature that needs q-lint's lambda, a direct
+  /// connection is refused before the guard asks: nothing would be sent.
   async runOnActive<T>(
     code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
     signal?: AbortSignal,
+    lambda = false,
   ): Promise<{ process: string; value: T } | undefined> {
     // Checked before `ready` would connect and before the guard asks: no
     // question about a process nothing will be sent to. `stillReady` keeps
@@ -3084,6 +3106,11 @@ export class Live {
     let ready: { connection: QConnection; process: Process } | undefined = first;
     if (expect !== undefined && ready.process.label !== expect) {
       throw movedFrom(expect);
+    }
+    // Refused before the guard asks about a change that cannot be sent (#2485).
+    const direct = lambda ? ready.connection.direct() : undefined;
+    if (direct !== undefined) {
+      throw new DirectRefused(directRefusal(direct));
     }
     const refused = this.guardRefuses(code, [ready.process]);
     if (refused !== undefined) {
@@ -3657,6 +3684,11 @@ export class Live {
     }
     if (connection.isBusy) {
       return { later: "a query is running on it; scroll again once it ends" };
+    }
+    // Nothing is sent while it is evaluated directly, and the process keeps
+    // the result: later, not gone (#2566).
+    if (connection.isDirect) {
+      return { later: "it is evaluated directly now, and paging needs q-lint's lambda; turn direct evaluation off, then scroll again" };
     }
     return readPage(await connection.call(PAGE, token, offset, count));
   }

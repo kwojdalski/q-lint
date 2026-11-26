@@ -30,6 +30,7 @@ export const USAGE = [
   "  --width <px> --height <px>   default 800 by 450",
   "  --background <colour>        default #ffffff",
   "  --user <name>       for --query; the password is $QLINT_CHART_PASSWORD",
+  "  --direct            for --query: send only plain strings, for a process that refuses a lambda",
   "",
   "Writes SVG only. A '-' file reads CSV from stdin (--json for JSON).",
 ].join("\n");
@@ -42,6 +43,8 @@ export interface CliArgs {
   port?: number;
   user?: string;
   query?: string;
+  /// Send the query as plain strings, for a process that refuses a lambda (#2494).
+  direct?: boolean;
   options: ChartOptions;
 }
 
@@ -55,6 +58,7 @@ export function parseArgs(argv: string[]): CliArgs | string {
   let port: number | undefined;
   let user: string | undefined;
   let query: string | undefined;
+  let direct = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = (): string => {
@@ -111,6 +115,9 @@ export function parseArgs(argv: string[]): CliArgs | string {
         case "--query":
           query = value();
           break;
+        case "--direct":
+          direct = true;
+          break;
         case "-h":
         case "--help":
           return USAGE;
@@ -127,11 +134,12 @@ export function parseArgs(argv: string[]): CliArgs | string {
   if (query !== undefined && (host === undefined || port === undefined)) return "--query needs --host and --port";
   if (query === undefined && input === undefined) return `name a CSV or JSON file, or --query\n\n${USAGE}`;
   if (query !== undefined && input !== undefined) return "a file or --query, not both";
+  if (direct && query === undefined) return "--direct is for --query";
   if (query !== undefined) {
     const changes = writes(query);
     if (changes.length > 0) return `the query would change the process (${changes.join("; ")}): a chart only reads`;
   }
-  return { input, json, out, host, port, user, query, options };
+  return { input, json, out, host, port, user, query, ...(direct ? { direct } : {}), options };
 }
 
 /// The grid a query answers, over a connection opened for it and closed.
@@ -141,7 +149,15 @@ async function queryGrid(args: CliArgs): Promise<Grid> {
   const password = process.env.QLINT_CHART_PASSWORD;
   const connection = await QConnection.open({ host: args.host!, port: args.port!, ...(args.user ? { user: args.user, password: password ?? "" } : {}) });
   try {
-    const answer = await connection.queryGrid(statements(args.query!), [25, 200], 100_000);
+    let answer;
+    if (args.direct === true) {
+      // Plain strings only, the grid made here from the typed answer (#2494).
+      const { runUnwrapped } = await import("./querycontrols");
+      connection.direct = () => ({ label: `${args.host}:${args.port}`, from: "process" });
+      answer = await runUnwrapped(connection, statements(args.query!), { size: [25, 200], limit: 100_000, unlimited: false, grid: true });
+    } else {
+      answer = await connection.queryGrid(statements(args.query!), [25, 200], 100_000);
+    }
     if (!answer.ok) throw new Error(`the query failed: ${answer.error}`);
     if (answer.grid === undefined) throw new Error("the query's answer is not a table");
     return gridFromPayload(answer.grid);

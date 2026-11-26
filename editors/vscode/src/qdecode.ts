@@ -10,21 +10,32 @@
 // longs, timestamps and timespans as bigints - with nulls as null and
 // infinities as +-Infinity, as the codec gives them.
 
+import { bytesText } from "./grid";
+
 /// One item of an atom or a simple list. A char is its byte, a symbol and a
 /// guid their text.
 export type Item = null | boolean | number | bigint | string;
 
 export type QValue =
-  | { kind: "atom"; t: number; v: Item }
-  | { kind: "vector"; t: number; attr: number; v: Item[] }
+  /// A symbol with a byte past ASCII keeps its bytes: its text reads them
+  /// as UTF-8 where they are, and a byte at a time where not (#2578).
+  | { kind: "atom"; t: number; v: Item; bytes?: number[] }
+  | { kind: "vector"; t: number; attr: number; v: Item[]; bytes?: (number[] | false)[] }
   /// A char vector, as its bytes: q's text escapes what is not printable.
   | { kind: "chars"; attr: number; v: Buffer }
   | { kind: "list"; attr: number; v: QValue[] }
   | { kind: "table"; attr: number; cols: string[]; data: QValue[] }
   /// A dictionary; `sorted` for one with the `s` attribute (type 127).
   | { kind: "dict"; sorted: boolean; k: QValue; v: QValue }
-  /// A function: a lambda's text, or none for any other kind.
-  | { kind: "func"; t: number; text?: string };
+  /// A function: a lambda's or a primitive's text; for a projection (104),
+  /// a composition (105) or a derived function (106-111), which q sends as
+  /// their parts, `parts`: the function and its arguments, the functions
+  /// composed, or the function an iterator derives from (#2477).
+  | { kind: "func"; t: number; text?: string; parts?: QValue[] };
+
+/// A value q sends by reference - a mapped table, as its path - so none of
+/// it can be shown: said as that, never as the codec's reading of it.
+export class ByReference extends Error {}
 
 /// The body of a compressed message, uncompressed, behind an 8-byte header:
 /// kdb+'s scheme (code.kx.com/q/basics/ipc), as its own clients undo it.
@@ -153,13 +164,16 @@ export function decode(message: Buffer): QValue {
         if (end < 0) {
           throw new Error("a message shorter than its list");
         }
-        const s = b.toString("utf8", pos, end);
+        const raw = b.subarray(pos, end);
         pos = end + 1;
-        return s;
+        symbolBytes = raw.some((x) => x > 127) ? [...raw] : undefined;
+        return symbolBytes === undefined ? raw.toString("utf8") : (bytesText(symbolBytes) ?? raw.toString("utf8"));
       }
     }
     throw new Error(`no q type ${t}`);
   };
+  /// The bytes of the symbol `item` read last, when one is past ASCII.
+  let symbolBytes: number[] | undefined;
   const symbol = (): string => item(11) as string;
   const value = (): QValue => {
     const t = b.readInt8(pos++);
@@ -167,7 +181,8 @@ export function decode(message: Buffer): QValue {
       throw new Error(symbol());
     }
     if (t < 0 && t >= -19 && t !== -3) {
-      return { kind: "atom", t, v: item(-t) };
+      const v = item(-t);
+      return t === -11 && symbolBytes !== undefined ? { kind: "atom", t, v, bytes: symbolBytes } : { kind: "atom", t, v };
     }
     if (t === 99 || t === 127) {
       const k = value();
@@ -183,25 +198,34 @@ export function decode(message: Buffer): QValue {
         const index = b.readUInt8(pos++);
         // A primitive is sent as its index in q's table: (::), the generic
         // null, is unary 0 and keeps no text; `count` is unary 13, `#:`.
-        const text = index === 0 && t === 101 ? undefined : PRIMITIVES[t - 101][index];
+        // Unary 255 is an argument a projection leaves out, written as none.
+        const text = t === 101 && index === 255 ? "" : index === 0 && t === 101 ? undefined : PRIMITIVES[t - 101][index];
         return { kind: "func", t, ...(text !== undefined ? { text } : {}) };
       }
+      const parts: QValue[] = [];
       if (t <= 105) {
         const n = b.readInt32LE(pos);
         pos += 4;
         for (let i = 0; i < n; i++) {
-          value();
+          parts.push(value());
         }
       } else if (t <= 111) {
-        value();
+        parts.push(value());
       } else {
         throw new Error(`q-lint cannot read a value of type ${t}`);
       }
-      return { kind: "func", t };
+      return { kind: "func", t, parts };
     }
     const attr = b.readInt8(pos++);
     if (t === 98) {
       const dict = value();
+      // A mapped splayed or partitioned table is sent as its columns and
+      // its path, or its name: none of its rows (#2569).
+      if (dict.kind === "dict" && dict.v.kind === "atom" && dict.v.t === -11) {
+        const ref = dict.v.v === null ? "" : ` \`${dict.v.v}`;
+        const as = String(dict.v.v).startsWith(":") ? "its path" : "its name";
+        throw new ByReference(`a splayed or partitioned table is sent by reference (${as}${ref}), with none of its rows: select from it to see them, as select from t does.`);
+      }
       if (dict.kind !== "dict" || dict.k.kind !== "vector" || dict.v.kind !== "list") {
         throw new Error("a table that is not a dictionary of columns");
       }
@@ -226,10 +250,15 @@ export function decode(message: Buffer): QValue {
       throw new Error("a message shorter than its list");
     }
     const v: Item[] = new Array(n);
+    let bytes: (number[] | false)[] | undefined;
     for (let i = 0; i < n; i++) {
       v[i] = item(t);
+      if (t === 11 && symbolBytes !== undefined) {
+        bytes ??= new Array(n).fill(false);
+        bytes[i] = symbolBytes;
+      }
     }
-    return { kind: "vector", t, attr, v };
+    return bytes === undefined ? { kind: "vector", t, attr, v } : { kind: "vector", t, attr, v, bytes };
   };
   return value();
 }

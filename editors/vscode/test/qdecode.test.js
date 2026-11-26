@@ -263,3 +263,123 @@ test("a dictionary's key is put in parentheses where -3! puts them (#2573)", () 
   ];
   for (const [q, text] of cases) assert.strictEqual(oneLine(q), text);
 });
+
+test("a splayed or partitioned table, sent by reference, is refused as that, not shown as one row of its path (#2569)", async () => {
+  const { ByReference } = require("../out/qdecode.js");
+  const { runUnwrapped } = require("../out/querycontrols.js");
+  // KDB-X: -8!pt of a partitioned pt, and -8!sp of a splayed sp mapped
+  // from :db/sp/ - a table whose dictionary's value is a symbol.
+  const pt = Buffer.from("010000001c0000006200630b000200000073796d00707800f5707400", "hex");
+  const sp = Buffer.from("01000000200000006200630b000300000073006e006300f53a64622f73702f00", "hex");
+  assert.throws(() => decode(pt), (e) => e instanceof ByReference && /by reference \(its name `pt\)/.test(e.message));
+  assert.throws(() => decode(sp), (e) => e instanceof ByReference && /by reference \(its path `:db\/sp\/\)/.test(e.message));
+  // The codec makes the path characters: never shown.
+  const fake = { evaluate: async () => ({ value: { s: [":"], n: ["."], c: ["/"] }, type: 98, message: sp }) };
+  const answer = await runUnwrapped(fake, ["sp"], { size: [25, 80], limit: 10, unlimited: false, grid: true });
+  assert.strictEqual(answer.ok, false);
+  assert.match(answer.error, /select from it/);
+});
+
+test("a projection, composition or derived function is written as -3! writes it, from the parts q sends (#2477)", () => {
+  // KDB-X: each -8! of the value, and its -3!.
+  const cases = [
+    ["0100000023000000680200000064000a00050000007b782b797df90100000000000000", "{x+y}[1]"],
+    ["0100000030000000680400000064000a00070000007b782b792b7a7df9010000000000000065fff90300000000000000", "{x+y+z}[1;;3]"],
+    ["010000001800000068020000006601f90100000000000000", "+[1]"],
+    ["010000000b0000006b6601", "+/"],
+    ["0100000011000000690200000065026519", "-sum"],
+    ["0100000023000000690200000064000a00030000007b787d64000a00030000007b797d", "{x}{y}"],
+    ["01000000140000006a64000a00030000007b787d", "{x}'"],
+    ["010000001f00000068020000006471000a00070000006b297b7827797d6601", "k){x'y}[+]"],
+    ["010000000b0000006e660c", ",/:"],
+    ["010000000b0000006c6601", "+\\"],
+    ["010000000b0000006d6601", "+':"],
+    ["010000000b0000006f660c", ",\\:"],
+    ["010000001a0000006803000000651965fff90100000000000000", "sum[;1]"],
+    ["0100000021000000690200000065026902000000651964000a00030000007b787d", "-sum{x}"],
+    ["010000001d000000680200000064000a00050000007b782b797df56100", "{x+y}[`a]"],
+    ["0100000022000000680200000064000a00050000007b782b797d0a00020000006162", '{x+y}["ab"]'],
+    ["0100000030000000680200000064000a00050000007b782b797d07000200000001000000000000000200000000000000", "{x+y}[1 2]"],
+    ["01000000190000006b68020000006601f90100000000000000", "+[1]/"],
+    ["0100000011000000690200000066016602", "+-"],
+    ["010000002c000000680200000064000a00050000007b782a797d000002000000f90100000000000000f56100", "{x*y}[(1;`a)]"],
+    ["010000001a00000068030000006529f9010000000000000065ff", "enlist[1;]"],
+    ["0100000025000000680300000064000a00050000007b782b797d65fff90200000000000000", "{x+y}[;2]"],
+    ["010000000b0000006a6502", "-:'"],
+    ["010000001f00000069020000006802000000660df902000000000000006502", "#[2]-:"],
+    ["0100000023000000680200000064000a00050000007b782b797df7000000000000f83f", "{x+y}[1.5]"],
+  ];
+  for (const [hex, text] of cases) {
+    assert.strictEqual(formatQ(decode(Buffer.from(hex, "hex")), undefined).join("\n"), text, hex);
+  }
+  // In a list, and a live value's one line, the same.
+  const { oneLine } = require("../out/qformat.js");
+  assert.strictEqual(oneLine(decode(message("\x00\x00", Buffer.from([2, 0, 0, 0]), Buffer.from("6b6601", "hex"), Buffer.from("6a6502", "hex")))), "(+/;-:')");
+});
+
+/// What Copy as q writes of the direct grid of the value `-8!` gave as `hex`.
+function copied(hex) {
+  const { gridOfQ } = require("../out/qformat.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const grid = gridOfQ(decode(Buffer.from(hex, "hex")), 100);
+  return { cells: grid.cells, literal: tableLiteral(grid).code };
+}
+
+test("a symbol past UTF-8 shows its bytes' characters and copies as them, as the wrapped grid does (#2578)", () => {
+  // KDB-X: -8!([] a:`$("caf\351";"b")), -8!([] a:(`$"caf\351";1)), -8!([] a:(`$("caf\351";"x");1))
+  assert.deepStrictEqual(copied("01000000260000006200630b000100000061000000010000000b0002000000636166e9006200"), {
+    cells: [["café", "b"]],
+    literal: '([] a:(`$"caf\\351";`b))',
+  });
+  assert.deepStrictEqual(copied("010000002e0000006200630b00010000006100000001000000000002000000f5636166e900f90100000000000000"), {
+    cells: [["`café", "1"]],
+    literal: '([] a:(`$"caf\\351";1))',
+  });
+  assert.strictEqual(copied("01000000350000006200630b000100000061000000010000000000020000000b0002000000636166e9007800f90100000000000000").literal, '([] a:((`$"caf\\351";`x);1))');
+  // A UTF-8 symbol is its characters still.
+  assert.strictEqual(shown(Buffer.from("f563c3a900", "hex")), "`cé");
+});
+
+test("a general column's time q cannot read back as -3! writes it copies as a cast from its count, as the wrapped grid does (#2579)", () => {
+  // KDB-X: -8! of each table, and the literal q reads back as it (~).
+  const cases = [
+    ["010000002a0000006200630b000100000061000000010000000000020000000a0000000000efe02e0000", '([] a:("";"u"$12000i))'],
+    ["010000002d0000006200630b00010000006100000001000000000002000000ed002a7515f90100000000000000", '([] a:("t"$360000000i;1))'],
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f12ab3f798be11f440", '([] a:(1;"z"$82203.9123456))'],
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f400006862be085380", '([] a:(1;"p"$-9200000000000000000))'],
+    // One q reads back is written as -3! writes it.
+    ["01000000310000006200630b00010000006100000001000000000002000000f90100000000000000f40000000000000000", "([] a:(1;2000.01.01D00:00:00.000000000))"],
+  ];
+  for (const [hex, literal] of cases) {
+    assert.strictEqual(copied(hex).literal, literal, hex);
+  }
+});
+
+test("a dictionary of a table's rows shows each row's values as q makes them, a simple list of one type (#2582)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const syms = (...v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const table = (cols, ...data) => ({ kind: "table", attr: 0, cols, data });
+  const longs = (...v) => ({ kind: "vector", t: 7, attr: 0, v: v.map(BigInt) });
+  // `a`b!([] x:1 2; y:3 4), `a`b!([] s:`x`y; t:`p`q), `a`b!([] c:"ab"; n:1 2)
+  const cells = (v) => gridOfQ({ kind: "dict", sorted: false, k: syms("a", "b"), v }, 10).cells[1];
+  assert.deepStrictEqual(cells(table(["x", "y"], longs(1, 2), longs(3, 4))), ["`x`y!1 3", "`x`y!2 4"]);
+  assert.deepStrictEqual(cells(table(["s", "t"], syms("x", "y"), syms("p", "q"))), ["`s`t!`x`p", "`s`t!`y`q"]);
+  assert.deepStrictEqual(cells(table(["c", "n"], { kind: "chars", attr: 0, v: Buffer.from("ab") }, longs(1, 2))), ['`c`n!("a";1)', '`c`n!("b";2)']);
+});
+
+test("a direct grid ranks dictionaries item by item, and equal (::) cells as one null, as q ranks them (#2575, #2576)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const syms = (...v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const dict = (v) => ({ kind: "dict", sorted: false, k: syms("a", "b"), v });
+  const rank = (q) => gridOfQ(q, 100).rank;
+  // ([] a:((`a`b!1 2);`a`b!(1;`x))): q's iasc is 0 1.
+  const simple = dict({ kind: "vector", t: 7, attr: 0, v: [1n, 2n] });
+  const general = dict({ kind: "list", attr: 0, v: [{ kind: "atom", t: -7, v: 1n }, { kind: "atom", t: -11, v: "x" }] });
+  assert.deepStrictEqual(rank({ kind: "table", attr: 0, cols: ["a"], data: [{ kind: "list", attr: 0, v: [simple, general] }] }), [[0, 1]]);
+  // (::;::): both one null, as GRID ranks them.
+  const nil = { kind: "func", t: 101 };
+  assert.deepStrictEqual(rank({ kind: "list", attr: 0, v: [nil, nil] }), [[-1, -1]]);
+  // A projection the same as another is one value.
+  const p = (n) => ({ kind: "func", t: 104, parts: [{ kind: "func", t: 100, text: "{x+y}" }, { kind: "atom", t: -7, v: BigInt(n) }] });
+  assert.deepStrictEqual(rank({ kind: "list", attr: 0, v: [p(1), p(1), p(2)] }), [[0, 0, 1]]);
+});

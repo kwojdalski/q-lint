@@ -108,6 +108,9 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
   private owedAsked = false;
   /// The process evaluated directly whose read waits for Refresh (#2470).
   private directWaiting: string | undefined;
+  /// Whether the last refresh found the active process evaluated directly:
+  /// read again when that changes (#2495).
+  private shownDirect: boolean | undefined;
 
   constructor(context: ExtensionContext, private readonly live: Live) {
     this.view = window.createTreeView(EXPLORER.view, { treeDataProvider: this });
@@ -133,7 +136,12 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
           this.kept = undefined;
           this.problem = undefined;
           this.show();
-        } else if (this.owed || settings().autoRefresh) {
+        } else if (this.owed || settings().autoRefresh || this.modeChanged()) {
+          void this.refresh();
+        }
+      }),
+      workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration("q-lint.query.unwrapped") && this.modeChanged()) {
           void this.refresh();
         }
       }),
@@ -151,6 +159,11 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     this.switchHover();
     this.switchCompletion();
     this.show();
+  }
+
+  /// Whether the active process's evaluation is not the one last read as.
+  private modeChanged(): boolean {
+    return this.shownDirect !== undefined && this.live.activeLabel() !== undefined && (this.live.activeDirect() !== undefined) !== this.shownDirect;
   }
 
   /// The tree as it stands, for the read-only API.
@@ -185,6 +198,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     this.owedAsked = false;
     const { excludedNamespaces } = settings();
     const direct = this.live.activeDirect();
+    this.shownDirect = direct !== undefined;
     if (direct !== undefined && !asked) {
       // Kept from the last Refresh stays; nothing is sent.
       this.directWaiting = direct.label;
@@ -333,6 +347,11 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       return undefined;
     }
     const info = await this.tableDetails(word, 1000);
+    // Listed by a direct process and not read: nothing more is known, so
+    // no rows or columns are stated (#2490).
+    if (info === undefined && entry.unread === true) {
+      return new Hover(new MarkdownString(`**${word}** on ${kept.process}: table, not read - its rows and columns are read only by q-lint's lambda, which direct evaluation does not send.`));
+    }
     // Busy: what the explorer already knows, its rows and columns.
     return new Hover(
       new MarkdownString(

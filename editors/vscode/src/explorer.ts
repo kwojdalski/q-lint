@@ -208,6 +208,11 @@ export function directRequests(ns: string): { part: "Tables" | "Functions" | "Va
 /// The request for the namespaces: the root's names that are namespaces.
 export const NAMESPACES_REQUEST = "key`";
 
+/// The request for the root's partitioned tables, which Preview reads by
+/// `.Q.ind` (#2481): sent when the root has tables, and one refused leaves
+/// each read as any table is.
+export const PARTITIONED_REQUEST = ".Q.pt";
+
 const names = (v: unknown): string[] => (Array.isArray(v) ? v : typeof v === "string" ? [v] : []).filter((x): x is string => typeof x === "string" && x !== "");
 
 /// What a direct process holds (#2470), read with `read`, one plain request
@@ -238,6 +243,13 @@ export async function gatherDirect(read: (request: string) => Promise<Read>, exc
       }
     }
     const tables = new Set(got.Tables ?? []);
+    const partitioned = new Set<string>();
+    if (ns === "." && tables.size > 0) {
+      const answer = await read(PARTITIONED_REQUEST);
+      for (const name of answer.ok ? names(answer.value) : []) {
+        partitioned.add(name);
+      }
+    }
     const functions = new Set(got.Functions ?? []);
     // `\v` lists the tables too.
     const variables = new Set((got.Variables ?? []).filter((n) => !tables.has(n) && !functions.has(n)));
@@ -250,7 +262,7 @@ export async function gatherDirect(read: (request: string) => Promise<Read>, exc
     spaces.push({ ns, total: sorted.length });
     for (const name of sorted.slice(0, lim[0])) {
       const kind = kinds.get(name)!;
-      entries.push({ ns, name, kind, type: kind === "table" ? 98 : kind === "function" ? 100 : 0, count: null, cols: [], keys: [], params: [], partitioned: false, unread: true });
+      entries.push({ ns, name, kind, type: kind === "table" ? 98 : kind === "function" ? 100 : 0, count: null, cols: [], keys: [], params: [], partitioned: kind === "table" && partitioned.has(name), unread: true });
     }
   }
   return { entries, spaces, more: all.length - read_.length, ...(unavailable.length > 0 ? { unavailable } : {}) };
@@ -560,8 +572,12 @@ export function liveCompletions(g: Gathered, process: string, table?: string): C
     ...g.entries.map((e): Completion => ({
       label: fullName(e),
       kind: e.kind,
+      // An entry a direct process listed was not read: only its kind is
+      // known, not its type or its parameters (#2493).
       detail:
-        e.kind === "function"
+        e.unread === true && e.kind !== "table"
+          ? `${e.kind} (${process})`
+          : e.kind === "function"
           ? `${shape(e)} (${process})`
           : e.kind === "table"
             ? `table, ${e.count === null ? "not counted" : plural(e.count, "row")} (${process})`

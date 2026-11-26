@@ -116,6 +116,7 @@ test("the explorer reads a direct process with one plain request a part, and sho
     "tables[]": ["t"],
     "\\f": ["f"],
     "\\v": ["t", "v"],
+    ".Q.pt": [],
     "\\a .foo": ["q"],
     "\\f .foo": ["g"],
     "\\v .foo": ["q", "sub", "w"],
@@ -135,6 +136,7 @@ test("the explorer reads a direct process with one plain request a part, and sho
   assert.deepStrictEqual(sent, [
     "key`",
     ...directRequests(".").map((r) => r.request),
+    ".Q.pt",
     ...directRequests(".foo").map((r) => r.request),
     ...directRequests(".priv").map((r) => r.request),
     ...directRequests(".z").map((r) => r.request),
@@ -153,6 +155,16 @@ test("the explorer reads a direct process with one plain request a part, and sho
     ["Functions unavailable", "pm: no read permission on [\\f .priv]"],
     ["Variables unavailable", "pm: no read permission on [\\v .priv]"],
   ]);
+  // A partitioned table is marked so, and Preview reads it by .Q.ind (#2481);
+  // .Q.pt refused, each table is read as any is.
+  const { previewCode } = require("../out/explorer.js");
+  const hdb = await gatherDirect(async (r) => ({ ok: true, value: r === "tables[]" ? ["pt", "sp"] : r === ".Q.pt" ? ["pt"] : [] }), []);
+  assert.deepStrictEqual(hdb.entries.map((e) => [e.name, e.partitioned, previewCode({ kind: "table", name: e.name, partitioned: e.partitioned }, 5)]), [
+    ["pt", true, ".Q.ind[pt;til 5&count pt]"],
+    ["sp", false, "5 sublist sp"],
+  ]);
+  const refused = await gatherDirect(async (r) => (r === ".Q.pt" ? { ok: false, error: "pm: no" } : { ok: true, value: r === "tables[]" ? ["pt"] : [] }), []);
+  assert.deepStrictEqual([refused.entries.map((e) => e.partitioned), refused.unavailable], [[false], undefined]);
   // The namespaces refused: the root is still read.
   const bare = await gatherDirect(async (r) => (r === "key`" ? { ok: false, error: "pm: no" } : { ok: true, value: r === "tables[]" ? ["t"] : [] }), []);
   const top = explorerTree(bare, []);
@@ -160,4 +172,38 @@ test("the explorer reads a direct process with one plain request a part, and sho
   // Bounded as GATHER is: names a namespace, namespaces a read.
   const many = await gatherDirect(async (r) => ({ ok: true, value: r === "key`" ? ["a", "b", "c"] : r.startsWith("\\v") ? ["x", "y", "z"] : [] }), [], [2, 2]);
   assert.deepStrictEqual([many.spaces.map((s) => s.ns), many.more, many.entries.filter((e) => e.ns === ".").map((e) => e.name)], [[".", ".a"], 2, ["x", "y"]]);
+});
+
+test("a listed process's direct evaluation is said to be its list's, not Set Process Evaluation's (#2488)", () => {
+  const desk = directMode({ label: "desk/pm", evaluation: "direct", server: "desk" }, false);
+  assert.deepStrictEqual(desk, { label: "desk/pm", from: "process", list: "desk's process list" });
+  const shared = directMode({ label: ".qlint/pm", evaluation: "direct", server: ".qlint" }, false);
+  assert.strictEqual(shared.list, "the workspace's shared process list");
+  assert.match(evaluationText("desk/pm", desk, true), /direct \(its "evaluation": "direct" in desk's process list\)/);
+  const refused = directRefusal(desk);
+  assert.match(refused, /nothing was sent\. Its "evaluation" in desk.s process list changes that\.$/);
+  assert.doesNotMatch(refused, /Set Process Evaluation/);
+  // A listed process that sets none follows the setting, which Toggle changes.
+  assert.deepStrictEqual(directMode({ label: "desk/pm", server: "desk" }, true), { label: "desk/pm", from: "setting" });
+});
+
+test("Set Process Evaluation refuses a mode it does not know, rather than clearing the process's (#2487)", async (t) => {
+  const { stub } = require("./vscode_stub.js");
+  const { Live } = require("../out/live.js");
+  stub.reset();
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "pm", host: "h", port: 1, tags: [], evaluation: "direct" }]);
+  const live = new Live(context);
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const set = stub.commands.get("q-lint.setProcessEvaluation");
+  for (const typo of ["plain", { mode: "direct" }, 1]) {
+    stub.messages.length = 0;
+    await set("pm", typo);
+    assert.strictEqual(live.processes()[0].evaluation, "direct", JSON.stringify(typo));
+    assert.match(stub.messages.at(-1)[1], /is no evaluation: give "direct", "wrapped", or ""/);
+  }
+  await set("pm", "Wrapped");
+  assert.strictEqual(live.processes()[0].evaluation, "wrapped");
+  await set("pm", "");
+  assert.strictEqual("evaluation" in live.processes()[0], false);
 });

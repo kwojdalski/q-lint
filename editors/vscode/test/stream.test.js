@@ -481,3 +481,19 @@ test("the stream page adds the rows that came above its own and drops the oldest
   // Newest first, the oldest dropped: as a full redraw would show them.
   assert.deepStrictEqual(shown(), w.rows().slice().reverse());
 });
+
+test("on a direct process, Stream Tickerplant Table refuses before it asks anything or connects (#2484)", async (t) => {
+  // A port nothing listens on: a connect would be an error message.
+  const { streams, panels } = await setUp(t, [{ label: "pm", host: "127.0.0.1", port: 1, tags: ["live"], evaluation: "direct" }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  t.after(() => {
+    delete stub.config.user["tickerplant.stream.enable"];
+    delete stub.config.user["processes.readOnlyGuard.tags"];
+  });
+  await stub.commands.get(STREAM_COMMANDS.start)("pm");
+  assert.strictEqual(stub.messages.length, 1, JSON.stringify(stub.messages));
+  assert.match(stub.messages[0][1], /^q-lint: Stream Table: this needs q-lint's own evaluator lambda, and pm uses direct evaluation/);
+  assert.deepStrictEqual(panels, []);
+  assert.deepStrictEqual(streams.state(), []);
+});
