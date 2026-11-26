@@ -133,15 +133,23 @@ test("where a file reaches a name at run time is a row that opens the line", () 
     ambiguous: {},
     dynamic: [
       { line: 3, kind: "value" },
+      { line: 5, kind: "namespace" },
       { line: 9, kind: "something new" },
     ],
   });
   const all = rows(graph, name);
   assert.strictEqual(all.length, 3);
   assert.strictEqual(all[2].label, "Reached at run time");
-  assert.strictEqual(all[2].description, "2 places");
+  assert.strictEqual(all[2].description, "3 places");
   assert.deepStrictEqual(all[2].children, [
     { label: "line 3", description: "value of a string", uri: uri("main.q"), line: 3 },
+    // `system "d ",x`, which the server has listed since #3158.
+    {
+      label: "line 5",
+      description: "a switch to a computed context",
+      uri: uri("main.q"),
+      line: 5,
+    },
     // A kind this client has no words for is shown as the server named it.
     { label: "line 9", description: "something new", uri: uri("main.q"), line: 9 },
   ]);
