@@ -369,3 +369,16 @@ test("a general cell's new value is one item: a join adds no column, and :: is t
   after = await shown("g");
   assert.deepStrictEqual([after.names, after.cells[1]], [["id", "g"], ["::", "1 2", '"s"']]);
 });
+
+test("a one-character value typed into a column of strings is stored as a string (#3080)", { skip }, async (t) => {
+  const q = await startQ(() => 'tt:([] id:1 2 3; s:("ab";"cd";"ef"))\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const shown = async (code) => (await connection.queryGrid(statements(code), SIZE, 1000)).grid;
+  const edited = w.editStatement(await shown("tt"), 1, 0, "tt", '"x"');
+  const answer = await connection.query(statements(edited.code), SIZE);
+  assert.ok(answer.ok, `${edited.code}: ${answer.error}`);
+  assert.deepStrictEqual((await shown("tt")).cells[1], [',"x"', '"cd"', '"ef"']);
+  assert.deepStrictEqual((await shown("([] t:type each tt`s)")).cells[0], ["10", "10", "10"]);
+});

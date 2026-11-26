@@ -122,6 +122,11 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   // In parentheses: a comma would start a second column, and :: alone make enlist a projection (#3078, #3079).
   assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"x","y"').code, 'update note:(count i)#enlist ("x","y") from `kt where (sym=`a)');
   assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", "::").code, "update note:(count i)#enlist (::) from `kt where (sym=`a)");
+  // A column of strings keeps a string: "x" alone is a char atom (#3080).
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", ' "x" ').code, 'update note:(count i)#enlist (enlist "x") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"\\""').code, 'update note:(count i)#enlist (enlist "\\"") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"x","y"').code, 'update note:(count i)#enlist ("x","y") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1, cells: [["a", "b"], ["1.5", ""], ['"x y"', "1"], ["a", "b"]] }), 2, 0, "kt", '"x"').code, 'update note:(count i)#enlist ("x") from `kt where (sym=`a)');
   // A keyed result is found by its keys alone.
   const keyed = w.editStatement(payload({ keys: 1 }), 1, 0, "kt", "2");
   assert.deepStrictEqual(keyed, { code: "update px:(2) from `kt where (sym=`a)", matchedBy: ["sym"] });

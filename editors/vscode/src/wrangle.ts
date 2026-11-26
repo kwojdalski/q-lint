@@ -318,7 +318,10 @@ export function editStatement(payload: GridPayload, column: number, row: number,
   // A general column takes a list as long as the rows found. The value is
   // in parentheses there too: a comma outside them starts a second column
   // of the update (#3078), and `enlist ::` is a projection (#3079).
-  const v = readable(value.trim());
+  // A column of strings keeps a string: `"x"` alone is a char atom, which
+  // `like` and a string filter of the column then fail on (#3080).
+  const typed = readable(value.trim());
+  const v = stringColumn(payload, column) && /^"(?:[^"\\]|\\(?:\d{3}|.))"$/.test(typed) ? `enlist ${typed}` : typed;
   const set = payload.types[column] === 0 ? `(count i)#enlist (${v})` : `(${v})`;
   return { code: `update ${c}:${set} from ${symbolLiteral(table)} where ${tests.join(",")}`, matchedBy: by.map((i) => names[i]) };
 }
