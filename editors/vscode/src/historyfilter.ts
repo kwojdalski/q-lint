@@ -4,7 +4,7 @@
 // it.
 
 import { leavesNamespace } from "./qnb";
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 export const HISTORY_COMMANDS = {
   filter: "q-lint.filterQueryHistory",
@@ -153,7 +153,9 @@ function standalone(code: string): string {
   // In the statement of such a command, which runs to the next unindented line.
   let unrun = false;
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/\s+$/, "");
+    // q's blanks: `/` and a no-break space is a line comment, and the `\`
+    // that closed it as a block comment ended the script (#2907).
+    const line = trimBlanks(lines[i]);
     if (depth > 0 || line === "/") {
       depth = blockDepth(depth, line);
     } else if (line === "\\") {
