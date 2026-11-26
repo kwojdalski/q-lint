@@ -450,7 +450,7 @@ test("export: block comments nest as the cell nests them, so the script runs wha
 });
 
 test("fields this extension does not know are kept on an output, an item and a run too", () => {
-  // Saved by a later q-lint, or another tool: the README promises a save of
+  // Saved by a later q-lint, or another tool: docs/vscode/notebooks.md promises a save of
   // what was opened writes the same file.
   const file = {
     qnb: 1,

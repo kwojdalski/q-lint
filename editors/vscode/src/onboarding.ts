@@ -34,7 +34,7 @@ export const HELP_LINKS: readonly HelpLink[] = [
     label: "Read the Documentation",
     icon: "book",
     url: `${REPOSITORY}/blob/master/editors/vscode/README.md`,
-    tooltip: "The extension's README: linting, processes, queries, notebooks and every setting",
+    tooltip: "The extension's README: linting, processes, queries, results, notebooks, TorQ and settings",
   },
   {
     id: "rules",
