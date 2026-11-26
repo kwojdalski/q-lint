@@ -235,7 +235,8 @@ async function within(dir: string): Promise<{ top: string; prefix: string } | un
 
 /// The commit `HEAD` is, its date and subject, and whether a q file differs
 /// from it - or a configuration, in the folder or in a directory above it,
-/// where qlinter looks for one too (#1897); undefined outside a git
+/// where qlinter looks for one too (#1897), or a JSON file there, which a
+/// baseline a configuration names is (#2762); undefined outside a git
 /// repository or before a first commit.
 export async function head(dir: string): Promise<{ commit: string; date: string; subject: string; clean: boolean } | undefined> {
   const log = await run(gitCommand(), ["log", "-1", "--format=%H%x00%cI%x00%s"], dir).catch(() => undefined);
@@ -244,8 +245,8 @@ export async function head(dir: string): Promise<{ commit: string; date: string;
   }
   const [commit, date, subject] = log.stdout.trim().split("\0");
   const above = ((await within(dir))?.prefix ?? "").split("/").filter((part) => part !== "");
-  const configurations = above.map((_, i) => `:(top,glob)${above.slice(0, i).map((part) => `${part.replace(/[\\*?[]/g, "\\$&")}/`).join("")}*.toml`);
-  const status = await run(gitCommand(), ["status", "--porcelain", "--", "*.q", "*.toml", ...configurations], dir).catch(() => undefined);
+  const configurations = above.flatMap((_, i) => ["toml", "json"].map((ext) => `:(top,glob)${above.slice(0, i).map((part) => `${part.replace(/[\\*?[]/g, "\\$&")}/`).join("")}*.${ext}`));
+  const status = await run(gitCommand(), ["status", "--porcelain", "--", "*.q", "*.toml", "*.json", ...configurations], dir).catch(() => undefined);
   return { commit, date, subject: subject ?? "", clean: status !== undefined && status.code === 0 && status.stdout.trim() === "" };
 }
 
