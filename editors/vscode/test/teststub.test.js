@@ -5,7 +5,8 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, endContext, TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, endContext, unreadFrom, TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { statements } = require("../out/statements.js");
 
 const SRC = ["/ lib", "\\d .fx", "mid:{[bid;ask]", "  (bid+ask)%2}", "\\d .", "sq:{x*x}", "now:{[] .z.p}", "test_x:{[] 1b}", ""].join("\n");
 
@@ -224,6 +225,41 @@ test("the stub goes at the end of the open test file, unsaved edits included (#1
   stub.picks.push("Add Test");
   assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
   assert.strictEqual(files["/ws/tests/test_lib.q"], "a:1\nb:{[]\n  2}\nc:3\n\ntest_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n");
+});
+
+// At the file's end it went after a `\` that ends the script, or into a
+// block comment left open: q never defined the test, and nothing said so.
+test("the stub goes before the text q does not read: the script's end, an unclosed block comment (#2908)", async () => {
+  assert.strictEqual(unreadFrom("a:1\n\\\nnotes\n"), 1);
+  assert.strictEqual(unreadFrom("a:1\n/\nscratch\n/\nmore\n\\\n"), 1);
+  assert.strictEqual(unreadFrom("a:1\r\n\\ \r\nnotes\r\n"), 1);
+  // A block comment that is closed, a line comment, and a `\` that is not
+  // alone on its line leave the end where it is.
+  for (const read of ["", "a:1\n", "/\nnote\n\\\na:1\n", "a:1\n/ note\n", "a:1\n\\l lib.q\n", "a:1\n \\\n", "a:1\n\\\u00a0\n"]) {
+    assert.strictEqual(unreadFrom(read), undefined, JSON.stringify(read));
+  }
+  const stubbed = "test_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n";
+  for (const [before, after] of [
+    ["test_old:{[] 1~1}\n\\\nnotes: run with q test_lib.q\n", `test_old:{[] 1~1}\n\n${stubbed}\n\\\nnotes: run with q test_lib.q\n`],
+    ["test_old:{[] 1~1}\n\n/\nscratch, kept for later\n", `test_old:{[] 1~1}\n\n${stubbed}\n/\nscratch, kept for later\n`],
+    ["\\\nnotes", `${stubbed}\n\\\nnotes`],
+  ]) {
+    const files = { "/ws/src/lib.q": SRC, "/ws/tests/test_lib.q": before };
+    setup(files);
+    let shown;
+    vscode.window.showTextDocument = async () => (shown = { revealRange() {} });
+    vscode.Selection = class {
+      constructor(anchor, active) {
+        Object.assign(this, { anchor, active });
+      }
+    };
+    stub.picks.push("Add Test");
+    assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
+    assert.strictEqual(files["/ws/tests/test_lib.q"], after);
+    // q runs it, and the cursor is put on it.
+    assert.ok(statements(after).some((s) => s.startsWith("test_now:")), after);
+    assert.strictEqual(after.split("\n")[shown.selection.active.line], "test_now:{[]");
+  }
 });
 
 test("a parameter named expected is not overwritten by the expected value (#1601)", () => {
