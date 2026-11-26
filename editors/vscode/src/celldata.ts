@@ -29,7 +29,8 @@
 // cell's bytes and `0b` for the others: the codec reads a string as UTF-8,
 // so a byte that is part of no UTF-8 character would be U+FFFD whatever it
 // was. Such a cell is read from its bytes, as the result grid reads a
-// symbol's (`bytesText`, #2154).
+// symbol's (`bytesText`, #2154). So is a column name with a byte past
+// ASCII, which `columns` sends as its bytes in place of the symbol (#2467).
 //
 //   table     `ok`table`columns`types`keys`data`bytes`total!(1b;1b;...)
 //   other     `ok`table`type`text!(1b;0b;type;.Q.S lines)
@@ -63,7 +64,7 @@ function dataLambda(readOnly: boolean): string {
     " c:{$[count[cols x]=count distinct cols x;x cols x;value flip x]} u;",
     ` str:{[F;x]$[(0h=type x)|76h<type x;{[F;x]$[10h=type x;x;F[${VALUE_LIMIT};x]]}[F] each x;string x]}[${FULL_TEXT}];`,
     " d:str each c;",
-    " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;cols t;type each c;k;d;",
+    " `ok`table`columns`types`keys`data`bytes`total!(1b;1b;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];type each c;k;d;",
     "   {$[any 127<\"i\"$\"x\"$raze x;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each x;()]} each d;count t)}",
   ].join("\n");
 }
@@ -120,7 +121,8 @@ export function readCellData(raw: unknown): CellData {
   if (r.table !== true) {
     return { ok: true, type: typeof r.type === "number" ? r.type : 0, text: strings(r.text) };
   }
-  const columns = strings(r.columns);
+  // A name sent as its bytes is read from them, as a cell is (#2467).
+  const columns = Array.isArray(r.columns) ? r.columns.map((n) => bytesText(n) ?? strings([n])[0]) : strings(r.columns);
   const bytes = Array.isArray(r.bytes) ? r.bytes : [];
   const data = Array.isArray(r.data)
     ? r.data.map((c, i) => {
