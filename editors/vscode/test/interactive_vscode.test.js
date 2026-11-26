@@ -212,6 +212,22 @@ test("a cell that would change a guarded process asks first; declined, nothing i
   assert.deepStrictEqual(q.queries, ["t:([] a:1 2)"]);
 });
 
+test("Smart Send to the Interactive Window or the REPL waits for the one running, not refused (#2563)", async (t) => {
+  const { q, live, interactive, repl, editor } = await setUp(t, { config: { "smartSend.enable": true, "smartSend.target": "interactiveWindow" } });
+  assert.ok(await live.connectTo("dev"));
+  const e = editor("a:1\nb:2\nc:3", 0);
+  await Promise.all([0, 1, 2].map(() => stub.commands.get(C.smartSend)()));
+  assert.strictEqual(e.selection.active.line, 2);
+  assert.deepStrictEqual(interactive.entries().map((x) => [x.code, x.ok]), [["a:1", true], ["b:2", true], ["c:3", true]]);
+  assert.ok(!said(/still running/), JSON.stringify(stub.messages));
+  stub.config.user["smartSend.target"] = "repl";
+  editor("d:4\ne:5", 0);
+  await Promise.all([0, 1].map(() => stub.commands.get(C.smartSend)()));
+  assert.deepStrictEqual(repl.entries().map((x) => x.code), ["d:4", "e:5"]);
+  assert.deepStrictEqual(q.queries, ["a:1", "b:2", "c:3", "d:4", "e:5"]);
+  assert.ok(!said(/still running/), JSON.stringify(stub.messages));
+});
+
 test("Smart Send: off it refuses and sends nothing; on it sends the statement and moves the cursor to the next", async (t) => {
   const { q, live, interactive, repl, editor } = await setUp(t);
   assert.ok(await live.connectTo("dev"));
