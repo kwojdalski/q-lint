@@ -8,7 +8,8 @@
 //
 // What the command prints, on stdout:
 // - a JSON object with `password` (or `token`), and optionally `user` (or
-//   `username`);
+//   `username`), alone or the one entry of a JSON list;
+// - or a JSON string, read as the line it holds;
 // - or a line: the password when the process has a user, else
 //   `user:password` (split at the first colon), else the password alone.
 import { spawn } from "node:child_process";
@@ -31,27 +32,54 @@ export function parseCredentials(output: string, user?: string): Credentials | {
   }
   // A JSON object opens with `{` and a key (or `}`); a password line may
   // open with `{` alone (`{s3cret}`) and is read as a line (#1376).
-  if (/^\{\s*["}]/.test(text)) {
+  const object = /^\{\s*["}]/.test(text);
+  // A list or a quoted string is JSON too, when it reads as JSON: a tool's
+  // `[{"user":..,"password":..}]` was a line, cut at its first colon into a
+  // user `[{"user"` and the rest for a password, and `"s3cret"` a password
+  // with its quotes (#3118).
+  if (object || /^[["]/.test(text)) {
     let json: unknown;
+    let read = true;
     try {
       json = JSON.parse(text);
     } catch {
-      return { problem: "it printed something that starts like JSON but is not" };
+      if (object) {
+        return { problem: "it printed something that starts like JSON but is not" };
+      }
+      read = false;
     }
-    const j = json as Record<string, unknown>;
-    const password = typeof j.password === "string" ? j.password : typeof j.token === "string" ? j.token : undefined;
-    if (password === undefined) {
-      return { problem: "its JSON has no password or token string" };
+    if (typeof json === "string") {
+      return json === "" ? { problem: "its JSON is an empty string" } : ofLine(json, user);
     }
-    // An empty name is no name (a vault template's unset field), as null is.
-    const given = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
-    const named = given(j.user) ?? given(j.username) ?? user;
-    return { ...(named !== undefined && named !== "" ? { user: named } : {}), password };
+    if (Array.isArray(json)) {
+      const one: unknown = json[0];
+      if (json.length !== 1 || typeof one !== "object" || one === null || Array.isArray(one)) {
+        // How many, never what: an entry may hold the secret.
+        return { problem: json.length === 1 ? "its JSON is a list whose one entry is not an object" : `its JSON is a list of ${json.length} entries, where one object with a password or token is expected` };
+      }
+      json = one;
+    }
+    if (read) {
+      const j = json as Record<string, unknown>;
+      const password = typeof j.password === "string" ? j.password : typeof j.token === "string" ? j.token : undefined;
+      if (password === undefined) {
+        return { problem: "its JSON has no password or token string" };
+      }
+      // An empty name is no name (a vault template's unset field), as null is.
+      const given = (v: unknown) => (typeof v === "string" && v !== "" ? v : undefined);
+      const named = given(j.user) ?? given(j.username) ?? user;
+      return { ...(named !== undefined && named !== "" ? { user: named } : {}), password };
+    }
   }
   // The line as printed, less only its line ending: spaces and tabs at
   // either end of a password are part of it (#1358). Blank lines before
   // it are skipped, as they always were.
-  const line = printed.split(/\r?\n/).find((l) => l.trim() !== "") ?? text;
+  return ofLine(printed.split(/\r?\n/).find((l) => l.trim() !== "") ?? text, user);
+}
+
+/// The credentials a `line` is: the password of the process's `user`, else
+/// `user:password`, else the password alone.
+function ofLine(line: string, user: string | undefined): Credentials {
   if (user !== undefined && user !== "") {
     return { user, password: line };
   }
