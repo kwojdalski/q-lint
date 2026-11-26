@@ -160,3 +160,22 @@ test("the guard reads the expressions of a join's tables as TABLE_SHAPE values t
   assert.deepStrictEqual(writes(shapeGuardCode(["(1;\n/\nj2:9)", "trade"])), ["assigns j2"]);
   assert.deepStrictEqual(writes(shapeGuardCode(["trade", "quote"])), []);
 });
+
+test("on a guarded process the shapes are read under reval, so a write the guard missed is refused (#2640)", async (t) => {
+  const { tableShapeLambda } = require("../out/joinassist.js");
+  const { EVALUATE_READ_ONLY } = require("../out/query.js");
+  const READ_ONLY = tableShapeLambda(EVALUATE_READ_ONLY);
+  const guardedAnswer = (m) => (m === "`reval in key`.q" ? true : Array.isArray(m) && m[0] === READ_ONLY ? answer([TABLE_SHAPE, m[1]]) : null);
+  const { q, live } = await setUp(t, { tags: ["prod"], answer: guardedAnswer, register: registerJoinAssistant });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  const suggestions = await stub.commands.get(PROCESS_TOOL_COMMANDS.joinAssistant)("trade", "ref", "lj");
+  assert.deepStrictEqual(suggestions.map((s) => s.join), ["lj", "ij"]);
+  assert.deepStrictEqual(
+    q.sent.slice(before).filter((m) => Array.isArray(m)),
+    [
+      [READ_ONLY, " trade"],
+      [READ_ONLY, " ref"],
+    ],
+  );
+});
