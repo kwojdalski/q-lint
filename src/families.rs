@@ -1038,12 +1038,16 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// its assignments in the file is - a table literal, a `flip`, a `select`,
 /// or an `update` or `delete` from something other than a symbol - and
 /// nothing `set`s it.
+///
+/// A control statement's body never yields a value, so an update there is
+/// thrown away too, wherever the statement sits: q 5
+/// `{[] if[1b; update a:0 from t]; t}[]` is `t` unchanged (#2686). So is a
+/// script's own statement ended by `;`: `update a:0 from t;` (#2687).
 fn discarded_query(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     if !re!(r"(?:update|delete)\b").is_match(code) {
         return;
     }
-    let mut verdicts: std::collections::HashMap<(Option<usize>, &str), bool> =
-        std::collections::HashMap::new();
+    let mut verdicts: Verdicts = std::collections::HashMap::new();
     for (brace, _) in code.match_indices('{') {
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -1052,69 +1056,125 @@ fn discarded_query(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         if sig.body > end - 1 {
             continue;
         }
+        let params: Vec<&str> = if sig.named {
+            sig.slots
+                .iter()
+                .flat_map(|p| crate::pattern_names(p))
+                .collect()
+        } else {
+            vec!["x", "y", "z"]
+        };
+        let lambda = Some((brace, end, &params[..]));
         let body = &code[sig.body..end - 1];
         let statements = slots(body);
         // The last statement is the lambda's value, and so not discarded.
         for s in &statements[..statements.len() - 1] {
-            let t = s.trim_start();
-            let at = sig.body + (t.as_ptr() as usize - body.as_ptr() as usize);
-            let Some(kw) = re!(r"^(?:update|delete)\b").find(t) else {
-                continue;
-            };
-            let Some(from) = top_level_word(t, re!(r"\bfrom\b")) else {
-                continue;
-            };
-            let rest = &t[from.end()..];
-            let operand = top_level_word(rest, re!(r"\bwhere\b"))
-                .map_or(rest, |w| &rest[..w.start()])
-                .trim();
-            let name = if operand.starts_with("([")
-                && matching(operand, 0, b'(', b')') == Some(operand.len())
-            {
-                None
-            } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(operand) && !reserved(operand) {
-                Some(operand)
-            } else {
-                continue;
-            };
-            if let Some(name) = name {
-                let params: Vec<&str> = if sig.named {
-                    sig.slots
-                        .iter()
-                        .flat_map(|p| crate::pattern_names(p))
-                        .collect()
-                } else {
-                    vec!["x", "y", "z"]
-                };
-                if params.contains(&name) {
-                    continue;
-                }
-                let local = !name.contains('.')
-                    && assignments(code, name, brace..end)
-                        .any(|(a, _)| crate::enclosing_brace(code, a) == Some(brace));
-                let scope = local.then_some((brace, end));
-                let table = *verdicts
-                    .entry((scope.map(|s| s.0), name))
-                    .or_insert_with(|| holds_table(code, name, scope));
-                if !table {
-                    continue;
-                }
+            discarded_statement(path, source, code, s, lambda, &mut verdicts, out);
+        }
+        for s in &statements {
+            for inner in control_bodies(s) {
+                discarded_statement(path, source, code, inner, lambda, &mut verdicts, out);
             }
-            let what = name.map_or("a table literal".to_string(), |n| format!("`{n}`"));
-            out.push(Finding::at(
-                path,
-                source,
-                at,
-                "QB022",
-                format!(
-                    "This {} changes a copy of {what} and the statement's value is discarded, \
-                     so nothing changes: assign the result, or name the table as a symbol to \
-                     change it in place",
-                    kw.as_str()
-                ),
-            ));
         }
     }
+    // A script's statements: one that starts a line outside every lambda and
+    // is ended by a `;`. It runs on across indented lines, as q reads it.
+    for m in re!(r"(?m)^(?:update|delete)\b").find_iter(code) {
+        if crate::enclosing_brace(code, m.start()).is_some() {
+            continue;
+        }
+        let rest = &code[m.start()..];
+        let span = re!(r"\n\S").find(rest).map_or(rest, |n| &rest[..n.start()]);
+        let parts = slots(span);
+        if parts.len() > 1 {
+            discarded_statement(path, source, code, parts[0], None, &mut verdicts, out);
+        }
+    }
+}
+
+type Verdicts<'a> = std::collections::HashMap<(Option<usize>, &'a str), bool>;
+
+/// The statements of each `if`, `do` and `while` body in statement `s`, the
+/// condition apart, and of those nested in them.
+fn control_bodies(s: &str) -> Vec<&str> {
+    let t = s.trim_start();
+    let Some(head) = re!(r"^(?:if|do|while)[ \t]*\[").find(t) else {
+        return vec![];
+    };
+    let open = head.end() - 1;
+    let Some(close) = matching(t, open, b'[', b']') else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for slot in slots(&t[open + 1..close - 1]).into_iter().skip(1) {
+        out.push(slot);
+        out.extend(control_bodies(slot));
+    }
+    out
+}
+
+/// QB022 for one statement `s`, a slice of `code` whose value nothing
+/// takes: in a lambda (its brace, end and parameters) or at the file's root.
+fn discarded_statement<'a>(
+    path: &str,
+    source: &str,
+    code: &'a str,
+    s: &'a str,
+    lambda: Option<(usize, usize, &[&str])>,
+    verdicts: &mut Verdicts<'a>,
+    out: &mut Vec<Finding>,
+) {
+    let t = s.trim_start();
+    let at = t.as_ptr() as usize - code.as_ptr() as usize;
+    let Some(kw) = re!(r"^(?:update|delete)\b").find(t) else {
+        return;
+    };
+    let Some(from) = top_level_word(t, re!(r"\bfrom\b")) else {
+        return;
+    };
+    let rest = &t[from.end()..];
+    let operand = top_level_word(rest, re!(r"\bwhere\b"))
+        .map_or(rest, |w| &rest[..w.start()])
+        .trim();
+    let name =
+        if operand.starts_with("([") && matching(operand, 0, b'(', b')') == Some(operand.len()) {
+            None
+        } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(operand) && !reserved(operand) {
+            Some(operand)
+        } else {
+            return;
+        };
+    if let Some(name) = name {
+        let mut scope = None;
+        if let Some((brace, end, params)) = lambda {
+            if params.contains(&name) {
+                return;
+            }
+            let local = !name.contains('.')
+                && assignments(code, name, brace..end)
+                    .any(|(a, _)| crate::enclosing_brace(code, a) == Some(brace));
+            scope = local.then_some((brace, end));
+        }
+        let table = *verdicts
+            .entry((scope.map(|s| s.0), name))
+            .or_insert_with(|| holds_table(code, name, scope));
+        if !table {
+            return;
+        }
+    }
+    let what = name.map_or("a table literal".to_string(), |n| format!("`{n}`"));
+    out.push(Finding::at(
+        path,
+        source,
+        at,
+        "QB022",
+        format!(
+            "This {} changes a copy of {what} and the statement's value is discarded, \
+             so nothing changes: assign the result, or name the table as a symbol to \
+             change it in place",
+            kw.as_str()
+        ),
+    ));
 }
 
 /// Each assignment of `name` in masked code `within` a range, `name:` or `name::`, outside a

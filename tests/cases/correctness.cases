@@ -1180,6 +1180,26 @@ m:{update a:1 from s; 1}
 n:{update a:1 from v; 1}
 p:{r:$[1b;update a:1 from t;t]; r}
 
+=== QB022 | an update or delete in an if, do or while body, whose value nothing takes (q 5: {[] if[1b; update a:0 from t]; t}[] is t unchanged, #2686)
+t:([]a:1 2 3)
+f:{[] if[1b; update a:0 from t]; t}
+g:{[] do[1; delete from t where a=1]; t}
+h:{[] while[0b; update a:0 from t]}
+k:{[] if[1b; if[1b; delete a from t]; 1]; t}
+
+=== QB022 | a script statement ended by a semicolon (q 5: update a:0 from t; leaves t unchanged, #2687)
+t:([]a:1 2 3)
+update a:0 from t;
+delete from t where a=1;
+
+=== clean | the condition of a control statement, a script statement that is shown or assigned, or by symbol (#2686, #2687)
+t:([]a:1 2 3)
+f:{[] if[count delete from t where a=1; :1]; 0}
+r:update a:0 from t;
+update a:0 from `t;
+update a:0 from t
+g:{[n] if[1b; update a:0 from n]; 1}
+
 === QB024 | a lambda given to peach writes a global (q 5 -s 2: 'noupdate; #1144)
 r1:{g::1;x} peach 1 2
 r2:{`g set 1;x} peach 1 2
