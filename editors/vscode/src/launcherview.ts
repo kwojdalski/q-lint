@@ -201,7 +201,11 @@ export class Launcher {
     if (binary === undefined) {
       return `${relativeBinaryProblem(qBinary, trusted)}; ${process.label} was not started.`;
     }
-    const plan = launchPlan(process, binary, first?.fsPath);
+    // Not trusted, a launch naming no working directory starts in the home
+    // directory, not the folder: a relative path in its arguments (`evil.q`,
+    // TorQ's `-load code/processes/rdb.q`) was the repository's file there,
+    // loaded by the user's q (#3094).
+    const plan = launchPlan(process, binary, trusted ? first?.fsPath : undefined);
     if ("error" in plan) {
       return plan.error;
     }
@@ -219,6 +223,9 @@ export class Launcher {
     }
     const channel = this.channel(process.label);
     channel.appendLine(`$ ${commandText(plan)}    (in ${plan.cwd})`);
+    if (!trusted && first !== undefined && process.launch?.cwd === undefined) {
+      channel.appendLine(`[the workspace is not trusted: started in ${plan.cwd}, not in ${first.fsPath}]`);
+    }
     channel.show(true);
     const run = spawnPlan(plan.command, plan.args);
     if ("error" in run) {

@@ -448,6 +448,34 @@ test("Stop Process ends what a wrapper left running after it exited (#1744)", { 
   assert.strictEqual(await accepts(port), false);
 });
 
+test("in a workspace not trusted, a launch with no working directory starts in the home directory, so no argument names the repository's file (#3094)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-ws-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-home-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  fs.writeFileSync(path.join(ws, "evil.q"), "");
+  const port = await freePort();
+  const { output } = await setUp(t, [proc("rdb", port, { command: process.execPath, script: path.join(dir, "fake.js"), args: ["evil.q"] })]);
+  const vscode = require("vscode");
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  Object.assign(process.env, { HOME: home, USERPROFILE: home });
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(ws), name: "ws", index: 0 }];
+  vscode.workspace.isTrusted = false;
+  t.after(() => {
+    vscode.workspace.isTrusted = true;
+    vscode.workspace.workspaceFolders = undefined;
+    for (const [k, v] of Object.entries(was)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  await stub.commands.get(LAUNCH_COMMANDS.start)("rdb");
+  await until(() => output("rdb").includes("listening"), "listening in rdb's output");
+  const cwd = output("rdb").match(/listening on \d+ in (.*) A=/)[1];
+  assert.strictEqual(fs.realpathSync(cwd), fs.realpathSync(home), output("rdb"));
+  assert.ok(output("rdb").includes(`[the workspace is not trusted: started in ${home}, not in ${ws}]`), output("rdb"));
+});
+
 test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {
   const port = await freePort();
   const { launcher, output } = await setUp(t, [proc("gone", port, { command: path.join(os.tmpdir(), "no-such-q-1679") })]);
