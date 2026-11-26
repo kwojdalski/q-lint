@@ -254,16 +254,18 @@ function holdsCell(q: QValue): boolean {
 /// The width of the process's `\c`, asked as a plain string with each run
 /// that needs it, as `\P` is; undefined when it refuses to say.
 async function consoleWidthOf(connection: Evaluator): Promise<number | undefined> {
-  let c: unknown;
+  let c: { value: unknown; type: number | undefined };
   try {
-    c = (await connection.evaluate("\\c"))?.value;
+    c = await connection.evaluate("\\c");
   } catch (error) {
     if (!(error instanceof QError)) {
       throw error;
     }
     return undefined;
   }
-  const w = Array.isArray(c) || ArrayBuffer.isView(c) ? Number((c as ArrayLike<unknown>)[1]) : NaN;
+  // Its answer is two ints, the height and the width.
+  const pair = c?.type === 6 && (Array.isArray(c.value) || ArrayBuffer.isView(c.value)) && (c.value as ArrayLike<unknown>).length === 2;
+  const w = pair ? Number((c.value as ArrayLike<unknown>)[1]) : NaN;
   return Number.isInteger(w) && w > 0 ? w : undefined;
 }
 
