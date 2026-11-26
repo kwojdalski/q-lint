@@ -150,7 +150,8 @@ test("a destination that ssh would read as an option, or as two words, is refuse
   // Read from the saved list and an import; never from a discovery server.
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, ssh: "bastion" }], true).processes[0].ssh, "bastion");
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, ssh: "bastion" }]).processes[0].ssh, undefined);
-  assert.strictEqual(readProcessFile('{"processes":[{"label":"a","host":"h","port":1,"ssh":"-oX"}]}').processes[0].ssh, undefined);
+  // One that is none skips its process: it is not dialled without a tunnel (#3095).
+  assert.deepStrictEqual(readProcessFile('{"processes":[{"label":"a","host":"h","port":1,"ssh":"-oX"}]}').processes, []);
   // Edit keeps it.
   assert.deepStrictEqual(withExtras({ label: "a", host: "h", port: 1, tags: [] }, { ssh: "b" }), { label: "a", host: "h", port: 1, tags: [], ssh: "b" });
 });

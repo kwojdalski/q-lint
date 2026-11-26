@@ -15,7 +15,7 @@ const pkg = require("../package.json");
 const { SHARED_COMMANDS, SHARED_FILE, mergeShared, readShared, readSharedFile, withShared } = require("../out/shared.js");
 const { children, serverLabelProblem } = require("../out/discovery.js");
 const { Live } = require("../out/live.js");
-const { sharedPasswordKey } = require("../out/processes.js");
+const { parseProcesses, readProcessFile, sharedPasswordKey } = require("../out/processes.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,6 +56,41 @@ test("what runs something is read only in a trusted workspace", () => {
     "1 entry's connect script, SSH tunnel or launch definition was not read: the workspace is not trusted.",
   ]);
   assert.throws(() => readSharedFile("{", true), SyntaxError);
+});
+
+test("an ssh value that is no destination skips the entry, trusted or not, instead of listing it without its tunnel (#3095)", () => {
+  for (const ssh of ["me@bastion -p 2222", ["bastion"], 22, { host: "bastion" }]) {
+    const text = JSON.stringify([{ label: "rdb", host: "10.0.0.5", port: 5010, user: "bob", ssh }, { label: "hdb", host: "h", port: 2, ssh: "" }]);
+    const said = `Entry 1 (rdb): ssh is ${JSON.stringify(ssh)}, not a destination ssh takes, so it was skipped rather than connected to without its tunnel.`;
+    assert.deepStrictEqual(readProcessFile(text), { processes: [{ label: "hdb", host: "h", port: 2, tags: [] }], problems: [said] }, JSON.stringify(ssh));
+    for (const trusted of [true, false]) {
+      const read = readSharedFile(text, trusted);
+      assert.deepStrictEqual(read.processes, [{ label: "hdb", host: "h", port: 2, tags: [] }], JSON.stringify(ssh));
+      assert.strictEqual(read.problems[0], said);
+    }
+  }
+  // In the list saved here text that is no destination stays, for ssh to
+  // refuse: skipped, the next save wrote the list without the process.
+  assert.deepStrictEqual(parseProcesses([{ label: "rdb", host: "h", port: 1, ssh: " me@bastion -p 2222 " }], true, true), {
+    processes: [{ label: "rdb", host: "h", port: 1, tags: [], ssh: "me@bastion -p 2222" }],
+    problems: [],
+  });
+});
+
+test("untrusted, the entry kept of a label decides whether it is tunnelled, not a repeat of it that is skipped (#3108)", () => {
+  const a = { label: "a", host: "h1", port: 1 };
+  const b = { label: "b", host: "h3", port: 3 };
+  const text = JSON.stringify([a, { label: "a", host: "h2", port: 2, ssh: "bastion" }, b]);
+  for (const trusted of [true, false]) {
+    const read = readSharedFile(text, trusted);
+    assert.deepStrictEqual(read.processes, [{ ...a, tags: [] }, { ...b, tags: [] }], String(trusted));
+    assert.strictEqual(read.problems[0], "Entry 2 (a) repeats a label, and was skipped.");
+    assert.ok(!read.problems.some((p) => p.includes("reached through an SSH tunnel")), JSON.stringify(read.problems));
+  }
+  // The tunnelled one first: that is the one kept, and it is not listed.
+  const first = readSharedFile(JSON.stringify([{ label: "a", host: "h2", port: 2, ssh: "bastion" }, a, b]), false);
+  assert.deepStrictEqual(first.processes, [{ ...b, tags: [] }]);
+  assert.ok(first.problems.includes("a: reached through an SSH tunnel, which is not read while the workspace is not trusted, so not listed."));
 });
 
 test("a process is written into the list in place of its label, with no password", () => {

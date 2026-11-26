@@ -7,6 +7,7 @@
 // said. What would run something - a connect script, an SSH jump host, a
 // launch definition - is read only in a trusted workspace.
 import * as path from "node:path";
+import { onConnectOf } from "./connectscript";
 import { SHARED_SOURCE } from "./discovery";
 import { parseProcesses, type Process } from "./processes";
 
@@ -43,9 +44,6 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
   const list = Array.isArray(json) ? json : typeof json === "object" && json !== null ? (json as { processes?: unknown }).processes : undefined;
   const secrets: string[] = [];
   let untrusted = 0;
-  // An entry reached through a tunnel is not listed untrusted: without its
-  // tunnel it would be connected to directly, password and all (#1507).
-  const tunnelled = new Set<string>();
   const cleaned = Array.isArray(list)
     ? list.map((entry, i) => {
         if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -59,15 +57,19 @@ export function readSharedFile(text: string, trusted: boolean): SharedList {
         if (!trusted && ["init", "initFile", "ssh", "launch", "credentialCommand"].some((k) => k in kept)) {
           untrusted++;
         }
-        if (!trusted && typeof kept.ssh === "string" && kept.ssh.trim() !== "" && typeof kept.label === "string") {
-          tunnelled.add(kept.label.trim());
-        }
         return kept;
       })
     : json;
-  const read = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, trusted);
-  const processes = read.processes.filter((p) => !tunnelled.has(p.label));
-  const skipped = read.processes.filter((p) => tunnelled.has(p.label)).map((p) => p.label);
+  // Read as a trusted workspace reads it, and what runs something taken off
+  // after: the entry kept of a label is then the same one either way, and
+  // one with an `ssh` that is no destination is skipped in both (#3095).
+  const read = parseProcesses(Array.isArray(list) ? { processes: cleaned } : cleaned, true);
+  // An entry reached through a tunnel is not listed untrusted: without its
+  // tunnel it would be connected to directly, password and all (#1507). The
+  // entry kept, that is: a repeat of its label, skipped, hid a direct one by
+  // naming a tunnel (#3108).
+  const processes = trusted ? read.processes : read.processes.filter((p) => p.ssh === undefined).map((p) => onConnectOf(p, undefined));
+  const skipped = trusted ? [] : read.processes.filter((p) => p.ssh !== undefined).map((p) => p.label);
   return {
     processes,
     problems: [

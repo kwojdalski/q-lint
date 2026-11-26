@@ -216,6 +216,12 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       problems.push(`${where} (${label}): tls is ${JSON.stringify(e.tls)}, not true or false, so it was skipped rather than connected to without TLS.`);
       return;
     }
+    // Nor is an `ssh` that is no destination read as no tunnel: the process
+    // was dialled directly, and its password sent there (#3095).
+    if (scripts && written(e.ssh) && tunnelOf(e.ssh, stored) === undefined) {
+      problems.push(`${where} (${label}): ssh is ${JSON.stringify(e.ssh)}, not a destination ssh takes, so it was skipped rather than connected to without its tunnel.`);
+      return;
+    }
     if (seen.has(label)) {
       problems.push(`${where} (${label}) repeats a label, and was skipped.`);
       return;
@@ -247,7 +253,7 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       ...(scripts && typeof e.initFile === "string" && e.initFile.trim() !== "" && !(typeof e.init === "string" && e.init.trim() !== "")
         ? { initFile: e.initFile.trim() }
         : {}),
-      ...extrasOf(e, scripts, unread),
+      ...extrasOf(e, scripts, unread, stored),
     });
     if (scripts && typeof e.init === "string" && e.init.trim() !== "" && typeof e.initFile === "string" && e.initFile.trim() !== "") {
       problems.push(`${where} (${label}) has both init and initFile: its init code was kept.`);
@@ -270,6 +276,13 @@ export function sshDestination(value: unknown): string | undefined {
   }
   const d = value.trim();
   return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
+}
+
+/// The tunnel a list entry's `ssh` names. In the list saved here (`stored`)
+/// text that is no destination is kept as written, for ssh to refuse and
+/// Set SSH Tunnel to change: left out, the process was dialled directly.
+function tunnelOf(value: unknown, stored: boolean): string | undefined {
+  return sshDestination(value) ?? (stored && typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
 }
 
 /// What a command was handed as server types: a string or a list, or
@@ -377,8 +390,8 @@ type Extras = Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" |
 /// workspace), which alone may name an SSH host or a program to run.
 /// `unread` is told each key that was written and could not be read
 /// (#3110), and a timeout over the day it is read as.
-function extrasOf(e: Record<string, unknown>, trusted: boolean, unread: (key: string, expected: string, instead?: string) => void): Extras {
-  const ssh = trusted ? sshDestination(e.ssh) : undefined;
+function extrasOf(e: Record<string, unknown>, trusted: boolean, unread: (key: string, expected: string, instead?: string) => void, stored = false): Extras {
+  const ssh = trusted ? tunnelOf(e.ssh, stored) : undefined;
   const gateway = serverTypes(e.gateway);
   const launch = trusted ? launchOf(e.launch) : undefined;
   const credentialCommand = trusted ? credentialCommandOf(e.credentialCommand) : undefined;
