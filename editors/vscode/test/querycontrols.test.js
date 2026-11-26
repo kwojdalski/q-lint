@@ -524,6 +524,16 @@ test("an unwrapped float is written to the process's \\P, asked as a plain strin
   assert.deepStrictEqual((await run(fromQ("0x010000000d000000fa01000000"), 0)).sent, ["x"]);
 });
 
+test("a projection holding a float is written to the process's \\P too (#2712)", async () => {
+  // -8!{x+y}[0.1+0.2], as KDB-X sends it.
+  const message = Buffer.from("0100000023000000680200000064000a00050000007b782b797df7343333333333d33f", "hex");
+  const sent = [];
+  const fake = { evaluate: async (text) => (sent.push(text), text === "\\P" ? { value: 0, type: -6 } : { value: null, type: 104, message }) };
+  const ran = await runUnwrapped(fake, ["{x+y}[0.1+0.2]"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
+  assert.deepStrictEqual(ran.text, ["{x+y}[0.30000000000000004]"]);
+  assert.deepStrictEqual(sent, ["{x+y}[0.1+0.2]", "\\P"]);
+});
+
 test("an unlimited float list is written to the process's \\P, as its console writes it", () => {
   const floats = (value, precision, type = 9) => readUnlimited({ ok: true, type, text: [], value, attr: null, precision }).text[0];
   assert.ok(UNLIMITED.includes('system"P"'));
@@ -654,7 +664,7 @@ test("a line -3! writes is cut a character short of the width, as q cuts it; a t
   assert.deepStrictEqual(width({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: ["a", "b"] }, v: { kind: "list", attr: 0, v: [til(100), til(100)] } }), [80, 80]);
 });
 
-test("the process's \\P is asked once a connection, again after a statement that sets it, and never of a gateway call (#2570)", async () => {
+test("the process's \\P is asked with each run that shows a float, however it was set, and never of a gateway call (#2570, #2648)", async () => {
   const atom = { value: 0.1 + 0.2, type: -9, message: Buffer.from("0100000011000000f7343333333333d33f", "hex") };
   const sent = [];
   let p = 0;
@@ -662,9 +672,14 @@ test("the process's \\P is asked once a connection, again after a statement that
   const options = { size: [25, 80], limit: 10, unlimited: false, grid: false };
   assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
   assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
-  assert.deepStrictEqual(sent, ["x", "\\P", "x"]);
+  assert.deepStrictEqual(sent, ["x", "\\P", "x", "\\P"]);
   assert.deepStrictEqual((await runUnwrapped(fake, ["\\P 3", "x"], options)).text, ["0.3"]);
-  assert.deepStrictEqual(sent.slice(3), ["\\P 3", "x", "\\P"]);
+  assert.deepStrictEqual(sent.slice(4), ["\\P 3", "x", "\\P"]);
+  // Set some other way - a wrapped query, a script, a timer: read again.
+  p = 2;
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.3"]);
+  p = 0;
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
   sent.length = 0;
   await runUnwrapped({ evaluate: async (text) => (sent.push(text), atom) }, ['.gw.syncexec["x";`rdb]'], options);
   assert.deepStrictEqual(sent, ['.gw.syncexec["x";`rdb]']);

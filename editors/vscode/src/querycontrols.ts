@@ -185,25 +185,19 @@ function holdsFloat(q: QValue): boolean {
       return q.data.some(holdsFloat);
     case "dict":
       return holdsFloat(q.k) || holdsFloat(q.v);
+    // A projection's arguments, a composition's or derived function's parts (#2712).
+    case "func":
+      return (q.parts ?? []).some(holdsFloat);
     default:
       return false;
   }
 }
 
-/// Each connection's `\P`, once asked: asked again only after a statement
-/// that may set it.
-const precisions = new WeakMap<Evaluator, number>();
-
-/// A statement that may set `\P`: `\P n`, or `system` naming it.
-const SETS_PRECISION = /^\s*\\P\s|system\s*"\s*P/;
-
-/// The process's `\P`, asked as a plain string once a connection; 7, q's
-/// default, when it refuses to say.
+/// The process's `\P`, asked as a plain string with each run that shows a
+/// float: not kept, since a wrapped query, a script `\l` loads, a timer or
+/// another client may set it in between (#2648). 7, q's default, when it
+/// refuses to say.
 async function precisionOf(connection: Evaluator): Promise<number> {
-  const kept = precisions.get(connection);
-  if (kept !== undefined) {
-    return kept;
-  }
   let p: number;
   try {
     p = Number((await connection.evaluate("\\P"))?.value);
@@ -213,9 +207,7 @@ async function precisionOf(connection: Evaluator): Promise<number> {
     }
     p = NaN;
   }
-  const precision = Number.isInteger(p) && p >= 0 ? p : 7;
-  precisions.set(connection, precision);
-  return precision;
+  return Number.isInteger(p) && p >= 0 ? p : 7;
 }
 
 /// `statement` as the plain string that runs it in `context`: q reads each
@@ -255,9 +247,6 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
       return { ok: false, error: error.message };
     }
     typed = undefined;
-  }
-  if (statements.some((s) => SETS_PRECISION.test(s))) {
-    precisions.delete(connection);
   }
   // A gateway's answer is its servers' values, which its own `\P` does
   // not write: 7, as q's default, and the gateway is asked nothing more.
