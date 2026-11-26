@@ -45,6 +45,11 @@ export function trimBlanks(line: string): string {
   return line.slice(0, end);
 }
 
+/// A system command's line, other than `\t` and `\ts`, which time q code:
+/// the command's own text to its end, where no bracket, quote or comment is
+/// q's (`\l /data/x.q`, `\grep -c '(' f`).
+export const COMMAND_LINE = /^\\(?!ts?(?:[:\s]|$))\S/;
+
 /// Whether `line` is blank to q: nothing but spaces, tabs and carriage
 /// returns.
 export function isBlankLine(line: string): boolean {
