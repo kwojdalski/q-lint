@@ -80,7 +80,7 @@ import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHea
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
-import { blockAt, contextAfter, contextSwitch, inContext, scriptCode, selectionCode, statements } from "./statements";
+import { blockAt, contextAfter, contextSwitch, scriptCode, scriptInContext, selectionCode, statementSpans, statements } from "./statements";
 import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
@@ -2948,18 +2948,29 @@ export class Live {
   /// Thrown, `Not run: ...`, when a server type is no q name, as a file's
   /// `/ @servertypes rdb 2hdb` names one (#3065).
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
+    const types = this.gatewayTypes(process, serverTypes);
+    if (types === undefined) {
+      return code;
+    }
+    const cut = statements(code);
+    const sent = gatewayStatements(cut, types);
+    return sent === cut ? code : sent.join("\n");
+  }
+
+  /// The server types what is sent to `process` goes to through
+  /// `.gw.syncexec`, `serverTypes` or else its own; undefined where it goes
+  /// as written.
+  private gatewayTypes(process: Process, serverTypes?: string[]): string[] | undefined {
     const types = serverTypes ?? process.gateway;
     // `/ @servertypes none` names no server: the gateway itself (#2588).
     if (process.gateway === undefined || types === undefined || types.length === 0 || !this.setting(readGateway).enabled) {
-      return code;
+      return undefined;
     }
     const wrong = serverTypesProblem(types);
     if (wrong !== undefined) {
       throw new Error(`Not run: ${wrong}`);
     }
-    const cut = statements(code);
-    const sent = gatewayStatements(cut, types);
-    return sent === cut ? code : sent.join("\n");
+    return types;
   }
 
   /// `cut`, statements for the active process, as they go to it from a
@@ -2973,8 +2984,12 @@ export class Live {
     if (process === undefined || cut.length === 0) {
       return { cut, plain: false };
     }
-    const sent = this.throughGateway(cut.join("\n"), process, serverTypes);
-    return { cut: statements(sent), plain: this.plainGatewayCall(process, sent) };
+    // As they are: they are q's statements already, and joined and cut
+    // again as a script, the `/` lines q keeps of a block comment in a
+    // lambda opened one over the rest of it (#3162).
+    const types = this.gatewayTypes(process, serverTypes);
+    const sent = types === undefined ? cut : gatewayStatements(cut, types);
+    return { cut: sent, plain: this.plainGatewayCall(process, sent.join("\n")) };
   }
 
   /// Whether Run sends `code` to the active process through `.gw.syncexec`:
@@ -3788,7 +3803,7 @@ export class Live {
     const { connection, process } = ready;
     // In the context its file left above it, behind a `\d` the guard was not
     // asked about: q reads each query in the root again (#2911).
-    const placed = context === "." ? written : inContext(statements(written), context).join("\n");
+    const placed = scriptInContext(written, context);
     let code: string;
     try {
       code = this.throughGateway(placed, process, serverTypes);
@@ -4105,9 +4120,12 @@ export class Live {
     if (entry !== undefined) {
       // The `\d` an entry is kept behind is its context again, not code the
       // guard is asked about (#2915).
-      const [head, ...rest] = statements(entry.code);
-      const context = rest.length > 0 ? contextSwitch(head) : undefined;
-      await (context === undefined ? this.run(entry.code) : this.run(rest.join("\n"), undefined, undefined, undefined, context));
+      const [head, next] = statementSpans(entry.code);
+      const context = next !== undefined ? contextSwitch(head.text) : undefined;
+      // What is below it goes as the entry has it: its statements joined
+      // are no script to cut again (#3162).
+      const below = context === undefined ? "" : entry.code.split("\n").slice(head.end + 1).join("\n");
+      await (context === undefined ? this.run(entry.code) : this.run(below, undefined, undefined, undefined, context));
     }
   }
 

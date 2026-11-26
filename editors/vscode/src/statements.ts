@@ -391,6 +391,20 @@ export function inContext(cut: string[], context: string): string[] {
   return context === "." ? cut : [`\\d ${context}`, ...cut];
 }
 
+/// `code` as a script that runs in `context`: `statements` cuts it to
+/// `inContext` of `code`'s own. From its first statement on it is the text
+/// as written, that statement's first line unindented so it does not
+/// continue the `\d`. Not the cut statements joined: q's statement keeps a
+/// block comment in a lambda as `/` lines, where a script, or `statements`
+/// reading them again, opens one at the first and loses the rest (#3162).
+export function scriptInContext(code: string, context: string): string {
+  const [first] = statementSpans(code);
+  if (context === "." || first === undefined) {
+    return code;
+  }
+  return [`\\d ${context}`, first.text.split("\n")[0], ...code.split("\n").slice(first.start + 1)].join("\n");
+}
+
 /// The lines, 0-based and inclusive, of the statement the cursor's `line`
 /// is in: from the unindented line that starts it to its last continuation
 /// line. Undefined on a comment line, inside a block comment, before the

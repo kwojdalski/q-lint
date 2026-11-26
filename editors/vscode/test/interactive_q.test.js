@@ -191,6 +191,25 @@ test("code Smart Send gives the REPL runs as the editor has it, a block comment 
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["2"]);
 });
 
+test("a lambda that holds a block comment runs under a \\d too, from the REPL and from Run Query Again (#3162)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { live, repl } = await setUp(t, q.port);
+  const lambda = "rq:{[x]\n  a:x+1;\n/\n  a:a*100;\n\\\n  a}";
+  assert.strictEqual(await repl.enter("\\d .zz9"), "ran");
+  await repl.runFromEditor(lambda, vscode.Uri.file("/w/a.q"));
+  assert.strictEqual(repl.entries().at(-1).ok, true);
+  assert.strictEqual(await repl.enter("\\d ."), "ran");
+  // Kept as the script it is, which Run Query Again reads as it was run.
+  const entry = live.history().find((e) => e.code.includes("rq:"));
+  assert.strictEqual(entry.code, `\\d .zz9\n${lambda}`);
+  await repl.enter("delete rq from `.zz9");
+  await stub.commands.get("q-lint.rerunQuery")(entry);
+  assert.strictEqual(live.history()[0].outcome, "ok");
+  assert.strictEqual(await repl.enter("(.zz9.rq 1;@[value;`rq;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined"]);
+});
+
 test(".qlint.view and .qlint.plot, defined on the process, open what a query passes them", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());

@@ -220,3 +220,28 @@ test("Run Current Statement, Line and Selection run in the context the file's \\
   assert.strictEqual(answers.at(-1), "42");
   assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "warning"), []);
 });
+
+// Behind the \d it was sent as its cut statement, whose `/` lines, cut
+// again, opened a block comment over the rest of the lambda: q answered '{.
+test("Run Current Statement under a \\d runs a lambda that holds a block comment (#3162)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { live, last } = await setUp(t, [proc("q", q.port)]);
+  const vscode = require("vscode");
+  const lines = ["\\d .ns", "rp:{[x]", "  a:x+1;", "/", "  a:a*100;", "\\", "  a}", "rp 1"];
+  const answers = [];
+  live.onDidAnswer((a) => answers.push(a.answer.ok ? a.answer.text.join(" ") : `'${a.answer.error}`));
+  const at = (line) => {
+    vscode.window.activeTextEditor = {
+      document: { uri: vscode.Uri.file("/w/a.q"), version: 1, lineAt: (n) => ({ text: lines[n] }), getText: () => lines.join("\n") },
+      selection: { active: { line }, isEmpty: true },
+    };
+  };
+  assert.strictEqual(await live.connectTo("q"), true);
+  at(6);
+  await stub.commands.get("q-lint.queryBlock")();
+  assert.strictEqual(last(), `ok \\d .ns\n${lines.slice(1, 7).join("\n")}`);
+  at(7);
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.strictEqual(answers.at(-1), "2");
+});
