@@ -740,6 +740,12 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB014", "r:10/2", "r:10%2", false),
     ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
     ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+    // After a `q)` prompt the statement goes whole, as on a plain line: q 5
+    // prints what `q)a` leaves on every load (#2998).
+    ("QB017", "a:til 3\nq)a:a\nb:2", "a:til 3\nb:2", false),
+    ("QB017", "a:til 3\nq)q)a:a\n", "a:til 3\n", false),
+    ("QB017", "a:1\nq)a:a;b:2", "a:1\nq)b:2", false),
+    ("QB017", "a:1\nq)a:a / note", "a:1\nq) / note", false),
     // A comment after it keeps its blank: `;/` is over (#403).
     ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
     ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),

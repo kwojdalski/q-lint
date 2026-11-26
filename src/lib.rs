@@ -2630,9 +2630,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             // assigns, so there only the `b:` is removed: q 5 gives 3 for
             // `{[x;b] r:x+b:b;r}[1;2]` and for `{[x;b] r:x+b;r}[1;2]`.
             let before = v.code[..start].trim_end();
+            // A run of `q)` prompts is no part of the statement, which
+            // starts after it as it does at the line's start: removing only
+            // `a:` from `q)a:a` leaves `q)a`, which q 5 prints on every
+            // load (#2998).
+            let prompted = start > line_start
+                && line_start + language_prefixes(&source[line_start..]) == start;
             let statement = before.is_empty()
                 || before.ends_with([';', '{'])
-                || (start == line_start && enclosing_brace(&v.code, start).is_none())
+                || ((start == line_start || prompted) && enclosing_brace(&v.code, start).is_none())
                 || enclosing_brace(&v.code, start).is_some_and(|brace| {
                     let sig = signature(&v.code, source, brace);
                     sig.named && v.code[sig.body..start].trim().is_empty()
@@ -2651,7 +2657,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                     "Remove the self-assignment".into(),
                     false,
                 )
-            } else if source[line_start..start].trim().is_empty() && line_rest.trim().is_empty() {
+            } else if (prompted || source[line_start..start].trim().is_empty())
+                && line_rest.trim().is_empty()
+            {
                 let end = start + whole.end() + line_rest.len();
                 let end = (end + 1).min(source.len());
                 begin = line_start;
