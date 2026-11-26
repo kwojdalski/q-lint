@@ -103,7 +103,7 @@ function processOf(fields: { host: string; port: string; label?: string; tags?: 
     host,
     port,
     ...(user !== "" ? { user } : {}),
-    tags: parseTags((fields.tags ?? "").replace(/[;|]/g, " ")),
+    tags: parseTags(fields.tags ?? ""),
     ...(/^(1|true|yes|y)$/i.test(fields.tls?.trim() ?? "") ? { tls: true } : {}),
   };
 }

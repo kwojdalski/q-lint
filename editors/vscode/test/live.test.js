@@ -196,6 +196,11 @@ test("a port is a whole number from 1 to 65535", () => {
 test("tags are lower case, each once, split on commas or spaces", () => {
   assert.deepStrictEqual(parseTags("Prod, eu  rdb,prod"), ["prod", "eu", "rdb"]);
   assert.deepStrictEqual(parseTags(" , "), []);
+  // A semicolon or a bar separates too, as in Add Many's tags column (#3097).
+  assert.deepStrictEqual([parseTags("prod; eu"), parseTags("prod;eu"), parseTags("prod|eu;"), parseTags(";|")], [["prod", "eu"], ["prod", "eu"], ["prod", "eu"], []]);
+  const read = readProcessFile(JSON.stringify([{ label: "a", host: "h", port: 1, tags: "prod;eu" }, { label: "b", host: "h", port: 2, tags: { prod: true } }, { label: "c", host: "h", port: 3, tags: ["prod;", "eu"] }]));
+  assert.deepStrictEqual(read.processes.map((p) => p.tags), [["prod", "eu"], [], ["prod", "eu"]]);
+  assert.deepStrictEqual(read.problems, ['Entry 2 (b): tags is {"prod":true}, not a list or text, so it was not read.']);
 });
 
 test("a process list is read, and what is wrong with it is said", () => {

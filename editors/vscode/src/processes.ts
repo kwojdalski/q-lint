@@ -154,12 +154,14 @@ export function processTooltip(process: Process, from?: string): string {
 }
 
 /// Tags as written in an input box: comma or space separated, lower case,
-/// each once.
+/// each once. A `;` or a `|` separates them too, as Add Many says its tags
+/// column does: `prod; eu` was the tags `prod;` and `eu`, neither of them
+/// the `prod` the read-only guard and the colours go by (#3097).
 export function parseTags(text: string): string[] {
   return [
     ...new Set(
       text
-        .split(/[\s,]+/)
+        .split(/[\s,;|]+/)
         .map((t) => t.trim().toLowerCase())
         .filter((t) => t !== ""),
     ),
@@ -235,6 +237,9 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
     };
     if (written(e.user) && typeof e.user !== "string") {
       unread("user", "text");
+    }
+    if (written(e.tags) && !Array.isArray(e.tags) && typeof e.tags !== "string") {
+      unread("tags", "a list or text");
     }
     const tags = Array.isArray(e.tags)
       ? parseTags(e.tags.filter((t): t is string => typeof t === "string").join(","))
