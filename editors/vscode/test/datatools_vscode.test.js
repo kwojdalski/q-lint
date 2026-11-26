@@ -351,6 +351,21 @@ test("Table Templates reads the table, runs a read picked and opens the insert t
   assert.deepStrictEqual([off.live.sent, off.live.ran], [[], []]);
 });
 
+// Turned off while the template pick was open, the read picked still ran (#2421).
+test("Table Templates turned off at its pick runs and opens nothing (#2421)", async () => {
+  const { live } = setUp();
+  live.answers.TABLE_INFO = tableInfo;
+  for (const label of ["Select first 100", "Insert template"]) {
+    const before = opened.length;
+    stub.picks.push(() => ((stub.config.user["processExplorer.tableTemplates.enable"] = false), label));
+    await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
+    assert.deepStrictEqual(live.ran, []);
+    assert.strictEqual(opened.length, before);
+    assert.match(infos().at(-1), /Table Templates is turned off/);
+    delete stub.config.user["processExplorer.tableTemplates.enable"];
+  }
+});
+
 test("Show Schema Diagram draws the tables and links in a panel with no script; it saves as SVG, copies as Mermaid, and closes when turned off (#966)", async () => {
   const { live, schema } = setUp();
   live.answers.SCHEMA = [
