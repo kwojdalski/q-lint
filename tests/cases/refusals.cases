@@ -1919,6 +1919,39 @@ a:select a by b by c from t
 === QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
 a:delete by from t
 
+=== clean profile: general | QE007: a segment of a dotted name is no `from`, `by` or `where` (q 5 runs each with the names defined; #2773)
+s:select px from t where date>=.rng.from
+f:{select px from t where date>=.rng.from}
+v:select px by .grp.by from t
+w:exec px from t where date>=.rng.from
+u:update px:2 from t where date>=.rng.from
+d:delete from t where date>=.rng.from
+a:select px, by.x from t
+b:select px by sym, by.x from t
+c:select from where.x
+
+=== QE007 profile: general | so a `from` that is one has no table after it (q 5: parse "select px from.t" is 'from, #2773)
+e:select px from.t
+
+=== QE007 profile: general | an update with no column (q 5: 'type on any table, #2782)
+r1:update from t
+r2:update by sym from t
+r3:update from t where px>1
+r4:{update
+  from x}
+
+=== QE007 profile: general | an exec with one unnamed by column and no column (q 5: 'nyi, #2782)
+r:exec by sym from t
+
+=== clean profile: general | while q 5 runs these (#2782)
+r1:exec by sym,date from t
+r2:exec by a:sym from t
+r3:update distinct from t
+r4:exec distinct by sym from t
+r5:exec from t
+r6:update a:1 by sym from t
+r7:exec px by sym from t
+
 === clean profile: general | while q 5 parses each of these (#2227)
 a:delete a from t
 a:select distinct a from t

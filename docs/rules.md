@@ -53,7 +53,7 @@ it, or `ALL`.
 | <a id="qe004"></a>`QE004` | foreign-operator | Operator from another language; q has no ==, !=, &&, \|\|, **, =>, -> or := | every profile |
 | <a id="qe005"></a>`QE005` | byte-order-mark | File starts with a BOM, which q refuses to load | every profile |
 | <a id="qe006"></a>`QE006` | impossible-temporal | A date, month or time q refuses to parse: a day that does not exist, a minute past 59, a one-digit field | every profile |
-| <a id="qe007"></a>`QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, nothing after its from or its where, or a phrase q refuses: a trailing comma, an empty row limit, a second by | every profile |
+| <a id="qe007"></a>`QE007` | qsql-missing-from | select, exec, update or delete with no from before the statement ends, nothing after its from or its where, or a phrase q refuses: a trailing comma, an empty row limit, a second by, an update with no column | every profile |
 | <a id="qe008"></a>`QE008` | monadic-glyph | A glyph applied to one argument; q 5 refuses -x, ,x, #x and the rest - the keyword is neg, enlist, count, not... - and an infix keyword with nothing on its left, in b; KDB-X only: not for an older target-version | every profile |
 | <a id="qe009"></a>`QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y, and an iterator after a blank, x 'y; write (+/)x, +/[x] or sum x; KDB-X only: not for an older target-version | every profile |
 | <a id="qe010"></a>`QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |

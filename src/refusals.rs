@@ -772,8 +772,10 @@ fn missing_from(
             }
             let text = std::str::from_utf8(&flat).unwrap_or_default();
             let complete = flat.len() == whole.len();
-            let read = |end: usize| complete || end < text.len();
-            match re!(r"\bfrom\b").find(text).filter(|f| read(f.end())) {
+            // Two bytes on, where `query_words` reads a point and the name
+            // that makes the word a segment of one.
+            let read = |end: usize| complete || end + 1 < text.len();
+            match query_words(re!(r"\bfrom\b"), text).find(|f| read(f.end())) {
                 None if complete => break text.len(),
                 None => continue,
                 Some(first) => {
@@ -794,7 +796,7 @@ fn missing_from(
         };
         let flat = String::from_utf8(flat).unwrap_or_default();
         let statement = &flat[..own];
-        let from = re!(r"\bfrom\b").find_iter(statement).last();
+        let from = query_words(re!(r"\bfrom\b"), statement).last();
         let detail = match from {
             // The bare word straight before a `;`: q 5 `parse "r:select;1"`
             // and `parse "(exec;delete)"` are ',.
@@ -813,7 +815,11 @@ fn missing_from(
             // `from (where a>1)` read a table, and `from by b` applies the
             // name `by` (#2095). Read from `comments` too, where `` from
             // `t where `` still has its table.
-            Some(f) if re!(r"^\s*where\b").is_match(&comments[m.end() + f.end()..at]) => {
+            Some(f)
+                if query_words(re!(r"^\s*where\b"), &comments[m.end() + f.end()..at])
+                    .next()
+                    .is_some() =>
+            {
                 "has nothing between its `from` and its `where`: q raises 'from"
             }
             // A where phrase with nothing in it: q 5 `parse "exec a from t
@@ -869,7 +875,9 @@ fn phrase_refusal(
         // A word with a colon after it names a column, `select a,by:a from
         // t`: QF013's.
         if rest.is_empty()
-            || (re!(r"^(?:from|by|where)\b").is_match(rest)
+            || (query_words(re!(r"^(?:from|by|where)\b"), rest)
+                .next()
+                .is_some()
                 && !re!(r"^(?:from|by|where)\s*:").is_match(rest))
         {
             return Some("has a `,` with nothing after it: q raises ',");
@@ -933,14 +941,47 @@ fn phrase_refusal(
     if keyword == "delete" && re!(r"^\s*distinct\b").is_match(phrase) {
         return Some("takes no `distinct`: q raises 'type");
     }
-    let by = re!(r"\bby\b").find_iter(phrase).count();
+    let first_by = query_words(re!(r"\bby\b"), phrase).next();
+    let by = query_words(re!(r"\bby\b"), phrase).count();
     if keyword == "delete" && by > 0 {
         return Some("takes no `by`: q raises 'by");
     }
     if by > 1 {
         return Some("has a second `by`: q raises 'from");
     }
+    // No column before `by` or `from`: q 5 parses `update from t` and
+    // `update by s from t` and raises 'type on any table, a where phrase or
+    // not. `exec by s from t` is 'nyi for one by column with no name of its
+    // own - `exec by s,d from t` and `exec by a:s from t` run (#2782).
+    let columns = &comments[end..end + first_by.map_or(from, |b| b.start())];
+    if keyword == "update" && columns.trim().is_empty() {
+        return Some("has no column to update: q raises 'type");
+    }
+    if keyword == "exec"
+        && columns.trim().is_empty()
+        && first_by.is_some_and(|b| {
+            let by = &phrase[b.end()..];
+            !by.trim().is_empty() && !by.contains([',', ':'])
+        })
+    {
+        return Some("has one unnamed `by` column and no column to return: q raises 'nyi");
+    }
     None
+}
+
+/// The matches of a qSQL word's pattern in `text` that are the word: a
+/// segment of a dotted name is not. q 5 reads `.rng.from`, `from.x` and
+/// `.grp.by` as names - `select px by .grp.by from t where d>=.rng.from`
+/// runs, and `parse "select px from.t"` is 'from (#2773).
+fn query_words<'t>(
+    word: &'static regex::Regex,
+    text: &'t str,
+) -> impl Iterator<Item = regex::Match<'t>> {
+    word.find_iter(text).filter(|m| {
+        !text[..m.start()].ends_with('.')
+            && !(text[m.end()..].starts_with('.')
+                && text[m.end() + 1..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+    })
 }
 
 /// QT025. A signal of something that is not a symbol or a string. Verified:
