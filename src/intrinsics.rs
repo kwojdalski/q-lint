@@ -805,7 +805,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     // not to these five (q 5: `avgs "ab"` is 'type, #606).
                     || (value.kind == Kind::Char
                         && value.vector
-                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs")) =>
+                        && matches!(name, "prd" | "sums" | "prds" | "deltas" | "avgs"))
+                    // Nor is a product of times, dates or timespans a
+                    // thing, where their sum is: KDB-X `prd 12:00 13:00`,
+                    // `prds 2024.01.01 2024.01.02` and `prd 0D01 0D02` are
+                    // 'type, and an atom passes through (#2902).
+                    || (value.kind == Kind::Temporal
+                        && value.vector
+                        && matches!(name, "prd" | "prds")) =>
             {
                 Some((
                     "QT010",

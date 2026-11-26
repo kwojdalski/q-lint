@@ -528,6 +528,18 @@ r:til 1.5
 === QT010 | a numeric aggregate over symbols, juxtaposed
 r:sum `a`b
 
+=== QT010 profile: general | a product of times, dates or timespans (#2902; q 5: each 'type)
+r1:prd 12:00 13:00
+r2:prds 2024.01.01 2024.01.02
+r3:prd 0D01 0D02
+r4:prd[12:00:00 13:00:00]
+
+=== clean profile: general | while an atom passes through, and a sum of them is one (#2902; q 5: 2024.01m, 12:00, 25:00, 2024.01.01 2048.01.02)
+r1:prd 2024.01m
+r2:prds 12:00
+r3:sum 12:00 13:00
+r4:sums 2024.01.01 2024.01.02
+
 === QT011 | sorting an atom, juxtaposed
 r:asc 1
 
