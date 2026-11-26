@@ -280,7 +280,10 @@ export class QConnection {
   async trapped<T extends { ok: true } | { ok: false; error: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
     if (this.readOnly && !this.noReval) {
       const answer = read(await this.call(readOnly, ...args));
-      if (answer.ok || answer.error !== NO_REVAL) {
+      // The user's code can raise `NO_REVAL`'s text too: the process is
+      // asked apart whether it has `reval` before it is taken at its word,
+      // so no error turns the backstop off (#2638).
+      if (answer.ok || answer.error !== NO_REVAL || (await this.call("`reval in key`.q")) === true) {
         if (!answer.ok) {
           this.noteRefusal(answer.error);
         }
