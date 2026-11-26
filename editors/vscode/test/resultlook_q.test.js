@@ -134,6 +134,18 @@ test("the grid's dress and charts against a real q process", { skip }, async (t)
     c.r.flat().forEach((r, i) => assert.ok(Math.abs(r - flat[i]) < 1e-12, `${i}: ${r} vs q ${flat[i]}`));
   });
 
+  await t.test("a rule on a long column matches the rows q's own comparison does, past 2^53 too (#3085)", async () => {
+    const look = require("../out/resultlook.js");
+    const column = "9007199254740992 9007199254740993 9007199254740994 -9007199254740993 7 0N";
+    const { grid: g } = await grid(`([] a:${column})`);
+    for (const [op, text] of [["=", "9007199254740993"], ["<>", "9007199254740993"], [">", "9007199254740992"], [">=", "9007199254740993"], ["<", "9007199254740994"], ["<=", "-9007199254740993"], ["=", "7"], [">", "7"]]) {
+      const rule = { column: "a", op, value: look.ruleValue(op, text, true), style: { bold: true } };
+      // A null is in no rule; q's <> and < take it.
+      const { grid: q } = await grid(`([] r:exec i from ([] a:${column}) where not null a, a${op}${text})`);
+      assert.deepStrictEqual([...L.ruleRows(g, rule)].sort((x, y) => x - y).map(String), q.cells[0], `a ${op} ${text}`);
+    }
+  });
+
   await t.test("the HTML and Excel exports of a real result keep its rules (#1013)", async () => {
     const { payload } = await grid("nums");
     const rules = [{ column: "y", op: "top", value: 2, style: { background: "red" } }];

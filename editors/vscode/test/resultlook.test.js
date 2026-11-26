@@ -425,6 +425,35 @@ test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of the
   assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
 });
 
+test("a rule on a long past 2^53 compares the integers q wrote, not the doubles they round to (#3085)", () => {
+  const big = ["9007199254740992", "9007199254740993", "9007199254740994"];
+  // The values grid.ts keeps: doubles, the first two the same one.
+  const g = grid([["a", 7, [...big, "5", "", "0W"], [...big.map(Number), 5, null, null]]]);
+  const rows = (op, text) => {
+    assert.strictEqual(look.ruleValueProblem(op, text, true), undefined);
+    const rule = look.parseRule({ column: "a", op, value: look.ruleValue(op, text, true), style: { bold: true } });
+    return [...L.ruleRows(g, rule)].sort();
+  };
+  assert.deepStrictEqual(rows("=", "9007199254740993"), [1]);
+  assert.deepStrictEqual(rows("<>", "9007199254740993"), [0, 2, 3, 5]);
+  assert.deepStrictEqual(rows(">", "9007199254740992"), [1, 2, 5]);
+  assert.deepStrictEqual(rows(">=", "9007199254740993"), [1, 2, 5]);
+  assert.deepStrictEqual(rows("<", "9007199254740993"), [0, 3]);
+  assert.deepStrictEqual(rows("<=", " 9007199254740993 "), [0, 1, 3]);
+  // A value a double holds, a fraction and one in exponent form, as before.
+  assert.strictEqual(look.ruleValue(">", "5", true), 5);
+  assert.deepStrictEqual(rows("=", "5"), [3]);
+  assert.deepStrictEqual(rows(">", "5.5"), [0, 1, 2, 5]);
+  assert.deepStrictEqual(rows("<", "9.1e15"), [0, 1, 2, 3]);
+  // The greatest and the least are of the integers too, not a tie of doubles.
+  const two = grid([["a", 7, big.slice(0, 2), big.slice(0, 2).map(Number)]]);
+  assert.deepStrictEqual([...L.ruleRows(two, { column: "a", op: "top", value: 1, style: {} })], [1]);
+  assert.deepStrictEqual([...L.ruleRows(two, { column: "a", op: "bottom", value: 1, style: {} })], [0]);
+  // Its words show the number, not a string.
+  assert.strictEqual(L.ruleText({ column: "a", op: "=", value: look.ruleValue("=", "9007199254740993", true), style: { bold: true } }), "a = 9007199254740993: bold");
+  assert.strictEqual(L.ruleText({ column: "s", op: "=", value: "12", style: { bold: true } }), 's = "12": bold');
+});
+
 test("Excel colours a long it holds as text, past 2^53, as the grid's rule does (#2459)", () => {
   // ([] id:5 1700000000000000123 9007199254740993), id > 100 and id top 1.
   const p = {
