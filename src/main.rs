@@ -507,7 +507,13 @@ fn run(args: Args) -> Result<u8, String> {
         let stdout = io::stdout();
         return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
     }
-    if let Some(file) = &args.output_file {
+    // A run that prints no report makes no report file: `--write-baseline`
+    // and `--add-noqa` say what they did on standard error, and the file
+    // made empty for them was no JSON for whoever asked for it (#2753).
+    if let Some(file) = &args.output_file
+        && args.write_baseline.is_none()
+        && !args.add_noqa
+    {
         let _ = OUTPUT_PATH.set(file.clone());
     }
     if args.rules || args.explain.is_some() {
@@ -762,6 +768,14 @@ fn run(args: Args) -> Result<u8, String> {
         args.write_baseline.as_deref(),
         &inputs,
         LINTED,
+    )?;
+    // One file named to both was written as the baseline, then emptied as
+    // the report, by a run that said it wrote the baseline (#2753).
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        args.write_baseline.as_slice(),
+        "the baseline --write-baseline writes",
     )?;
     let read = policy.reads(&inputs);
     refuse_overwrite(

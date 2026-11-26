@@ -246,6 +246,48 @@ fn a_baseline_is_never_written_over_a_configuration() {
     assert_eq!((status, found), (Some(0), vec![]), "{err}");
 }
 
+/// `--write-baseline X --output-file X` wrote the baseline, then emptied it
+/// as the report, and said "wrote 2 finding(s)" (#2753). The one file for
+/// both is refused; and a run that prints no report makes no report file,
+/// where it made an empty one that is no JSON.
+#[test]
+fn a_written_baseline_is_not_emptied_as_the_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let args = ["--isolated", "--write-baseline", "b.json", "a.q"];
+    let (status, _, err) = run(d, &[&args[..], &["--output-file", "./b.json"]].concat());
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("the baseline --write-baseline writes"),
+        "{err}"
+    );
+    assert!(!d.join("b.json").exists());
+    let (status, _, err) = run(d, &[&args[..], &["--output-file", "report.json"]].concat());
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    assert!(!d.join("report.json").exists());
+    let (status, found, err) = run(d, &["--isolated", "--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    // `--add-noqa` prints no report either.
+    let (status, _, err) = run(
+        d,
+        &[
+            "--isolated",
+            "--add-noqa",
+            "--output-file",
+            "noqa.json",
+            "a.q",
+        ],
+    );
+    assert_eq!(status, Some(0), "{err}");
+    assert!(!d.join("noqa.json").exists());
+    // A run that reports still makes the file, with nothing to report too.
+    let (status, _, err) = run(d, &["--isolated", "--output-file", "report.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert_eq!(fs::read_to_string(d.join("report.json")).unwrap(), "[]\n");
+}
+
 /// A run that cannot read one of its inputs writes no baseline: one without
 /// that file's findings would replace the good one, and they would all come
 /// back as new once the file reads again (#2180).
