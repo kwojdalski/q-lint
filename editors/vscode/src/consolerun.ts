@@ -9,7 +9,7 @@ import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
 import { inContext, statements } from "./statements";
 import { plainMessage } from "./history";
-import { runUnwrapped } from "./querycontrols";
+import { UNLIMITED, UNLIMITED_READ_ONLY, limits, readUnlimited, runUnwrapped } from "./querycontrols";
 
 /// One run, as a pane shows it.
 export interface Ran {
@@ -45,7 +45,9 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     return undefined;
   }
   const configuration = workspace.getConfiguration("q-lint");
-  const { consoleSize } = readLive((key, fallback) => configuration.get(key, fallback));
+  // Toggle Unlimited Query holds here as for Run Query (#2362).
+  const unlimited = live.isUnlimited();
+  const { consoleSize } = limits(readLive((key, fallback) => configuration.get(key, fallback)), unlimited);
   const started = Date.now();
   let ran: { process: string; value: Answer } | undefined;
   // The process it is sent to, read as it is sent: a query that fails has
@@ -57,10 +59,12 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
       // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2356).
       const sent = live.gatewayed(inContext(cut, context));
       // Direct evaluation (#2470), or a gateway call (#2584): each
-      // statement as a plain string.
+      // statement as a plain string. Unlimited as Run Query is (#2362).
       return connection.isDirect || sent.plain
-        ? runUnwrapped(connection, sent.cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
-        : connection.query(sent.cut, consoleSize);
+        ? runUnwrapped(connection, sent.cut, { size: consoleSize, limit: 0, unlimited, grid: false })
+        : unlimited
+          ? connection.trapped(UNLIMITED, UNLIMITED_READ_ONLY, readUnlimited, sent.cut, consoleSize)
+          : connection.query(sent.cut, consoleSize);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
