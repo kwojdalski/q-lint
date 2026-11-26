@@ -5359,18 +5359,27 @@ fn named_values(
     for m in re!(concat!(
         r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:",
         blank!(),
-        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(?P<inner>\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)|(?:0[ \t]*![ \t]*|\([ \t]*\)[ \t]*xkey[ \t]+|(?:value|key)[ \t]+)(?P<unkeyed>\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
     ))
     .captures_iter(code)
     .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
     {
         let keyword = m.get(1).or(m.get(2)).unwrap();
         let whole = m.get(3).unwrap();
-        let unkeyed = if let Some(right) = m.get(4) {
+        let unkeyed = if let Some(right) = m.name("inner") {
             operand_ends(code, comments, whole.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
                     Some(Held::Table(_, false))
+                )
+        } else if let Some(right) = m.name("unkeyed") {
+            // A table unkeyed where it is joined, the trap written out:
+            // KDB-X `t lj 0!k`, `t lj value k`, `t lj key k` and
+            // `t lj () xkey k` are 'type, keyed or not before (#2894).
+            operand_ends(code, comments, whole.end())
+                && matches!(
+                    visible(right.as_str(), right.start()),
+                    Some(Held::Table(..))
                 )
         } else if whole.as_str().starts_with('(') {
             let right = whole;
