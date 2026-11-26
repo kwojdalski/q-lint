@@ -22,9 +22,11 @@
 // the body's own statements run in order. A constant a probe would give
 // a function of about 120 statements more than q allows ('limit, #2543). The locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
-// a statement at the top of the body assigns it.
+// a statement at the top of the body assigns it - in a frame of its own for
+// each call that has not returned, so a function that calls itself shows
+// the call that failed, not the last one it made (#2969).
 import type { Live } from "./live";
-import { codeMask, lambdas, parameters, type Lambda } from "./paramcache";
+import { codeMask, lambdas, ownCode, parameters, type Lambda } from "./paramcache";
 import type { Process } from "./processes";
 import { FULL_TEXT } from "./qtext";
 
@@ -154,6 +156,61 @@ export function coverageText(text: string, first: number): Covered | undefined {
   };
 }
 
+/// What to insert so that `hook`, a q expression for a function of one
+/// argument answering it, is applied to the value `lambda` hands back, where
+/// its own text says it hands one back: at each `:value` of its own body -
+/// a `:` where an expression starts, at the start of a statement or after
+/// a `[`, `(` or `;`, whatever brackets it is nested in, as q reads a return
+/// - and at its last statement, or at its end when a `;` follows that
+/// (the value is then the generic null). With `signals`, at each `'value`
+/// of its own body too. An error q itself signals is not seen: the caller
+/// allows for a call that ended unseen. A nested lambda's are its own.
+function exits(text: string, lambda: Lambda, mask: boolean[], statements: BodyStatement[], hook: string, signals: boolean): { offset: number; text: string }[] {
+  const own = ownCode(lambda, mask);
+  const out: { offset: number; text: string }[] = [];
+  // The last thing before here that is not blank or a comment: "" at the
+  // body's start, `"` for a string, `}` for a nested lambda.
+  let before = "";
+  for (let i = lambda.bodyStart; i < lambda.close; i++) {
+    if (!own(i)) {
+      if (mask[i]) {
+        before = "}";
+      } else if (text[i] === '"' && mask[i - 1]) {
+        before = '"';
+      }
+      continue;
+    }
+    const c = text[i];
+    if (/\s/.test(c)) {
+      continue;
+    }
+    if ((c === ":" || (signals && c === "'")) && (before === "" || before === ";" || before === "[" || before === "(")) {
+      let j = i + 1;
+      while (j < lambda.close && /\s/.test(text[j])) {
+        j++;
+      }
+      // An expression follows: not the end of one, another `:` (`::`), an
+      // adverb or a bracket (`:[a;b]`, `'[f;g]`), nor a comment.
+      const follows = j < lambda.close && (own(j) ? !";])}:'/\\[".includes(text[j]) : mask[j] || text[j] === '"');
+      if (follows) {
+        out.push({ offset: i + 1, text: `${hook}@` });
+      }
+    }
+    before = c;
+  }
+  const last = statements[statements.length - 1];
+  let trailing = last === undefined;
+  for (let i = last?.end ?? lambda.close; i < lambda.close && !trailing; i++) {
+    trailing = own(i) && text[i] === ";";
+  }
+  if (last === undefined || trailing) {
+    out.push({ offset: lambda.close, text: `${hook}[::]` });
+  } else if (text[last.start] !== ":" && text[last.start] !== "'") {
+    out.push({ offset: last.start, text: `${hook}@` });
+  }
+  return out;
+}
+
 const LOCAL = /^([A-Za-z][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*[-+*%&|^=<>$,#_~!?@]?:(?!:)/;
 
 /// A function instrumented to capture its locals: its new text, its
@@ -172,11 +229,31 @@ export interface Captured {
 /// leaves the entry out.
 const NO_LOCALS = "(enlist`)!enlist(::)";
 
-/// `text` (a lambda) made to keep, each time it is called, its arguments in
-/// `.qlint.err.d.args`, the index of the statement it is on in
-/// `.qlint.err.d.at`, and each local a statement assigns at the top of its
-/// body (`a:`, `a+:`, `a[i]:`) in `.qlint.err.d.locals` once that statement
-/// has run. The last statement is left as it is, so the value is unchanged.
+/// What INSTALL defines for the locals capture. `.qlint.err.s` holds one
+/// frame - (arguments; locals; statement) - for each call that has not
+/// returned, outermost first, after a first item that keeps the list
+/// general. `.qlint.err.in` opens a call's frame and answers what the call
+/// keeps things with, `.qlint.err.f` for that frame: given a statement's
+/// index it notes the statement, given a local's name and value it keeps
+/// the local, and given `::` and the call's value it closes the frame -
+/// kept as the last call that returned - and answers the value. A frame
+/// above the one written to is of a call that ended unseen (an error
+/// trapped on the way, a return the text did not show), and is dropped.
+const LOCALS_STATE = [
+  " .qlint.err.s:enlist(::);.qlint.err.last:();",
+  ` .qlint.err.in:{[a] .qlint.err.s,:enlist(a;${NO_LOCALS};0N);.qlint.err.f[-1+count .qlint.err.s]};`,
+  " .qlint.err.f:{[n;w;x] if[n<count .qlint.err.s;$[-7h=type w;[.qlint.err.s:(n+1)#.qlint.err.s;.qlint.err.s[n;2]:w];-11h=type w;[.qlint.err.s:(n+1)#.qlint.err.s;.qlint.err.s[n;1;w]:x];[.qlint.err.last:.qlint.err.s n;.qlint.err.s:n#.qlint.err.s]]];x};",
+].join("\n");
+
+/// `text` (a lambda) made to keep, each time it is called, a frame of its
+/// own (`LOCALS_STATE`) with its arguments, the index of the statement it
+/// is on, and each local a statement assigns at the top of its body (`a:`,
+/// `a+:`, `a[i]:`) once that statement has run; the frame is closed where
+/// the call hands its value back (`exits`), so the frame left open after
+/// an error is the failed call's, whatever calls it made of itself
+/// (#2969). The value is unchanged. `qlinterr` is what the call keeps
+/// things with - or `{y}`, keeping nothing, when `.qlint.err` is gone: a
+/// reference to this copy outlives the capture.
 export function localsText(text: string): Captured | undefined {
   const mask = codeMask(text);
   const lambda = outer(text, mask);
@@ -187,16 +264,15 @@ export function localsText(text: string): Captured | undefined {
   const statements = bodyStatements(text, lambda, mask);
   const args =
     params.length === 0 ? "(`$())!()" : params.length === 1 ? `(enlist\`${params[0]})!enlist ${params[0]}` : `${params.map((p) => "`" + p).join("")}!(${params.join(";")})`;
-  const at: { offset: number; text: string }[] = [
-    { offset: lambda.bodyStart, text: `.qlint.err.d.args:${args};.qlint.err.d.locals:${NO_LOCALS};.qlint.err.d.at:0N;` },
-  ];
+  const at: { offset: number; text: string }[] = [{ offset: lambda.bodyStart, text: `qlinterr:$[\`err in key\`.qlint;.qlint.err.in ${args};{y}];` }];
   statements.forEach((s, k) => {
-    at.push({ offset: s.start, text: `.qlint.err.d.at:${k};` });
+    at.push({ offset: s.start, text: `qlinterr[${k};::];` });
     const local = LOCAL.exec(text.slice(s.start, s.end));
     if (local !== null && k < statements.length - 1) {
-      at.push({ offset: s.end, text: `;.qlint.err.d.locals[\`${local[1]}]:${local[1]}` });
+      at.push({ offset: s.end, text: `;qlinterr[\`${local[1]};${local[1]}]` });
     }
   });
+  at.push(...exits(text, lambda, mask, statements, "qlinterr[::]", false));
   return { text: inserted(text, at), params, statements };
 }
 
@@ -210,10 +286,14 @@ export function restoreExpression(ns: "cov" | "err"): string {
   return [
     "{[]",
     ` if[not\`${ns} in key\`.qlint;:\`kept\`d!(\`$();::)];`,
-    ` s:@[get;\`${n}.saved;()!()];i:@[get;\`${n}.inst;()!()];d:@[get;\`${n}.d;{::}];`,
-    // The locals go back as text, as the console prints each on one line,
-    // but to 2000 characters whatever its width (#1870).
-    ...(ns === "err" ? [` d:@[{@[x;\`args\`locals;{{2000 sublist ${FULL_TEXT}[2000;x]}each x}]};@[{@[x;\`locals;(enlist\`)_]};d;{::}];{::}];`] : []),
+    ` s:@[get;\`${n}.saved;()!()];i:@[get;\`${n}.inst;()!()];`,
+    ns === "cov"
+      ? " d:@[get;`.qlint.cov.d;{::}];"
+      : // The frame of the innermost call that has not returned - the
+        // failed one - or, when every call returned, of the last that did.
+        // The locals go back as text, as the console prints each on one
+        // line, but to 2000 characters whatever its width (#1870).
+        ` d:@[{f:$[1<count x;last x;y];f:$[3=count f;f;((\`$())!();${NO_LOCALS};0N)];\`args\`locals\`at!({{2000 sublist ${FULL_TEXT}[2000;x]}each x}f 0;{{2000 sublist ${FULL_TEXT}[2000;x]}each x}(enlist\`)_f 1;f 2)}[@[get;\`.qlint.err.s;()]];@[get;\`.qlint.err.last;()];{::}];`,
     " kept:{[nm;old;new]$[new~@[get;nm;{::}];[nm set old;0b];1b]}'[key s;value s;i key s];",
     ` .qlint:(enlist\`${ns})_.qlint;`,
     " `kept`d!((`$()),key[s] where kept;d)}[]",
@@ -223,8 +303,7 @@ export function restoreExpression(ns: "cov" | "err"): string {
 /// Replaces each of `nms` (strings) whose text on the process is `was` with
 /// `src`, defined in its own context, keeping what it held. `d` is how many
 /// probes coverage counts (`.qlint.cov.d`, longs, through `.qlint.cov.hit`);
-/// the locals capture starts
-/// `.qlint.err.d` empty. Answers, for each name, `ok`, `missing`,
+/// the locals capture starts with no frame (`LOCALS_STATE`). Answers, for each name, `ok`, `missing`,
 /// `changed` or the error defining it gave; when none is `ok`,
 /// `.qlint.<ns>` is deleted again.
 export function installLambda(ns: "cov" | "err"): string {
@@ -232,7 +311,7 @@ export function installLambda(ns: "cov" | "err"): string {
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
-    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}];x+1};' : ` .qlint.err.d:\`args\`locals\`at!((\`$())!();${NO_LOCALS};0N);`,
+    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}];x+1};' : LOCALS_STATE,
     " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",

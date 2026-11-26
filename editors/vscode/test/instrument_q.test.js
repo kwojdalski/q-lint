@@ -191,3 +191,41 @@ test("a captured local is text to 2000 characters, whatever the process's \\c (#
   assert.deepStrictEqual(d.locals, { c: n, d: `+\`x\`y!(${n};${Array(60).fill("`sym").join("")})` });
   assert.deepStrictEqual(await value(c, "(system\"c\";key[`.qlint]~enlist`)"), [[25, 40], true]);
 });
+
+
+// One capture for the whole process held the arguments and locals of
+// whichever call ran last: a function that calls itself, failing after the
+// inner call returned, showed the inner call's (#2969).
+test("the locals capture shows the call that failed, not the last call a recursive function made (#2969)", { skip }, async (t) => {
+  const { connection } = await connect(
+    t,
+    [
+      "walk:{[depth;node] kids:node`kids; r:walk[depth+1] each kids; $[depth=0;r,`bad+1;r,depth]}",
+      "early:{[n] if[n=0; :0]; m:early n-1; $[n=2;m+`bad;m]}",
+      "deep:{[n] v:$[n=3;`bad+1;n]; deep n+1}",
+      "safe:{[n] a:n+1; r:@[safe;`bad;{[e] -1}]; a+`bad}",
+    ].join("\n") + "\n",
+  );
+  const capture = async (name, call) => {
+    const state = readDrift(await connection.call(DRIFT, name)).get(name);
+    const captured = localsText(state.text);
+    readInstalled(await connection.call(installLambda("err"), [name], [state.text], [captured.text], 0), 1);
+    const error = await connection.call(`{[x] @[value;x;{x}]}`, call);
+    const d = readRestored(await connection.call(restoreExpression("err"))).d;
+    assert.strictEqual(await connection.call("{[x] `err in key`.qlint}", 0), false);
+    return { error, args: d.args, locals: d.locals, at: Number(d.at) };
+  };
+  // The outermost call fails after the inner one returned.
+  assert.deepStrictEqual(await capture("walk", "walk[0;`kids`v!(enlist `kids`v!(();1);0)]"), {
+    error: "type",
+    args: { depth: "0", node: "`kids`v!(+`kids`v!(,();,1);0)" },
+    locals: { kids: "+`kids`v!(,();,1)", r: ",,1" },
+    at: 2,
+  });
+  // The inner calls returned early, through `:`.
+  assert.deepStrictEqual(await capture("early", "early 3"), { error: "type", args: { n: "2" }, locals: { m: "0" }, at: 2 });
+  // The innermost call fails: its frame, not the first call's.
+  assert.deepStrictEqual(await capture("deep", "deep 0"), { error: "type", args: { n: "3" }, locals: {}, at: 0 });
+  // A call whose error a caller trapped is not the one shown.
+  assert.deepStrictEqual(await capture("safe", "safe 5"), { error: "type", args: { n: "5" }, locals: { a: "6", r: "-1" }, at: 2 });
+});

@@ -326,7 +326,7 @@ export function lambdaAt(text: string, offset: number, all: Lambda[] = lambdas(t
 
 /// The offsets of `lambda`'s own body that are code: not its children's,
 /// and not strings or comments.
-function ownCode(lambda: Lambda, mask: boolean[]): (offset: number) => boolean {
+export function ownCode(lambda: Lambda, mask: boolean[]): (offset: number) => boolean {
   return (offset) =>
     mask[offset] === true &&
     offset >= lambda.bodyStart &&

@@ -11,10 +11,29 @@ test("a coverage probe goes in front of a statement that starts with a string (#
 
 test("a local is captured after a statement that ends with a string (#1421)", () => {
   const text = localsText('{[x] a:"b;c"; a}').text;
-  assert.ok(text.includes('a:"b;c";.qlint.err.d.locals[`a]:a;'), text);
+  assert.ok(text.includes('a:"b;c";qlinterr[`a;a];'), text);
   assert.ok(!text.includes("a:;"), text);
   // Escaped quotes stay inside the string.
-  assert.ok(localsText('{[x] a:"b\\"c"; a}').text.includes('a:"b\\"c";.qlint.err.d.locals[`a]:a;'));
+  assert.ok(localsText('{[x] a:"b\\"c"; a}').text.includes('a:"b\\"c";qlinterr[`a;a];'));
+});
+
+test("the locals capture closes a call's frame wherever its text hands a value back (#2969)", () => {
+  const body = (text) => localsText(text).text.replace(/^\{(\[[^\]]*\])?qlinterr:[^;]*;[^;]*;[^;]*;/, "{");
+  // The last statement's value, and the null of a body that ends with `;` or is empty.
+  assert.strictEqual(body("{[x] a:x; a+1}"), "{ qlinterr[0;::];a:x;qlinterr[`a;a]; qlinterr[1;::];qlinterr[::]@a+1}");
+  assert.strictEqual(body("{[x] x+1;}"), "{ qlinterr[0;::];x+1;qlinterr[::][::]}");
+  assert.strictEqual(body("{}"), "{qlinterr[::][::]}");
+  assert.strictEqual(body("{[x] a:x; / note\n }"), "{ qlinterr[0;::];a:x; / note\n qlinterr[::][::]}");
+  // A return, at the start of a statement and inside if, $ and a list.
+  assert.strictEqual(body("{[x] :x+1}"), "{ qlinterr[0;::];:qlinterr[::]@x+1}");
+  assert.strictEqual(body("{[x] if[x>2; :x]; $[x; :1; 2]}"), "{ qlinterr[0;::];if[x>2; :qlinterr[::]@x]; qlinterr[1;::];qlinterr[::]@$[x; :qlinterr[::]@1; 2]}");
+  assert.strictEqual(body("{[x] (1; :x)}"), "{ qlinterr[0;::];qlinterr[::]@(1; :qlinterr[::]@x)}");
+  // Not a return: an assignment, `::`, `:` as a value, one in a string, a
+  // comment or a nested lambda, and a signal (the frame is the failed call's).
+  for (const text of ["a:x; a::x; a", "::; x", "@[x;0;:;1]", '":x"', "f:{:x}; f x", "x / :x\n", "if[x;'`bad]; x", "x[`a]:1; x,:2; x"]) {
+    const made = body(`{[x] ${text}}`);
+    assert.strictEqual(made.split("qlinterr[::]").length - 1, 1, made);
+  }
 });
 
 test("a trailing comment is still left out of a statement", () => {
