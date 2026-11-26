@@ -249,10 +249,15 @@ export interface Filter {
 export const NO_FILTER: Filter = { levels: [], processes: [] };
 
 /// `bound` (a time or time of day, as typed) compared with `time`: -1 if
-/// `time` is before it, 0 at, 1 after; undefined if it cannot be read.
+/// `time` is before it, 0 at, 1 after; undefined if it cannot be read. A
+/// date alone is that whole day: `time` is at it anywhere from its midnight
+/// to the next, so "to 2026.11.21" keeps the 21st (#2418).
 function compare(time: number, bound: string): number | undefined {
   const full = timeOf(bound);
   if (full !== undefined) {
+    if (/^\d{4}[.-]\d{2}[.-]\d{2}$/.test(bound.trim())) {
+      return time < full ? -1 : time < full + 86400000 ? 0 : 1;
+    }
     return Math.sign(time - full);
   }
   const day = timeOfDay(bound);

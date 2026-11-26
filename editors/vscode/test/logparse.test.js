@@ -156,3 +156,14 @@ test("an impossible date or time is no time, and no filter bound (#1436)", () =>
   assert.strictEqual(new Date(timeOf("2028.02.29D23:59:59.5")).toISOString(), "2028-02-29T23:59:59.500Z");
   assert.strictEqual(validBound("2026.02.28"), true);
 });
+
+test("a date alone as a time bound is that whole day (#2418)", () => {
+  const e = entries(["2026.11.21D09:00:00.000000000|h|rdb|rdb1|INFO|x|a", "2026.11.21D17:30:00.000000000|h|rdb|rdb1|INFO|x|b", "2026.11.22D09:00:00.000000000|h|rdb|rdb1|INFO|x|c"]);
+  const pass = (filter) => e.filter((x) => matches(x, { levels: [], processes: [], ...filter })).map((x) => x.lines[0].split("|").pop());
+  assert.deepStrictEqual(pass({ from: "2026.11.21", to: "2026.11.21" }), ["a", "b"]);
+  assert.deepStrictEqual(pass({ to: "2026.11.21" }), ["a", "b"]);
+  assert.deepStrictEqual(pass({ from: "2026.11.22" }), ["c"]);
+  assert.deepStrictEqual(pass({ to: "2026-11-20" }), []);
+  // A full time is still that instant.
+  assert.deepStrictEqual(pass({ to: "2026.11.21D09:00" }), ["a"]);
+});
