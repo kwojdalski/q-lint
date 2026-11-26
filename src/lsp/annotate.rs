@@ -152,8 +152,8 @@ fn type_hints(params: &Value, sources: &Sources) -> Vec<Value> {
         .collect()
 }
 
-/// `textDocument/inlayHint`: at each argument of a bracketed call to a
-/// workspace function in the range, the name of the parameter it is passed
+/// `textDocument/inlayHint`: at each argument in the range of a bracketed
+/// call to a workspace function, the name of the parameter it is passed
 /// as - `f[a:1;b:2]` drawn over `f[1;2]`.
 ///
 /// Only for a function whose every definition declares its parameters in a
@@ -188,7 +188,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
     // The slots with their strings in them: in the code view a string is
     // blank, and an argument that is one would start after it (#2025).
     for call in argument_slots(text) {
-        if call.at < from || call.at > to {
+        // A hint is asked for by where it is drawn, as a type's is: an
+        // editor asks for the lines it shows, and a call that began above
+        // them still has arguments on them (#2952).
+        let drawn = |&(start, _): &(usize, usize)| from <= start && start <= to;
+        if !call.arguments.iter().any(drawn) {
             continue;
         }
         // A local's or q's own name is no mention; an indexed assignment,
@@ -216,7 +220,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
             // an assignment (#2778). An empty slot, the second of
             // `{[a;] a}`, names nothing (#2779).
             let param = q_lint_rs::slot_pattern(param);
-            if len == 0 || param.is_empty() || text[start..start + len] == *param {
+            if len == 0
+                || param.is_empty()
+                || text[start..start + len] == *param
+                || !drawn(&(start, len))
+            {
                 continue;
             }
             hints.push(json!({

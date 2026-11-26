@@ -235,6 +235,48 @@ fn a_call_to_a_workspace_function_shows_its_parameter_names() {
     assert_eq!(hints(&reply), [hint(5, 10, "qty:")]);
 }
 
+// #2952: a call was hinted only when its name was in the range asked for,
+// so one written over several lines lost every hint once its first line
+// scrolled out of view.
+#[test]
+fn an_argument_in_the_range_is_hinted_though_its_call_began_above_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "f:{[alpha;beta;gamma] alpha}
+r:f[
+  1;
+  2;
+  3]
+s:f[4;5;6]
+";
+    let uri = server.open(dir.path(), "main.q", main);
+    let mut over = |from: u64, to: u64| {
+        let range = json!({"range": {"start": {"line": from, "character": 0},
+                                     "end": {"line": to, "character": 0}}});
+        hints(&server.whole("textDocument/inlayHint", &uri, range))
+    };
+    let (alpha, beta, gamma) = (
+        hint(2, 2, "alpha:"),
+        hint(3, 2, "beta:"),
+        hint(4, 2, "gamma:"),
+    );
+    assert_eq!(over(0, 5), [alpha.clone(), beta.clone(), gamma.clone()]);
+    // The call's name is on line 1, above each of these ranges.
+    assert_eq!(over(3, 5), [beta.clone(), gamma.clone()]);
+    assert_eq!(over(2, 3), [alpha]);
+    assert_eq!(over(4, 5), [gamma]);
+    // And an argument outside the range is not drawn for its call's sake.
+    assert_eq!(over(1, 2), []);
+    assert_eq!(
+        over(5, 6),
+        [
+            hint(5, 4, "alpha:"),
+            hint(5, 6, "beta:"),
+            hint(5, 8, "gamma:")
+        ]
+    );
+}
+
 #[test]
 fn a_string_argument_is_hinted_where_it_starts() {
     // #2025: the arguments were found in the code view, where a string is
