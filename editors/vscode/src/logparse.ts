@@ -96,6 +96,19 @@ export function timeOf(text: string): number | undefined {
   return at.getTime() + Math.floor(ms);
 }
 
+/// `text` as `timeOf` reads it, but as this host's local time: KDB-X stamps
+/// an uncaught error with local time, where TorQ's `.lg` lines are UTC
+/// (#2595). The offset is the one at that moment, so a stamp either side of
+/// a change to or from summer time reads right.
+export function localTimeOf(text: string): number | undefined {
+  const t = timeOf(text);
+  if (t === undefined) {
+    return undefined;
+  }
+  const guess = t + new Date(t).getTimezoneOffset() * 60_000;
+  return t + new Date(guess).getTimezoneOffset() * 60_000;
+}
+
 /// A time of day, `HH:MM[:SS[.fff]]`, as milliseconds after midnight.
 export function timeOfDay(text: string): number | undefined {
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/.exec(text.trim());
@@ -148,7 +161,7 @@ export function parseLine(line: string): Parsed {
   }
   m = KDBX_ERROR.exec(line);
   if (m !== null) {
-    return { kind: "q", level: "ERROR", time: timeOf(m[1]), timeSpan: [1, 1 + m[1].length], levelSpan: [0, line.length] };
+    return { kind: "q", level: "ERROR", time: localTimeOf(m[1]), timeSpan: [1, 1 + m[1].length], levelSpan: [0, line.length] };
   }
   if (line.startsWith("'")) {
     return { kind: "q", level: "ERROR", levelSpan: [0, line.length] };
