@@ -109,6 +109,20 @@ pub fn build_from(
             }
         }
     }
+    // A namespace nobody assigns whole is made by the files assigning its
+    // members, and a read of it reads them all: KDB-X runs `.cfg.port:5010`
+    // in one file and `\d .cfg` / `retries:3` in another, and `.cfg` is
+    // ``` ``port`retries!(::;5010;3) ``` (#2827).
+    let mut members: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (name, defs) in &definers {
+        for (dot, _) in name.match_indices('.').filter(|&(dot, _)| dot > 0) {
+            members.entry(&name[..dot]).or_default().extend(defs);
+        }
+    }
+    for defs in members.values_mut() {
+        defs.sort_unstable();
+        defs.dedup();
+    }
     let identity = &tree.identity;
     let targets = |i: usize, load: &str| tree.targets(i, load);
     let mut graph = BTreeMap::new();
@@ -150,11 +164,18 @@ pub fn build_from(
             }
         }
         for name in &names {
-            let Some((name, defs)) = resolve(name, &definers).or_else(|| {
-                in_q.get(name)
-                    .and_then(|q| definers.get_key_value(q))
-                    .map(|(k, d)| (k.as_str(), d.as_slice()))
-            }) else {
+            let Some((name, defs)) = resolve(name, &definers)
+                .or_else(|| {
+                    in_q.get(name)
+                        .and_then(|q| definers.get_key_value(q))
+                        .map(|(k, d)| (k.as_str(), d.as_slice()))
+                })
+                .or_else(|| {
+                    members
+                        .get_key_value(name.as_str())
+                        .map(|(k, d)| (*k, d.as_slice()))
+                })
+            else {
                 continue;
             };
             let others: Vec<_> = defs

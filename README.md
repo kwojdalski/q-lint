@@ -263,6 +263,8 @@ A file depends on another when:
   local or parameter of the same name is not a read, and neither is a name
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
+  namespace no file assigns whole, `.cfg` read as a dictionary, reaches each
+  file assigning a name in it. A
   symbol handed straight to `get` or `value`, `` get`.ns.x `` or
   `` get[`.ns.x] ``, is a read too, and so is a name on a `k)` line, which
   reads q's globals as k has its names;

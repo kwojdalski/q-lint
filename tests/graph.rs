@@ -596,6 +596,46 @@ fn system_applied_in_parentheses_by_dot_or_to_each_loads() {
 }
 
 #[test]
+fn a_namespace_read_whole_reaches_the_files_assigning_its_members() {
+    // KDB-X, with every file loaded: `whole` is
+    // ``` ``port`host`retries!(::;5010;`localhost;3) ``` and `p` 5010 (#2827).
+    let g = graph(
+        &[
+            ("cfg.q", ".cfg.port:5010\n.cfg.host:`localhost\n"),
+            ("cfg2.q", "\\d .cfg\nretries:3\n"),
+            ("a.q", "whole:.cfg\n"),
+            ("b.q", "whole2:get `.cfg\n"),
+            ("c.q", "n:count .cfg\n"),
+            ("d.q", "p:.cfg`port\n"),
+            ("e.q", "p:.cfg.missing\n"),
+            ("deep.q", ".app.db.user:`u\n"),
+            ("f.q", "u:.app.db\nv:.app\n"),
+        ],
+        false,
+    );
+    for reader in ["a.q", "b.q", "c.q", "d.q"] {
+        assert_eq!(deps(&g, reader), ["cfg.q", "cfg2.q"], "{reader}");
+        let shared: Vec<_> = g[reader].ambiguous.keys().collect();
+        assert_eq!(shared, [".cfg"], "{reader}");
+    }
+    // A member nobody assigns is no read of the others.
+    assert!(deps(&g, "e.q").is_empty());
+    assert!(deps(&g, "cfg.q").is_empty());
+    // Nested, each namespace above the name is one too.
+    assert_eq!(deps(&g, "f.q"), ["deep.q"]);
+    // A namespace assigned whole is the file's that assigns it, as before.
+    let g = graph(
+        &[
+            ("cfg.q", ".cfg:`port`host!(5010;`localhost)\n"),
+            ("more.q", ".cfg.retries:3\n"),
+            ("a.q", "whole:.cfg\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "a.q"), ["cfg.q"]);
+}
+
+#[test]
 fn a_context_switched_to_by_a_computed_name_is_dynamic() {
     // KDB-X runs lib.q, and `key `.app` is ``dfun: the root has no `dfun`,
     // and use.q's read of one is 'dfun (#2813).
