@@ -158,6 +158,16 @@ test("a file under a folder whose name starts with two dots is named relative to
   }
 });
 
+// `q -run.q` takes the file for an option, and runs no script (#2373).
+test("a file whose name starts with - is run as ./-name, not read as an option of q (#2373)", async () => {
+  for (const [file, named] of [["/ws/-run.q", "./-run.q"], ["/ws/-d/a.q", "./-d/a.q"], ["/ws/a-b.q", "a-b.q"]]) {
+    const fake = fakeVscode({}, {});
+    fake.vscode.window.activeTextEditor.document.uri = fake.vscode.Uri.file(file);
+    await loadTerminals(fake).runFile({ args: [], input: [] });
+    assert.strictEqual(fake.terminals[0].sent[0], `q ${named}`, file);
+  }
+});
+
 test("a workspace-relative KDB-X qBinary gets its layout's QHOME and QLIC in a terminal, as in the launcher (#1839)", async (t) => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-kxrel-"));
   t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
