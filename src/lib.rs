@@ -3570,7 +3570,7 @@ fn vector_comparison(cond: &str) -> bool {
 /// each 'type, as the same expression on a line of its own is.
 /// Where the parentheses around the function from `start` to `end` close,
 /// when nothing else is in them: `({...})` or `(f)`.
-fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
+pub(crate) fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
     let before = code[..start].trim_end_matches([' ', '\t']);
     let open = before.strip_suffix('(').map(|b| b.len())?;
     let close = matching(code, open, b'(', b')')?;
@@ -3587,12 +3587,27 @@ fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
 /// q 5 `{[a;b] a+b}[1][2;3]` and `[;1][2;3]` are 'rank (#628). A projection
 /// given an elided slot is not checked until it runs - q 5 `f[1][;2]` is a
 /// projection - so a later bracket counts only when it fills every slot.
-fn over_applied(code: &str, open: usize, rank: usize) -> Option<(usize, usize, usize)> {
+/// A slot is judged empty in `comments`, where a string is still text:
+/// `ssr["a";"a"]["b";"c"]` fills two and then two more (#2933).
+pub(crate) fn over_applied(
+    code: &str,
+    comments: &str,
+    open: usize,
+    rank: usize,
+) -> Option<(usize, usize, usize)> {
     let (mut open, mut rank, mut first) = (open, rank, true);
     loop {
         let close = matching(code, open, b'[', b']')?;
         let parts = slots(&code[open + 1..close - 1]);
-        let filled = parts.iter().filter(|p| !p.trim().is_empty()).count();
+        let mut from = open + 1;
+        let filled = parts
+            .iter()
+            .filter(|part| {
+                let full = !comments[from..from + part.len()].trim().is_empty();
+                from += part.len() + 1;
+                full
+            })
+            .count();
         if filled == 0 && parts.len() == 1 {
             // `f[]`: a call of a rank-1 function, nothing at any other.
             if rank <= 1 {
@@ -4372,7 +4387,7 @@ fn vector_items(arg: &str, literal: &str) -> Option<usize> {
 /// 'rank that `f . 1 2 3` is at rank 2, and `.[f;(1 2);h]` is the call that
 /// `.[f;1 2;h]` is (#2938, #2943). Nothing for what is not written out,
 /// `(x)`. `literal` is `arg` with its strings kept.
-fn listed(arg: &str, literal: &str) -> Option<usize> {
+pub(crate) fn listed(arg: &str, literal: &str) -> Option<usize> {
     let from = arg.len() - arg.trim_start().len();
     let list = arg.trim();
     if list.starts_with('(') && matching(list, 0, b'(', b')') == Some(list.len()) {
@@ -7277,7 +7292,8 @@ fn lint_rules(
                     params.len()
                 };
                 if arity <= 8
-                    && let Some((at, count, rank)) = over_applied(code, open, arity.max(1))
+                    && let Some((at, count, rank)) =
+                        over_applied(code, &v.comments, open, arity.max(1))
                 {
                     add(
                         at,
@@ -8276,7 +8292,7 @@ fn lint_rules(
         if rank == 0 {
             continue;
         }
-        if let Some((at, count, left)) = over_applied(code, open, rank) {
+        if let Some((at, count, left)) = over_applied(code, &v.comments, open, rank) {
             add(
                 if at == open { whole.start() } else { at },
                 "QA012",

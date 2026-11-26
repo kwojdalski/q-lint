@@ -659,6 +659,113 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             ));
         }
     }
+    // The same count where the call is not one `name[...]`: q 5 refuses
+    // `ssr["a";"a"]["b";"c"]`, `(ssr)["a";"a";"b";"c"]`, `ssr . (a;b;c;d)`,
+    // `.[ssr;(a;b;c;d)]` and `ssr'[a;b;c;d]` with 'rank, as it does `count .
+    // 1 2`, `count'[1;2]` and `(count)[1;2]` (#2933). Not through `/` or
+    // `\`, which take two of a unary function: `count/[1;2]` runs.
+    for m in re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*").find_iter(code) {
+        let name = m.as_str();
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare).filter(|&n| n < usize::MAX) else {
+            continue;
+        };
+        if !boundary(code, m.start())
+            || redefined(bare, m.start())
+            || (name.starts_with('.')
+                && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
+        {
+            continue;
+        }
+        let refused = |projection: bool| {
+            !projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name))
+        };
+        let mut report = |detail: String| {
+            out.push(Finding::at(path, source, m.start(), "QA010", detail));
+        };
+        // A slot is empty where `comments` has nothing: in `code` a string
+        // is blank too.
+        let kept = |part: &str| {
+            let from = part.as_ptr() as usize - code.as_ptr() as usize;
+            &comments[from..from + part.len()]
+        };
+        let elided = |parts: &[&str]| parts.iter().any(|part| kept(part).trim().is_empty());
+        let over = |given: usize, how: &str| {
+            format!("{name} accepts at most {arity} argument(s), but {how} {given}")
+        };
+        // In parentheses of its own it is still the function: `(ssr)`.
+        let wrapped = crate::parenthesised(code, m.start(), m.end());
+        let end = wrapped.unwrap_or(m.end());
+        let next = end + (code[end..].len() - code[end..].trim_start_matches([' ', '\t']).len());
+        let rest = &code[next..];
+        if rest.starts_with('[') {
+            let Some((at, given, left)) = crate::over_applied(code, comments, next, arity) else {
+                continue;
+            };
+            if at != next {
+                report(format!(
+                    "{given} argument slots applied to a projection of {name} that accepts \
+                     {left} more: 'rank at runtime"
+                ));
+            } else if wrapped.is_some()
+                && let Some(close) = matching(code, at, b'[', b']')
+                && refused(elided(&slots(&code[at + 1..close - 1])))
+            {
+                // Without the parentheses the first bracket is the loop's
+                // above, or the one's below.
+                report(over(given, "this call supplies"));
+            }
+        } else if wrapped.is_none() && next == end && rest.starts_with("'[") {
+            let Some(close) = matching(code, next + 1, b'[', b']') else {
+                continue;
+            };
+            // A slot left empty is a projection of the derived function:
+            // q 5 `count'[1;]` is one.
+            let parts = slots(&code[next + 2..close - 1]);
+            if parts.len() > arity && !elided(&parts) {
+                report(over(parts.len(), "`'` applies it to"));
+            }
+        } else if (next > end || wrapped.is_some())
+            && re!(concat!(r"^\.(?:", blank!(), r"+|\()")).is_match(rest)
+        {
+            // `name . list`, the list read as QA012 reads a lambda's.
+            let after = crate::past_blanks(comments, next + 1);
+            let list = &code[after..];
+            let len = if list.starts_with('(') {
+                matching(list, 0, b'(', b')')
+            } else {
+                list.find(|c: char| ";)]}\r\n".contains(c))
+                    .or(Some(list.len()))
+            };
+            if let Some(len) = len
+                && crate::operand_ends(code, comments, after + len)
+                && let Some(given) = crate::listed(&list[..len], &comments[after..after + len])
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
+        } else if wrapped.is_none()
+            && rest.starts_with(';')
+            && let before = code[..m.start()].trim_end()
+            && before.ends_with(".[")
+            && !before[..before.len() - 2]
+                .ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+            && let Some(close) = matching(code, before.len() - 1, b'[', b']')
+        {
+            // `.[name;list]`, and under a handler, which is then all that
+            // runs: q 5 `.[ssr;(a;b;c;d);{x}]` is "rank". An empty third
+            // slot is a projection of the dot.
+            let parts = slots(&code[before.len()..close - 1]);
+            if (parts.len() == 2 || parts.len() == 3 && !kept(parts[2]).trim().is_empty())
+                && let Some(given) = crate::listed(parts[1], kept(parts[1]))
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
+        }
+    }
     for Call {
         at,
         name,

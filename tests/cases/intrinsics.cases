@@ -1032,6 +1032,36 @@ c:.q.pad[1;2;3]
 .q.sublist:{[a;b;c] a}
 d:.q.sublist[1;2;3]
 
+=== QA010 profile: general | too many through a projection, parentheses, a dot apply or each (KDB-X: 'rank for each, #2933)
+a:ssr["a";"a"]["b";"c"]
+b:sublist[1]["ab";2]
+c:(ssr)["a";"a";"b";"c"]
+d:ssr . ("a";"a";"b";"c")
+e:ssr'["a";"a";"b";"c"]
+f:.[ssr;("a";"a";"b";"c")]
+g:count . 1 2
+h:count'[1;2]
+i:(sum)[1;2]
+j:.Q.dd[1][2;3]
+k:.[ssr;("a";"a";"b";"c");{x}]
+l:neg .(1;2)
+m:(til)[1;]
+
+=== clean profile: general | within what each takes, a projection, and an over that takes two of a unary function (KDB-X: count/[1;2] is 1, (sum)[1;] and count'[1;] are projections, enlist . (1;2;3) is 1 2 3)
+a:ssr["a";"a"]["b"]
+b:(ssr)["a";"a";"b"]
+c:ssr . ("a";"a";"b")
+d:ssr'["a";"a";"b"]
+e:.[ssr;("a";"a";"b")]
+f:count/[1;2]
+g:(sum)[1;]
+h:count'[1;]
+i:enlist . (1;2;3)
+j:xbar[5][1 2]
+k:rotate[1][1 2 3][0]
+l:.[ssr;("a";"a";"b";"c");]
+m:ssr . args
+
 === clean profile: general | what each takes, and an elided slot too many for a primitive, a projection q makes (#2246)
 a:.Q.dd[`a;`b]
 b:sublist[1;1 2 3]
