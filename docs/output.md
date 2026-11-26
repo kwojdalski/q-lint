@@ -49,5 +49,5 @@ object per rule that has any, the most frequent first:
 | `summary` | string | The rule's summary, as `why` above. |
 
 The exit code is the one the findings would give: 0 with none, 1 with any.
-`--format sarif` and `--format github` are described in the README's
-[Reports for CI](../README.md#reports-for-ci).
+`--format sarif` and `--format github` are described in
+[cli.md](cli.md#output).

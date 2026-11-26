@@ -4443,20 +4443,20 @@ mod tests {
         assert_eq!(severity("anything else"), 2);
     }
 
-    /// The README's `initializationOptions` block, as JSON.
+    /// The `initializationOptions` block in `docs/lsp.md`, as JSON.
     fn readme_options() -> Value {
-        // A Windows checkout may have turned the README's line ends to CRLF.
-        let readme = include_str!("../README.md").replace("\r\n", "\n");
+        // A Windows checkout may have turned the page's line ends to CRLF.
+        let readme = include_str!("../docs/lsp.md").replace("\r\n", "\n");
         let section = readme
-            .split("### Editor options: `initializationOptions`")
+            .split("## `initializationOptions`")
             .nth(1)
-            .expect("README lost its initializationOptions section");
+            .expect("docs/lsp.md lost its initializationOptions section");
         let block = section
             .split("```json\n")
             .nth(1)
             .and_then(|rest| rest.split("\n```").next())
-            .expect("README lost its initializationOptions block");
-        serde_json::from_str(block).expect("the README's block is JSON")
+            .expect("docs/lsp.md lost its initializationOptions block");
+        serde_json::from_str(block).expect("the docs/lsp.md block is JSON")
     }
 
     /// Each leaf of `v` - a value that is not an object, or an empty one -
@@ -4481,15 +4481,15 @@ mod tests {
     }
 
     #[test]
-    fn the_readme_initialization_options_are_the_servers_defaults() {
+    fn the_documented_initialization_options_are_the_servers_defaults() {
         let readme = readme_options();
         let (defaults, problems) = read_options(Value::Null);
         assert!(problems.is_empty(), "{problems:?}");
         let (documented, problems) = read_options(readme.clone());
-        assert!(problems.is_empty(), "the README's block: {problems:?}");
+        assert!(problems.is_empty(), "the docs/lsp.md block: {problems:?}");
         assert_eq!(
             documented, defaults,
-            "the README's block is not the defaults"
+            "the docs/lsp.md block is not the defaults"
         );
         assert_eq!(
             format!("{:?}", Options::default()),

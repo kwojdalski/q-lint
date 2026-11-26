@@ -1281,7 +1281,7 @@ fn an_open_excluded_file_defines_nothing_for_the_others() {
     // `qlinter .` reads no excluded file, so src/a.q's `ff` is undefined
     // there. Opening lib/defs.q put its `ff` in the workspace and the
     // QF018 went away until it was closed (#2295). Opened, it is still
-    // linted - the README: an exclude does not hide a document's findings.
+    // linted - docs/lsp.md: an exclude does not hide a document's findings.
     let dir = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
     std::fs::write(
