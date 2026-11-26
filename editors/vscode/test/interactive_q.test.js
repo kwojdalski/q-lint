@@ -179,3 +179,22 @@ test(".qlint.view in a read-only query or under peach gives the value back rathe
   // Nothing was held there.
   assert.deepStrictEqual(await c.query(["@[get;`.qlint.shown;`none]"], [25, 80]), { ok: true, type: -11, text: ["`none"] });
 });
+
+// Toggle Unlimited Query reached Run Query only: the REPL and the
+// Interactive Window cut at output.consoleSize still (#2362).
+test("with Unlimited on the REPL shows the whole result, cut at the console size again once off (#2362)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { repl, live } = await setUp(t, q.port);
+  stub.config.user["output.consoleSize"] = "10 80";
+  t.after(() => delete stub.config.user["output.consoleSize"]);
+  await repl.enter("([]a:til 30)");
+  assert.deepStrictEqual(repl.entries().at(-1).lines.slice(-1), [".."]);
+  await stub.commands.get("q-lint.toggleUnlimitedQuery")();
+  assert.strictEqual(live.isUnlimited(), true);
+  await repl.enter("([]a:til 30)");
+  assert.deepStrictEqual([repl.entries().at(-1).lines.length, repl.entries().at(-1).lines.at(-1)], [32, "29"]);
+  await stub.commands.get("q-lint.toggleUnlimitedQuery")();
+  await repl.enter("([]a:til 30)");
+  assert.deepStrictEqual(repl.entries().at(-1).lines.slice(-1), [".."]);
+});

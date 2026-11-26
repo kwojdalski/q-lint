@@ -1187,6 +1187,11 @@ export class Live {
     return this.connectTo(bound);
   }
 
+  /// Whether Toggle Unlimited Query is on: a pane that runs code asks too (#2362).
+  isUnlimited(): boolean {
+    return this.controls.unlimited;
+  }
+
   /// Whether a query is running on the active connection: connecting
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
