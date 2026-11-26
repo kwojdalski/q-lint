@@ -436,6 +436,19 @@ function madeDirect(process: Process, old: Process, guardTags: string[]): boolea
   return guarded && process.evaluation === "direct" && old.evaluation !== "direct";
 }
 
+/// What of `was`, as a connection to it was made, differs from `now`, its
+/// label as saved, of what `passwordsToForget` compares - its address, user,
+/// TLS or SSH tunnel - as a clause: "its SSH tunnel was set to bastion"
+/// (#2372). Empty when nothing does.
+export function editedSince(was: Process, now: Process): string {
+  const changes: string[] = [];
+  if (now.host !== was.host || now.port !== was.port) changes.push(`it was edited to ${address(now.host, now.port)}`);
+  if (now.user !== was.user) changes.push(now.user ? `its user was changed to ${now.user}` : "its user was cleared");
+  if ((now.tls === true) !== (was.tls === true)) changes.push(`its TLS was turned ${now.tls === true ? "on" : "off"}`);
+  if (now.ssh !== was.ssh) changes.push(now.ssh ? `its SSH tunnel was set to ${now.ssh}` : "its SSH tunnel was cleared");
+  return changes.length > 1 ? `${changes.slice(0, -1).join(", ")} and ${changes.at(-1)}` : (changes[0] ?? "");
+}
+
 /// The processes in `incoming` that take away what protects the one of
 /// their label in `before`: its TLS, its SSH tunnel, a tag of `guardTags`
 /// (the read-only guard's), or on a guarded one the reval backstop, by

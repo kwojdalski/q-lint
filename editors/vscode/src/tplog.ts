@@ -25,18 +25,23 @@
 /// replayer the page asks through.
 export const TPLOG_INIT = [
   // A table's name only: not a dotted one, `.z.pw` or `.q.x`, which `set`
-  // would replace with what the message holds (#1829).
+  // would replace with what the message holds (#1829). A table is made only
+  // from a message that is one: a tickerplant journals a list of columns,
+  // which needs its schema loaded first (#2597).
   "upd:{[t;x] if[(-11h<>type t)|\".\"=first string t;'\"not a table name: \",-3!t];$[t in tables`.;t insert x;98h=type x;t set x;'\"no table \",string[t],\": load its schema first\"]}",
   ".qlint.tp.load:{[f] f:hsym`$f;c:-11!(-2;f);ok:0>type c;n:$[ok;c;c 0];",
   " m:$[0=n;();ok;get f;[b:(c 1)#read1 f;b[4+til 4]:reverse 0x0 vs\"i\"$n;p:`:qlintprefix.log;p 1:b;r:get p;hdel p;r]];",
   " m:(),m;",
   " d:{$[(0h=type x)&2<count x;x 2;::]}each m;",
-  " tm:{tv:$[98h=type x;value flip x;0h=type x;x;()];tv:tv where(abs type each tv)within 12 19h;$[count tv;first first tv;0Np]}each d;",
+  // A dictionary is one row of atoms, or columns as a table's (#2415).
+  " tm:{tv:$[98h=type x;value flip x;99h=type x;$[98h=type key x;value flip 0!x;value x];0h=type x;x;()];tv:tv where(abs type each tv)within 12 19h;$[count tv;first first tv;0Np]}each d;",
   " .qlint.tp.m::m;",
   " .qlint.tp.s::([] i:til count m;",
   "  fn:{$[(0h=type x)&-11h=type first x;first x;`]}each m;",
   "  tb:{$[(0h=type x)&1<count x;$[-11h=type x 1;x 1;`];`]}each m;",
-  "  rows:{\"f\"$$[98h=type x;count x;99h=type x;count x;0h=type x;$[count x;count first x;0];1]}each d;",
+  // Columns only when every item is a list of one length: a row of atoms
+  // whose first is a string is one row, not that string's length (#2500).
+  "  rows:{\"f\"$$[98h=type x;count x;99h=type x;$[98h=type key x;count x;all 0>type each v:value x;1;count first v];0h=type x;$[0=count x;0;(all 0<=type each x)&1=count distinct count each x;count first x;1];1]}each d;",
   "  tod:{$[null x;0n;(abs type x)in 13 14h;0n;\"f\"$`time$x]}each tm;",
   "  tx:{$[null x;\"\";string x]}each tm);",
   " `count`bytes`size`complete`tables!(\"f\"$n;\"f\"$$[ok;hcount f;c 1];\"f\"$hcount f;ok;string asc distinct exec tb from .qlint.tp.s where not null tb)}",
@@ -54,7 +59,7 @@ export const TPLOG_INIT = [
   " r:{$[(0h=type x)&(1<count x)&`upd~first x;@[{upd . 1_x;`ok};x;{`$x}];`skip]}each .qlint.tp.m ix;",
   " e:r where not r in`ok`skip;",
   " k:.qlint.tp.s[`fn]ix where r=`skip;",
-  " `replayed`failed`errors`skipped`heads`tables`rows!(\"f\"$sum not r=`skip;\"f\"$count e;string 5 sublist distinct e;\"f\"$count k;string 5 sublist distinct k;string tables`.;\"f\"${count get x}each tables`.)}",
+  " `replayed`failed`errors`skipped`heads`tables`rows!(\"f\"$sum r=`ok;\"f\"$count e;string 5 sublist distinct e;\"f\"$count k;string 5 sublist distinct k;string tables`.;\"f\"${count get x}each tables`.)}",
   // The messages of a range that are not `upd`'s, and the names they give.
   ".qlint.tp.others:{[a;b] k:{x where not x=`upd}.qlint.tp.s[`fn](\"j\"$a)+til 1+(\"j\"$b)-\"j\"$a;`count`heads!(\"f\"$count k;string 5 sublist distinct k)}",
   // `\l` refuses a path with a space in it ('nyi, KDB-X), so a schema is
@@ -77,6 +82,7 @@ export interface TpPage {
 }
 
 export interface Replayed {
+  /// Messages `upd` ran without an error; `failed` are those it refused.
   replayed: number;
   failed: number;
   errors: string[];
@@ -151,10 +157,18 @@ export function timeOfDay(text: string): number | null | undefined {
   return ((+m[1] * 60 + +m[2]) * 60 + +(m[3] ?? 0)) * 1000 + +(m[4] ?? "0").padEnd(3, "0");
 }
 
+/// A message number as the page's box holds it: NaN for a blank box or one
+/// that is not a whole number, which `Number` reads as 0 or a fraction (#2507).
+export function messageNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  const t = typeof v === "string" ? v.trim() : "";
+  return /^\d+$/.test(t) ? Number(t) : NaN;
+}
+
 /// Why a range `from`..`to` of a log of `count` messages cannot be
 /// replayed; undefined when it can.
 export function rangeProblem(from: number, to: number, count: number): string | undefined {
-  if (!Number.isInteger(from) || !Number.isInteger(to)) return "a range is two message numbers";
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return "type the first and last message numbers";
   if (from < 0 || to >= count) return `the messages are numbered 0 to ${count - 1}`;
   if (from > to) return "the first message comes before the last";
   return undefined;

@@ -88,3 +88,15 @@ test("the pager pages the filter last applied, not one typed since (#1395)", () 
   button("Filter").fire("click");
   assert.deepStrictEqual(page.posted.at(-1), { type: "page", table: "quote", from: "10:00", to: "11:00", offset: 0 });
 });
+
+test("Replay sends the boxes as typed, so an empty one is not message 0 (#2507)", () => {
+  const page = loadSmallPage(["tplog.js"]);
+  page.send({ type: "log", port: 5001, log: LOG });
+  const replay = page.find("button").find((b) => b.textContent === "Replay");
+  replay.fire("click");
+  const [, , from, to] = page.find("input");
+  to.value = "2";
+  replay.fire("click");
+  assert.deepStrictEqual(page.posted.filter((m) => m.type === "replay"), [{ type: "replay", from: "", to: "" }, { type: "replay", from: "", to: "2" }]);
+  assert.strictEqual(from.value, "");
+});

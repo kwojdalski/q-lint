@@ -323,6 +323,14 @@ test("the Process Monitor reads memory, handles, timers and settings", { skip },
   assert.ok(about.pid.length > 0);
 });
 
+// A timer's description, a string in TorQ's table, came as its q literal,
+// quoted and escaped (#2358).
+test("the Process Monitor shows a TorQ timer's description as it is", { skip }, async (t) => {
+  const c = await connect(t, '.timer.timer:([id:1 2 3i]period:3#0D00:01;active:111b;nextrun:3#.z.P;description:("flush the log";"say \\"hi\\"";"a"));\n');
+  const timers = monitorTree(await c.call(MONITOR, null), "p").find((n) => n.label === "Timers").children;
+  assert.deepStrictEqual(timers.slice(2).map((n) => n.tooltip), ["flush the log", 'say "hi"', "a"]);
+});
+
 // With no TorQ timer table, `cols` of the empty list failed the whole call.
 test("the Process Monitor of a process with no TorQ timers, and a long working directory", { skip }, async (t) => {
   const c = await connect(t, "a:1\n");

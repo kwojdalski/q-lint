@@ -43,3 +43,30 @@ test("TorQ's .clients.clients gives each handle's host", { skip }, async (t) => 
   const [sub] = readSubscribers(await connection.call(SUBSCRIBERS, 0));
   assert.strictEqual(sub.host, "desk1");
 });
+
+// TorQ's STP and chained tickerplant replace u.q with pubsub.q, which keeps
+// no .u.w (#2585): its subscriptions as pubsub.q's add, selfiltered and
+// addfiltered store them.
+test("a TorQ STP's subscribers, to all of a table and filtered, are read from .stpps", { skip }, async (t) => {
+  const { connection } = await connect(
+    t,
+    [
+      ".stpps.subrequestall:enlist[`]!enlist ();",
+      ".stpps.subrequestfiltered:([]tbl:`$();handle:`int$();filts:();columns:());",
+      ".z.po:{.stpps.subrequestall[`trade],:x;",
+      " `.stpps.subrequestfiltered upsert (`quote;x;enlist enlist (in;`sym;enlist`a`b);());",
+      ' `.stpps.subrequestfiltered upsert (`trade;x;(parse"select from t where sym in `a`b,px>1")2;last parse"select sym,px from t")};',
+      "",
+    ].join("\n"),
+  );
+  const subs = readSubscribers(await connection.call(SUBSCRIBERS, 0));
+  assert.deepStrictEqual(
+    subs.map((s) => [s.table, s.syms]).sort(),
+    [
+      ["quote", "a b"],
+      ["trade", ""],
+      ["trade", "where (in;`sym;,`a`b), (>;`px;1), columns sym, px"],
+    ],
+  );
+  assert.ok(subs.every((s) => s.handle > 0));
+});

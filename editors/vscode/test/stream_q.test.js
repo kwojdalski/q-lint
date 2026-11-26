@@ -22,3 +22,23 @@ test("a one-row update is read whatever its atoms' types", { skip }, async (t) =
   assert.strictEqual((await c.evaluate("t:([]a:`float$();b:`float$()); `t insert 1.5 2.5; 1=count t")).value, true);
   assert.strictEqual((await c.evaluate('@[{`t insert x};1.5 2.5 3.5;{x}]')).value, "length");
 });
+
+// A TorQ STP has no .u.t, publishes from pubsub.q's .stpps.t, and its .u.sub
+// answers a table it does not publish with (x;reason), as pubsub.q does
+// (#2586).
+test("a TorQ STP's pick list is the tables it publishes, and its refusal is shown", { skip }, async (t) => {
+  const { TABLES, SUBSCRIBE } = require("../out/stream.js");
+  const { connection: c } = await connect(
+    t,
+    [
+      "trade:([]time:`timespan$();sym:`$();px:`float$());",
+      "currlog:([tbl:`$()]logname:`$();handle:`int$());",
+      ".stpps.t:enlist`trade;",
+      '.u.sub:{[x;y] if[not x in .stpps.t;:(x;"Table ",string[x]," not in list of stp pub/sub tables")];(x;0#value x)};',
+      "",
+    ].join("\n"),
+  );
+  assert.deepStrictEqual([].concat(await c.call(TABLES)), ["trade"]);
+  assert.deepStrictEqual(await c.call(SUBSCRIBE, "`trade"), ["trade", ["time", "sym", "px"], "nsf"]);
+  await assert.rejects(c.call(SUBSCRIBE, "`currlog"), /Table currlog not in list of stp pub\/sub tables/);
+});

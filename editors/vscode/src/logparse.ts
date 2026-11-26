@@ -5,7 +5,8 @@
 //   2026.11.07D12:43:29.643228000|host|proctype|procname|ERROR|id|message
 // or, with `-jsonlogs`, `.j.j` of the same fields; and its usage log as
 //   time|id|timer|zcmd|proctype|procname|"status"|ip|user|handle|cmd|...
-// where status "e" is a failed call. Plain q writes what the code prints,
+// where status "e" is a failed call, or with `-jsonlogs` `.j.j` of those
+// fields as `p`..`errorcheck` and `"level":"USAGE"` (logusage.q). Plain q writes what the code prints,
 // so a timestamp and a level word near the start are read where they are,
 // and an error is q's own: `'type` (PeachQ) or `'2026.11.21T20:41:03.930
 // type` (KDB-X), followed by indented backtrace lines. An indented or blank
@@ -131,9 +132,20 @@ export function parseLine(line: string): Parsed {
   if (m !== null) {
     return { kind: "torq-usage", level: m[4] === "e" ? "ERROR" : "INFO", process: m[3], time: timeOf(m[1]), timeSpan: [0, m[1].length] };
   }
-  if (line.startsWith("{") && line.includes('"loglevel"')) {
+  if (line.startsWith("{") && (line.includes('"loglevel"') || line.includes('"level":"USAGE"'))) {
     try {
       const j = JSON.parse(line) as Record<string, unknown>;
+      // A usage log with -jsonlogs: `.j.j` of the `|` form's fields, time
+      // in `p`, the call's status in `type` (#2417).
+      if (j.level === "USAGE") {
+        const time = typeof j.p === "string" ? timeOf(j.p.replace(/Z$/, "")) : undefined;
+        return {
+          kind: "torq-usage",
+          level: j.type === "e" ? "ERROR" : "INFO",
+          ...(typeof j.procname === "string" ? { process: j.procname } : {}),
+          ...(time !== undefined ? { time } : {}),
+        };
+      }
       const level = typeof j.loglevel === "string" ? levelOf(j.loglevel) : undefined;
       const time = typeof j.time === "string" ? timeOf(j.time.replace(/Z$/, "")) : undefined;
       return {
