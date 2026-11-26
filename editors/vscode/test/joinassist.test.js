@@ -102,6 +102,18 @@ test("a comment ending an expression is left out of the operand written (#3047)"
   assert.deepStrictEqual(suggestJoins(commented, ref).map((x) => x.expression), ["(select from trade where sym=`a) lj ref", "(select from trade where sym=`a) ij ref"]);
 });
 
+// Indexed by a column's name a keyed table is looked up by key, and wj
+// takes no keyed table: the whole expression signalled 'type.
+test("wj on a keyed left table unkeys it, and says so (#3046)", () => {
+  const orders = shape("orders", ["id", "sym", "time", "qty"], "jstj", ["id"]);
+  const by = Object.fromEntries(suggestJoins(orders, quote).map((x) => [x.join, x]));
+  assert.strictEqual(by.wj.expression, "((cols (0!orders)),`bid_max`bid_min) xcol wj[-1000 0+\\:(0!orders)`time;`sym`time;(0!orders);(`sym`time xasc quote;(max;`bid);(min;`bid))]");
+  assert.match(by.wj.why, /wj takes no keyed table, so orders is unkeyed \(0!\) and the answer has no key\./);
+  // The joins that keep a key are as they were, and an unkeyed left's wj.
+  assert.strictEqual(by.aj.expression, "aj[`sym`time;orders;`sym`time xasc quote]");
+  assert.doesNotMatch(suggestJoins(trade, quote).find((x) => x.join === "wj").why, /unkeyed/);
+});
+
 test("the switch is declared on, and the command only where it can run", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.query.joinAssistant.enable"].default, true);

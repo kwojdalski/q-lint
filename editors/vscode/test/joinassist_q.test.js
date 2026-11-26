@@ -110,6 +110,21 @@ test("every join suggested with a partitioned table on the left runs", { skip },
   assert.ok(ran >= 4, `${ran} joins run`);
 });
 
+// Indexed by a column's name a keyed table is looked up by key, and wj
+// takes no keyed table: its wj signalled 'type.
+test("every join suggested with a keyed left table runs, wj on it unkeyed (#3046)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "orders:([id:1 2 3] sym:`a`b`a; time:09:00 09:01 09:02t; qty:10 20 30)\n");
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const joins = suggestJoins(await shape("orders"), await shape("quote"));
+  assert.deepStrictEqual(joins.map((s) => s.join), ["lj", "ij", "aj", "wj"]);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+  const wj = await connection.evaluate(`{r:value x;(cols r;\`float$r\`id;r\`bid_max)}${JSON.stringify(joins[3].expression)}`);
+  assert.deepStrictEqual(wj.value, [["id", "sym", "time", "qty", "bid_max", "bid_min"], [1, 2, 3], [10, 12, 11]]);
+});
+
 // `value` reads past a comment, so the shape is read; bracketed with it,
 // the join was refused with '(.
 test("a join of an expression that ends in a comment runs (#3047)", { skip }, async (t) => {

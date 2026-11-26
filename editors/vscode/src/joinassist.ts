@@ -183,15 +183,18 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
     if (second !== undefined && second !== "0") {
       // Each name as symbolLiteral writes it - t`trade time indexes t by
       // `trade - and one not bare indexed in brackets: t[`$"trade time"] (#1845).
+      // A keyed left table is unkeyed: indexed by a column's name it is
+      // looked up by key, and wj refuses it ('type, #3046).
       const t = symbolLiteral(time);
-      const times = t.startsWith("`$") ? `${l}[${t}]` : `${l}${t}`;
+      const wl = left.keys.length > 0 ? `(0!${l})` : l;
+      const times = t.startsWith("`$") ? `${wl}[${t}]` : `${wl}${t}`;
       const aggregates = value === undefined ? `(${sorted};(count;${t}))` : `(${sorted};(max;${symbolLiteral(value)});(min;${symbolLiteral(value)}))`;
-      const window = `wj[-${second} 0+\\:${times};${cs};${l};${aggregates}]`;
+      const window = `wj[-${second} 0+\\:${times};${cs};${wl};${aggregates}]`;
       out.push({
         join: "wj",
         // The max and min would both be named for the column: renamed, so they can be told apart (#1573).
-        expression: value === undefined ? window : `((cols ${l}),${symbols([`${value}_max`, `${value}_min`])}) xcol ${window}`,
-        why: `For each row of ${left.expression.trim()}, ${value === undefined ? "the count of" : `the max and min ${value} of`} the rows of ${right.expression.trim()} in the second up to its ${time}; change the window and the aggregates to suit.${sortWhy}${onDisk(right)}`,
+        expression: value === undefined ? window : `((cols ${wl}),${symbols([`${value}_max`, `${value}_min`])}) xcol ${window}`,
+        why: `For each row of ${left.expression.trim()}, ${value === undefined ? "the count of" : `the max and min ${value} of`} the rows of ${right.expression.trim()} in the second up to its ${time}; change the window and the aggregates to suit.${left.keys.length > 0 ? ` wj takes no keyed table, so ${left.expression.trim()} is unkeyed (0!) and the answer has no key.` : ""}${sortWhy}${onDisk(right)}`,
       });
     }
   }
