@@ -1732,6 +1732,34 @@ fn a_function_assigned_inside_another_ends_no_statement() {
     assert_eq!(changed, json!(["f"]));
 }
 
+/// A name that holds a function without being a lambda calls it all the
+/// same: `al:f`, `h:f each` and both names of `a:b:f` run the changed `f`,
+/// so the tests calling them are reached beside the ones calling a
+/// projection or `f` itself (#2811).
+#[test]
+fn a_test_reaches_a_changed_function_through_a_name_that_is_no_lambda() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "f:{x+1}\nal:f\np:{[a;b] f a+b}[1]\nh:f each\na:b:f\nother:{x}\no:other\n";
+    let tests = "test_alias:{al 1}\ntest_proj:{p 1}\ntest_each:{h 1 2}\ntest_direct:{f 1}\n\
+                 test_a:{a 1}\ntest_b:{b 1}\ntest_other:{o 1}\n";
+    let files = [("lib.q", lib), ("test_lib.q", tests)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let now = lib.replace("x+1", "x+2");
+    let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, &now);
+    assert_eq!(changed, json!(["f"]));
+    assert_eq!(
+        tests,
+        [
+            "test_a",
+            "test_alias",
+            "test_b",
+            "test_direct",
+            "test_each",
+            "test_proj"
+        ]
+    );
+}
+
 /// The edits a `workspace/willRenameFiles` reply makes, as
 /// `(file under dir, line, start, end, new text)`, in order.
 fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {

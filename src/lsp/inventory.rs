@@ -269,10 +269,12 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         .into_iter()
         .cloned()
         .collect();
-    // Who names whom: each name read inside a top-level function's
-    // statement is an edge from that function to it, the name as q
+    // Who names whom: each name read inside a top-level definition's
+    // statement is an edge from that definition to it, the name as q
     // resolves it where the file is loaded, and as written - a bare read
-    // in a lambda is looked up at the root too.
+    // in a lambda is looked up at the root too. Any definition that
+    // carries its statement, as for the call hierarchy: `al:f` and
+    // `h:f each` run `f` whenever the names they define are called (#2811).
     let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     let mut tests: Vec<(String, String, Vec<String>, String)> = vec![];
     for key in sources.keys() {
@@ -280,24 +282,29 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let placement = sources.placement(key);
-        let mut span: Option<(usize, Vec<String>)> = None;
+        // The statements still open at a mention: one, or each name of
+        // `a:b:f`.
+        let mut spans: Vec<(usize, Vec<String>)> = vec![];
         let all = mentions(&text);
         for m in &all {
+            spans.retain(|(end, _)| m.at < *end);
             match &m.definition {
-                Some(_) => {
-                    if let Some(d) = top_level(m) {
-                        span = Some((d.end, sources.names(&text, m, &placement)));
+                Some(d) => {
+                    if (d.start, d.end) != (m.at, m.at + m.len) {
+                        spans.push((d.end, sources.names(&text, m, &placement)));
                     }
                 }
                 None => {
-                    if let Some((end, caller)) = &span
-                        && m.at < *end
-                    {
-                        let spelled = text[m.at..m.at + m.len].to_string();
-                        let mut callees = sources.names(&text, m, &placement);
-                        callees.push(spelled);
-                        for callee in callees {
-                            callers.entry(callee).or_default().extend(caller.clone());
+                    if spans.is_empty() {
+                        continue;
+                    }
+                    let spelled = text[m.at..m.at + m.len].to_string();
+                    let mut callees = sources.names(&text, m, &placement);
+                    callees.push(spelled);
+                    for callee in callees {
+                        let into = callers.entry(callee).or_default();
+                        for (_, caller) in &spans {
+                            into.extend(caller.iter().cloned());
                         }
                     }
                 }

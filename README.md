@@ -989,7 +989,8 @@ and `dynamic` counts the places a name is reached by a value computed at run
 time, which make the list a list of candidates. `testsReaching` compares the
 document's top-level function statements with `previous`, and answers the
 ones that changed, are new or are gone, and every test whose body names one of
-them, or names a function that does, and so on.
+them, or names a global whose statement does - a function, or an `al:f` or
+`h:f each` that holds one - and so on.
 
 `affectedTests` lists the test files that reach a changed file along the
 graph, a changed test among them. Which files changed is the client's to
