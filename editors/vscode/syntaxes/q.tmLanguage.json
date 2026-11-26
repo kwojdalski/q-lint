@@ -32,8 +32,8 @@
     "block-comment": {
       "comment": "q counts a block comment's depth: a lone / inside one opens another, and only the \\ that closes the outermost ends it. The nested include keeps the inner \\ from closing the outer comment and the outer \\ from reading as end-of-script.",
       "name": "comment.block.q",
-      "begin": "^/\\s*$",
-      "end": "^\\\\\\s*$",
+      "begin": "^/[ \\t\\r]*$",
+      "end": "^\\\\[ \\t\\r]*$",
       "beginCaptures": {
         "0": {
           "name": "punctuation.definition.comment.begin.q"
@@ -56,7 +56,7 @@
     "end-of-script": {
       "comment": "A lone backslash outside a block ends the script, and so does an exit, \\\\ - after a q) prompt or before a comment too; q reads nothing after either (#2786).",
       "name": "comment.block.end-of-script.q",
-      "begin": "^(?:\\\\\\s*|(?:q\\))?\\\\\\\\(?:[ \\t].*)?)$",
+      "begin": "^(?:\\\\[ \\t\\r]*|(?:q\\))?\\\\\\\\(?:[ \\t].*)?)$",
       "end": "(?=A)(?!A)",
       "beginCaptures": {
         "0": {
