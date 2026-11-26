@@ -366,3 +366,20 @@ test("a dictionary of a table's rows shows each row's values as q makes them, a 
   assert.deepStrictEqual(cells(table(["s", "t"], syms("x", "y"), syms("p", "q"))), ["`s`t!`x`p", "`s`t!`y`q"]);
   assert.deepStrictEqual(cells(table(["c", "n"], { kind: "chars", attr: 0, v: Buffer.from("ab") }, longs(1, 2))), ['`c`n!("a";1)', '`c`n!("b";2)']);
 });
+
+test("a direct grid ranks dictionaries item by item, and equal (::) cells as one null, as q ranks them (#2575, #2576)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const syms = (...v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const dict = (v) => ({ kind: "dict", sorted: false, k: syms("a", "b"), v });
+  const rank = (q) => gridOfQ(q, 100).rank;
+  // ([] a:((`a`b!1 2);`a`b!(1;`x))): q's iasc is 0 1.
+  const simple = dict({ kind: "vector", t: 7, attr: 0, v: [1n, 2n] });
+  const general = dict({ kind: "list", attr: 0, v: [{ kind: "atom", t: -7, v: 1n }, { kind: "atom", t: -11, v: "x" }] });
+  assert.deepStrictEqual(rank({ kind: "table", attr: 0, cols: ["a"], data: [{ kind: "list", attr: 0, v: [simple, general] }] }), [[0, 1]]);
+  // (::;::): both one null, as GRID ranks them.
+  const nil = { kind: "func", t: 101 };
+  assert.deepStrictEqual(rank({ kind: "list", attr: 0, v: [nil, nil] }), [[-1, -1]]);
+  // A projection the same as another is one value.
+  const p = (n) => ({ kind: "func", t: 104, parts: [{ kind: "func", t: 100, text: "{x+y}" }, { kind: "atom", t: -7, v: BigInt(n) }] });
+  assert.deepStrictEqual(rank({ kind: "list", attr: 0, v: [p(1), p(1), p(2)] }), [[0, 0, 1]]);
+});
