@@ -358,3 +358,20 @@ test("the Process Explorer reads a process again once its evaluation changes, an
   assert.strictEqual(view.message, undefined);
   assert.ok(explorer.rows().some((n) => n.label === "."));
 });
+
+test("the command-line chart queries a process that refuses lambdas with --direct (#2494)", { skip }, async (t) => {
+  const { main } = require("../out/chartcli.js");
+  const taken = new Set();
+  const pm = await startQ(t, PM, taken);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-chart-"));
+  const out = path.join(dir, "x.svg");
+  const said = [];
+  const io = { out: (s) => said.push(s), err: (s) => said.push(s), stdin: () => "" };
+  const args = ["--host", "127.0.0.1", "--port", String(pm), "--query", "select from t", "-o", out];
+  // Wrapped, the process refuses the grid lambda.
+  assert.strictEqual(await main(args, io), 1);
+  assert.match(said.join(""), /pm: no read permission/);
+  assert.strictEqual(await main([...args, "--direct"], io), 0, said.join(""));
+  assert.match(fs.readFileSync(out, "utf8"), /^<svg/);
+  assert.strictEqual(await ask(pm, "1=lambdas"), true);
+});
