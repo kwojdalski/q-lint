@@ -56,7 +56,7 @@ test("a date, month, minute or second x axis ticks whole units, each label once 
   const M = require("../media/chartmore.js");
   const look = { colours: ["#f00", "#0f0"] };
   const g = (type, vals) => ({ columns: [{ name: "d", numeric: false, temporal: true, type }, { name: "px", numeric: true }], cells: [vals.map(String), ["1", "2", "3"].slice(0, vals.length)], values: [vals, [1, 2, 3].slice(0, vals.length)] });
-  const labels = (svg) => [...svg.matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+  const labels = (svg) => [...svg.matchAll(/ y="[\d.]+" text-anchor="\w+" fill[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
   for (const [type, vals] of [[14, [9800, 9801]], [13, [318, 319]], [17, [600, 601]], [18, [36000, 36001]]]) {
     const grid = g(type, vals);
     const ls = labels(C.chartSvg(grid, [0, 1], "scatter", C.chartData(grid, [0, 1], "scatter", [1], 20), look, {}));
@@ -78,7 +78,7 @@ test("a timestamp, timespan or time x axis ticks at least one unit, or one doubl
   const g = (type, vals) => ({ columns: [{ name: "t", numeric: false, temporal: true, type }, { name: "y", numeric: true }], cells: [vals.map(String), vals.map((_, i) => String(i))], values: [vals, vals.map((_, i) => i)] });
   const labels = (grid) => {
     const rows = grid.values[0].map((_, i) => i);
-    return [...C.chartSvg(grid, rows, "scatter", C.chartData(grid, rows, "scatter", [1], 20), { colours: ["#f00"] }, {}).matchAll(/text-anchor="middle"[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
+    return [...C.chartSvg(grid, rows, "scatter", C.chartData(grid, rows, "scatter", [1], 20), { colours: ["#f00"] }, {}).matchAll(/ y="[\d.]+" text-anchor="\w+" fill[^>]*>([^<]*)</g)].map((m) => m[1]).filter((l) => /\d/.test(l));
   };
   // 2024.01.01D12:00:00 and 2 ns later.
   const t0 = 757425600000000000;
@@ -122,4 +122,162 @@ test("a range across zero ticks 0 itself, not the residue of adding the step (#2
       assert.ok(v === 0 || Math.abs(v) > t.step * 1e-6, `${a} ${b}: ${v}`);
     }
   }
+});
+
+test("a year before 1000 is labelled in four digits, as q writes it (#3146)", () => {
+  assert.strictEqual(C.temporalLabel(14, -730119, 1), "0001.01.01");
+  assert.strictEqual(C.temporalLabel(14, -365243, 1), "0999.12.31");
+  assert.strictEqual(C.temporalLabel(13, -23988, 1), "0001.01");
+  assert.strictEqual(C.temporalLabel(15, -730119, 1), "0001.01.01T00:00:00");
+  assert.strictEqual(C.temporalLabel(12, -730119 * 86400e9), "0001.01.01D00:00:00");
+  assert.strictEqual(C.temporalLabel(14, 9820), "2026.11.20");
+});
+
+test("a saved scatter over row numbers ticks whole rows, and a saved histogram whole counts, as on screen (#3142, #3143)", () => {
+  const look = { colours: ["#f00"] };
+  const texts = (svg) => [...svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]);
+  const grid = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }], cells: [["a", "b", "c"], ["1", "3", "2"]], values: [null, [1, 3, 2]] };
+  const scatter = texts(C.chartSvg(grid, [0, 1, 2], "scatter", C.chartData(grid, [0, 1, 2], "scatter", [1], 20), look, {}));
+  assert.deepStrictEqual(scatter.slice(scatter.indexOf("3") + 1, scatter.indexOf("row")), ["0", "1", "2"]);
+  const list = { columns: [{ name: "v", numeric: true, type: 9 }], cells: [["1", "1", "2", "4"]], values: [[1, 1, 2, 4]] };
+  const counts = texts(C.chartSvg(list, [0, 1, 2, 3], "histogram", C.chartData(list, [0, 1, 2, 3], "histogram", [0], 3), look, {}));
+  assert.deepStrictEqual(counts.slice(0, counts.indexOf("1 - 2")), ["0", "1", "2"]);
+});
+
+test("a result with no rows, or only nulls, says so in place of empty axes (#3149)", () => {
+  const g = (vals) => ({ columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }, { name: "w", numeric: true, type: 9 }, { name: "x", numeric: true, type: 9 }, { name: "y", numeric: true, type: 9 }], cells: [vals.map(() => "a")].concat([0, 1, 2, 3].map(() => vals.map(String))), values: [null, vals, vals, vals, vals] });
+  for (const kind of ["line", "area", "step", "bar", "scatter", "histogram", "candlestick"]) {
+    assert.strictEqual(C.chartData(g([]), [], kind, [1], 20).note, "No row to chart.", kind);
+    const nulls = C.chartData(g([null, null]), [0, 1], kind, [1], 20);
+    assert.strictEqual(nulls.note, kind === "candlestick" ? "No row has all four of open, high, low and close." : "Every value is null.", kind);
+    assert.deepStrictEqual(nulls.datasets, []);
+    assert.strictEqual(C.chartData(g([null, 2]), [0, 1], kind, [1], 20).note, undefined, kind);
+  }
+  assert.match(C.chartSvg(g([]), [], "line", C.chartData(g([]), [], "line", [1], 20), { colours: ["#f00"] }, {}), />No row to chart\.</);
+  // A column there is none of is still what is said first.
+  assert.match(C.chartData({ columns: [{ name: "s", numeric: false }], cells: [[]], values: [null] }, [], "line", [], 20).note, /^No numeric column/);
+});
+
+test("candles keep the columns named open, high, low or close when not all four are: the rest take the places left, or the missing one is said (#3125)", () => {
+  const g = (...names) => ({ columns: names.map((name, i) => ({ name, numeric: i > 0, type: i > 0 ? 9 : 19 })), cells: names.map(() => ["1"]), values: names.map((_, i) => (i > 0 ? [1] : null)) });
+  const names = (grid) => { const at = C.ohlcColumns(grid); return at && at.map((c) => grid.columns[c].name).join(","); };
+  // The trade size is no open, and the last price is the close.
+  assert.strictEqual(names(g("time", "size", "open", "high", "low", "lastpx")), "open,high,low,lastpx");
+  assert.strictEqual(names(g("time", "open", "high", "low", "last", "volume")), "open,high,low,last");
+  assert.strictEqual(names(g("time", "first", "high", "low", "close", "volume")), "first,high,low,close");
+  assert.strictEqual(names(g("time", "Open", "close", "hi", "lo")), "Open,hi,lo,close");
+  // Nothing where the close would be: said, not drawn from the size.
+  const none = g("time", "size", "open", "high", "low");
+  assert.strictEqual(C.ohlcColumns(none), null);
+  assert.strictEqual(C.chartData(none, [0], "candlestick", [], 20).note, "A candle chart needs open, high, low and close columns: no column here is the close.");
+  assert.match(C.chartData(g("time", "high", "x", "close"), [0], "candlestick", [], 20).note, /no column here is the open\.$/);
+  // One word of the four places nothing: the first four, as with none.
+  assert.strictEqual(names(g("time", "bid_open", "bid_high", "bid_low", "bid_close", "open")), "bid_open,bid_high,bid_low,bid_close");
+  // As before: all four by name or letter, in any order; no name, the first four.
+  assert.strictEqual(names(g("time", "size", "c", "l", "h", "o")), "o,h,l,c");
+  assert.strictEqual(names(g("time", "a", "b", "c", "d", "e")), "a,b,c,d");
+  assert.match(C.chartData(g("time", "a", "b"), [0], "candlestick", [], 20).note, /four numeric columns after the first\.$/);
+});
+
+test("a table of exactly open, high, low and close draws candles against its row numbers (#3150)", () => {
+  const cols = (...names) => ({ columns: names.map((name) => ({ name, numeric: true, type: 9 })), cells: names.map((_, i) => [String(10 + i), String(20 + i)]), values: names.map((_, i) => [10 + i, 20 + i]) });
+  const g = cols("open", "high", "low", "close");
+  assert.deepStrictEqual(C.ohlcColumns(g), [0, 1, 2, 3]);
+  const data = C.chartData(g, [0, 1], "candlestick", [], 20);
+  assert.strictEqual(data.note, undefined);
+  assert.deepStrictEqual(data.labels, ["0", "1"]);
+  assert.deepStrictEqual(data.datasets.map((d) => d.data[1]), [[22, 21], [20, 23]]);
+  const look = { colours: ["#f00"] };
+  assert.strictEqual(C.chartConfig(g, [0, 1], "candlestick", data, look).options.scales.x.title.text, "row");
+  assert.match(C.chartSvg(g, [0, 1], "candlestick", data, look, {}), />row<\/text>/);
+  // A first column that is none of the four is still the x axis.
+  const timed = cols("n", "close", "open", "low", "high");
+  assert.deepStrictEqual(C.ohlcColumns(timed), [2, 4, 3, 1]);
+  assert.deepStrictEqual(C.chartData(timed, [0, 1], "candlestick", [], 20).labels, ["10", "20"]);
+  assert.strictEqual(C.ohlcColumns(cols("open", "a", "b", "c2")), null, "three columns after the first, and no four names");
+});
+
+test("a value of a million, or under a thousandth, is in plain digits where they are the shorter, and the SVG's margin is as wide as its labels (#3133, #3145)", () => {
+  assert.strictEqual(C.short(1234567.2, 0.2), "1234567.2");
+  assert.strictEqual(C.short(6000000, 2000000), "6000000");
+  assert.strictEqual(C.short(0.0001, 0.0001), "0.0001");
+  assert.strictEqual(C.short(1.0852 - 1.0851, (1.0852 - 1.0851) / 10), "0.0001");
+  assert.strictEqual(C.short(1e12, 2e11), "1.00000e+12", "the exponent form where it is the shorter");
+  assert.strictEqual(C.short(1.5e-9, 0), "1.5e-9");
+  // Labels of 14 characters, at 6.6 px each, right-aligned at the axis.
+  const ids = [123456789012.2, 123456789012.4, 123456789012.9];
+  const g = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "id", numeric: true, type: 9 }], cells: [["a", "b", "c"], ids.map(String)], values: [null, ids] };
+  const svg = C.chartSvg(g, [0, 1, 2], "line", C.chartData(g, [0, 1, 2], "line", [1], 20), { colours: ["#f00"] }, {});
+  const labels = [...svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="end"[^>]*>([^<]*)</g)].map((m) => [Number(m[1]), m[2]]);
+  assert.ok(labels.length > 1 && labels.every(([, t]) => /^1234567890\d\d(\.\d)?$/.test(t)), JSON.stringify(labels));
+  labels.forEach(([x, t]) => assert.ok(x - t.length * 6.6 >= 0, t + " starts at " + (x - t.length * 6.6)));
+  assert.strictEqual(C.yMargin(["0", "10"]), 64, "the margin short labels always had");
+});
+
+test("a saved chart's x labels are as far apart as they are wide, and none passes the image's edge (#3131)", () => {
+  // Where each x label's text runs from and to, at 6.6 px a character.
+  const spans = (svg, W) => [...svg.matchAll(/<text x="([\d.-]+)" y="[\d.]+" text-anchor="(\w+)" fill[^>]*>([^<]*)</g)].filter((m) => /\d\d/.test(m[3])).map((m) => {
+    const w = m[3].length * 6.6;
+    const from = Number(m[1]) - (m[2] === "middle" ? w / 2 : m[2] === "end" ? w : 0);
+    assert.ok(from >= 0 && from + w <= W, m[3] + " runs " + from + " to " + (from + w));
+    return [from, from + w];
+  });
+  const apart = (s) => s.every(([from], i) => i === 0 || from > s[i - 1][1]);
+  const look = { colours: ["#f00"] };
+  // A hundred timestamps a minute apart: labels of 29 characters.
+  const stamps = [...Array(100).keys()].map((i) => "2024.01.01D" + String(9 + Math.floor((30 + i) / 60)).padStart(2, "0") + ":" + String((30 + i) % 60).padStart(2, "0") + ":00.000000000");
+  const g = { columns: [{ name: "time", numeric: false, temporal: true, type: 12 }, { name: "px", numeric: true, type: 9 }], cells: [stamps, stamps.map((_, i) => String(i))], values: [stamps.map((_, i) => 7.5e17 + i * 6e10), stamps.map((_, i) => i)] };
+  const rows = [...stamps.keys()];
+  const line = spans(C.chartSvg(g, rows, "line", C.chartData(g, rows, "line", [1], 20), look, { width: 800, height: 450 }), 800);
+  assert.ok(line.length >= 3 && apart(line), JSON.stringify(line));
+  const scatter = spans(C.chartSvg(g, rows, "scatter", C.chartData(g, rows, "scatter", [1], 20), look, { width: 800, height: 450 }), 800);
+  assert.ok(scatter.length >= 2 && apart(scatter), JSON.stringify(scatter));
+  // Short labels keep a label every 90 pixels, each centred.
+  const few = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }], cells: [["aa", "bb", "cc"], ["1", "3", "2"]], values: [null, [1, 3, 2]] };
+  const svg = C.chartSvg(few, [0, 1, 2], "bar", C.chartData(few, [0, 1, 2], "bar", [1], 20), look, {});
+  assert.deepStrictEqual([...svg.matchAll(/text-anchor="middle" fill[^>]*>([^<]*)</g)].map((m) => m[1]), ["aa", "bb", "cc", "s"]);
+});
+
+test("a saved chart's legend wraps to rows inside the image, the plot giving way to them (#3132)", () => {
+  const names = [...Array(10).keys()].map((i) => "bid_price_level_" + i);
+  const g = { columns: [{ name: "s", numeric: false, type: 11 }].concat(names.map((name) => ({ name, numeric: true, type: 9 }))), cells: [["a", "b"]].concat(names.map(() => ["1", "2"])), values: [null].concat(names.map((_, i) => [i, i + 1])) };
+  const columns = names.map((_, i) => i + 1);
+  const look = { colours: ["#f00", "#0f0"] };
+  const svg = C.chartSvg(g, [0, 1], "line", C.chartData(g, [0, 1], "line", columns, 20), look, { width: 800, height: 450 });
+  const entries = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" fill[^>]*>(bid_price_level_\d)</g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), label: m[3] }));
+  assert.deepStrictEqual(entries.map((e) => e.label), names, "every series is named");
+  entries.forEach((e) => assert.ok(e.x + e.label.length * 6.5 <= 800, e.label + " ends at " + (e.x + e.label.length * 6.5)));
+  assert.deepStrictEqual([...new Set(entries.map((e) => e.y))], [429, 443], "two rows, the last where one row was");
+  const plot = /<rect x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)" fill="none"/.exec(svg);
+  assert.strictEqual(Number(plot[1]) + Number(plot[2]), 450 - 64 - 14, "the plot ends a row higher");
+  // One row is where it was, and no more rows than there is room for.
+  assert.deepStrictEqual(C.legendRows([{ label: "a", colour: "#f00" }, { label: "bb", colour: "#0f0" }], 64, 780, 10), [[{ x: 64, label: "a", colour: "#f00" }, { x: 94.5, label: "bb", colour: "#0f0" }]]);
+  const many = C.legendRows(names.concat(names).map((label) => ({ label, colour: "#f00" })), 64, 780, 2);
+  assert.deepStrictEqual(many.map((row) => row.map((e) => e.label)), [names.slice(0, 5), names.slice(5, 9).concat(["and 11 more"])]);
+  assert.ok(many[1][4].x + "and 11 more".length * 6.5 <= 780 && many[1][4].colour === null);
+  // Entries the items leave out already are counted with them (#3141).
+  assert.deepStrictEqual(C.legendRows([{ label: "a", colour: "#f00" }], 64, 780, 10, 3)[0].map((e) => e.label), ["a", "and 3 more"]);
+  assert.deepStrictEqual(C.legendRows(names.concat(names).map((label) => ({ label, colour: "#f00" })), 64, 780, 2, 3)[1].at(-1).label, "and 14 more");
+});
+
+test("a table keyed by several columns charts its values only, each row named by every key (#3123)", () => {
+  // select avg price by sym, hour from t
+  const g = {
+    columns: [{ name: "sym", numeric: false, key: true, type: 11 }, { name: "hour", numeric: true, key: true, type: 7 }, { name: "price", numeric: true, key: false, type: 9 }],
+    cells: [["a", "a", "b", "b"], ["9", "10", "9", "10"], ["1", "2", "3", "4"]],
+    values: [null, [9, 10, 9, 10], [1, 2, 3, 4]],
+  };
+  const rows = [0, 1, 2, 3];
+  assert.deepStrictEqual(C.chartable(g, "line"), [2]);
+  assert.deepStrictEqual(C.chartable(g, "histogram"), [1, 2], "a histogram counts any column's values");
+  for (const kind of ["line", "bar"]) {
+    const d = C.chartData(g, rows, kind, C.chartable(g, kind), 20);
+    assert.deepStrictEqual(d.labels, ["a 9", "a 10", "b 9", "b 10"]);
+    assert.deepStrictEqual(d.datasets.map((s) => s.label), ["price"]);
+    assert.strictEqual(C.chartConfig(g, rows, kind, d, { colours: ["#f00"] }, "").options.scales.x.title.text, "sym hour");
+    assert.match(C.chartSvg(g, rows, kind, d, { colours: ["#f00"] }, {}), />sym hour<\/text>/);
+  }
+  // One key, or none: the first column alone, as before.
+  const one = { columns: [{ name: "sym", numeric: false, key: true, type: 11 }, { name: "n", numeric: true, key: false, type: 7 }], cells: [["a", "b"], ["1", "2"]], values: [null, [1, 2]] };
+  assert.deepStrictEqual(C.chartData(one, [0, 1], "line", C.chartable(one, "line"), 20).labels, ["a", "b"]);
 });

@@ -169,8 +169,12 @@ function decodeReferences(markup: string): string {
   });
 }
 
-/// A file name for a plot: its kind and when it was drawn.
+/// A file name for a plot: its kind and when it was drawn, in local time
+/// as the q Plots view shows it - in UTC, a plot of the evening was named
+/// for the next day (#3140).
 export function plotFileName(plot: Plot, format: "svg" | "png"): string {
-  const stamp = new Date(plot.at).toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
+  const at = new Date(plot.at);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  const stamp = `${at.getFullYear()}${two(at.getMonth() + 1)}${two(at.getDate())}T${two(at.getHours())}${two(at.getMinutes())}${two(at.getSeconds())}`;
   return `q-plot-${plot.kind}-${stamp}.${format}`;
 }

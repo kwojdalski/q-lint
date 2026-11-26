@@ -133,7 +133,7 @@ test("linked panes share the x axis: the nearest point, the crosshair's reading 
   assert.deepStrictEqual(M.readout(g, d, 1900), { x: "00:00:02.000", values: [{ label: "px", text: "" }, { label: "qty", text: "20" }] });
   assert.deepStrictEqual(M.zoomRange(2500, 1200, 2000), { min: 1200, max: 2500 });
   assert.strictEqual(M.zoomRange(1000, 1005, 2000), null, "a click is no zoom");
-  assert.deepStrictEqual(M.inRange(d.panes[1].data, { min: 1500, max: 3000 }).map((p) => p.x), [2000, 3000]);
+  assert.deepStrictEqual(M.inRange(d.panes[1].data, { min: 1500, max: 3000 }).map((p) => [p.x, p.y]), [[1500, 15], [2000, 20], [3000, 30]]);
   assert.strictEqual(M.xText(g, d, 61000, 1000), "00:01:01");
   const byRow = M.linkedData(grid([["sym", 11, ["a", "b"]], ["px", 9, ["1", "2"]]]), [1, 0], [1]);
   assert.deepStrictEqual(byRow.panes[0].data.map((p) => [p.x, p.row]), [[0, 1], [1, 0]]);
@@ -201,4 +201,132 @@ test("a map coloured by a number with one value has one legend entry, and its po
   // And with no value at all there is nothing to name.
   const none = grid([["lat", 9, ["10"]], ["lon", 9, ["20"]], ["c", 7, [""]]]);
   assert.deepStrictEqual(M.mapData(none, all(none), { size: -1, colour: 2 }, look).legend, []);
+});
+
+test("an FX book's spread is in plain digits, and each SVG's left margin is as wide as its y labels (#3133, #3145)", () => {
+  const fx = grid([["bid", 9, ["1.0851"]], ["bs", 7, ["5"]], ["ask", 9, ["1.0852"]], ["as", 7, ["4"]]]);
+  assert.strictEqual(M.depthTitle(M.depthData(fx, [0])), "mid 1.08515 · spread 0.0001");
+  const ends = (svg) => [...svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="end"[^>]*>([^<]*)</g)].map((m) => [Number(m[1]), m[2]]);
+  // Sizes of 14 characters, and the axis' title up the edge beside them.
+  const book = grid([["bid", 9, ["99"]], ["bs", 9, ["123456789012.5"]], ["ask", 9, ["101"]], ["as", 9, ["123456789012.5"]]]);
+  const depth = ends(M.depthSvg(M.depthData(book, [0]), look, {}));
+  assert.ok(depth.length > 1, JSON.stringify(depth));
+  depth.forEach(([x, t]) => assert.ok(x - t.length * 6.6 >= 20, t + " starts at " + (x - t.length * 6.6)));
+  // Linked panes keep one margin, the widest, so a time is at one x in each.
+  const t = grid([["t", 7, ["1", "2", "3"]], ["a", 9, ["1", "2", "3"]], ["b", 9, ["123456789012.2", "123456789012.4", "123456789012.9"]]]);
+  const linked = M.linkedSvg(t, M.linkedData(t, [0, 1, 2], [1, 2]), look, ["#ff0000", "#00ff00"], {});
+  const margins = [...linked.matchAll(/<clipPath id="[^"]*"><rect x="([\d.]+)"/g)].map((m) => Number(m[1]));
+  assert.strictEqual(margins.length, 2);
+  assert.ok(margins[0] === margins[1] && margins[0] > 64, margins.join(" "));
+});
+
+test("a map's legend of many categories wraps to rows inside the saved image (#3132)", () => {
+  const venues = [...Array(10).keys()].map((i) => "execution_venue_" + i);
+  const g = grid([["lat", 9, venues.map((_, i) => String(i))], ["lon", 9, venues.map((_, i) => String(i))], ["venue", 11, venues]]);
+  const svg = M.mapSvg(M.mapData(g, all(g), { size: -1, colour: 2 }, look), look, { width: 800, height: 400 }, WORLD);
+  const entries = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" fill[^>]*>(execution_venue_\d)</g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), label: m[3] }));
+  assert.deepStrictEqual(entries.map((e) => e.label), venues);
+  entries.forEach((e) => assert.ok(e.x + e.label.length * 6.5 <= 800, e.label + " ends at " + (e.x + e.label.length * 6.5)));
+  assert.strictEqual(new Set(entries.map((e) => e.y)).size, 2);
+});
+
+test("a book is drawn as depth by itself only where its rows are one book; rows of no side are counted (#3124, #3144)", () => {
+  const book = grid([["level", 7, ["1", "2"]], ["bidPx", 9, ["99", "98"]], ["bidSize", 7, ["5", "10"]], ["askPx", 9, ["101", "102"]], ["askSize", 7, ["4", "6"]]]);
+  assert.strictEqual(M.depthByItself(book), true);
+  // Quotes over time: a row a time, not a level.
+  const quotes = [["time", 16, ["1", "2", "3"]], ["bid", 9, ["1.1", "1.2", "1.3"]], ["ask", 9, ["1.2", "1.3", "1.4"]], ["bsize", 7, ["1", "2", "3"]], ["asize", 7, ["3", "2", "1"]]];
+  assert.ok(M.depthColumns(grid(quotes)), "a book by its names, so Depth is offered");
+  assert.strictEqual(M.depthByItself(grid(quotes)), false);
+  assert.strictEqual(M.depthByItself(grid(quotes.slice(1))), false, "crossed: bids up to 1.3, asks from 1.2");
+  assert.strictEqual(M.depthByItself(grid([["x", 9, ["1"]]])), false);
+  // A side that is neither buy nor sell.
+  const sided = (sides) => grid([["side", 11, sides], ["price", 9, ["99", "98", "101", "102"]], ["size", 7, ["10", "20", "30", "40"]]]);
+  assert.strictEqual(M.depthByItself(sided(["B", "B", "S", "S"])), true);
+  for (const sides of [["1b", "1b", "0b", "0b"], ["long", "long", "short", "short"]]) {
+    const g = sided(sides);
+    assert.strictEqual(M.depthByItself(g), false, sides[0]);
+    assert.strictEqual(M.depthData(g, all(g)).note, "The order book is empty: 4 rows have a side that is neither buy nor sell (buy is b, bid or buy; sell is a, s, ask, sell or offer).");
+  }
+  const mixed = sided(["B", "long", "S", "S"]);
+  const d = M.depthData(mixed, all(mixed));
+  assert.deepStrictEqual([d.unsided, d.note, d.datasets.map((s) => s.levels)], [1, undefined, [1, 2]]);
+  assert.strictEqual(M.unsidedText(1), "1 row has a side that is neither buy nor sell");
+  assert.strictEqual(M.depthData(book, all(book)).unsided, 0);
+});
+
+test("a linked pane marks a value with nulls either side with a point, on screen and in its SVG (#3129)", () => {
+  // A price set only on the rows that traded.
+  const g = grid([["t", 7, ["1", "2", "3", "4", "5", "6"]], ["bid", 9, ["1", "2", "3", "4", "5", "6"]], ["price", 9, ["", "", "1.05", "", "", "1.25"]]]);
+  const d = M.linkedData(g, all(g), [1, 2]);
+  const radius = (pane) => {
+    const set = M.linkedConfig(g, d, pane, "#ff0000", look, { range: null }, true).data.datasets[0];
+    return set.data.map((_, i) => set.pointRadius({ dataset: set, dataIndex: i }));
+  };
+  assert.deepStrictEqual(radius(d.panes[1]), [0, 0, 2, 0, 0, 2]);
+  assert.deepStrictEqual(radius(d.panes[0]), [0, 0, 0, 0, 0, 0], "a line's values are its segments");
+  const svg = M.linkedSvg(g, d, look, ["#ff0000", "#00ff00"], {});
+  assert.strictEqual((svg.match(/<circle [^>]*fill="#00ff00"/g) || []).length, 2);
+  assert.strictEqual((svg.match(/<circle [^>]*fill="#ff0000"/g) || []).length, 0);
+  // One row is one point.
+  const one = grid([["t", 7, ["1"]], ["a", 9, ["5"]]]);
+  assert.strictEqual((M.linkedSvg(one, M.linkedData(one, [0], [1]), look, ["#ff0000"], {}).match(/<circle /g) || []).length, 1);
+});
+
+test("the SVG of zoomed linked panes runs each line to the edges of the zoom, as on screen (#3130)", () => {
+  const g = grid([["t", 7, ["0", "10", "20", "30"]], ["a", 9, ["1", "2", "3", "4"]]]);
+  const d = M.linkedData(g, all(g), [1]);
+  const points = (range) => M.inRange(d.panes[0].data, range).map((p) => [p.x, +p.y.toFixed(6)]);
+  assert.deepStrictEqual(points({ min: 5, max: 25 }), [[5, 1.5], [10, 2], [20, 3], [25, 3.5]]);
+  assert.deepStrictEqual(points({ min: 11, max: 29 }), [[11, 2.1], [20, 3], [29, 3.9]]);
+  assert.deepStrictEqual(points({ min: 12, max: 18 }), [[12, 2.2], [18, 2.8]], "between two points: a line on screen");
+  assert.deepStrictEqual(points({ min: 10, max: 20 }), [[10, 2], [20, 3]]);
+  assert.deepStrictEqual(points({ min: 40, max: 50 }), []);
+  // No line is made up across a null.
+  const gaps = grid([["t", 7, ["0", "10", "20", "30"]], ["a", 9, ["1", "", "3", ""]]]);
+  assert.deepStrictEqual(M.inRange(M.linkedData(gaps, all(gaps), [1]).panes[0].data, { min: 5, max: 25 }).map((p) => [p.x, p.y]), [[10, null], [20, 3]]);
+  for (const range of [{ min: 12, max: 18 }, { min: 11, max: 29 }, { min: 5, max: 25 }]) {
+    const svg = M.linkedSvg(g, d, look, ["#ff0000"], { range });
+    assert.ok(!svg.includes("Nothing to chart."), JSON.stringify(range));
+    // From the left edge of the plot to its right one: 64 to 780 of 800.
+    const path = svg.match(/<path d="M([\d.]+) [\d.]+(?: L[\d.]+ [\d.]+)* L([\d.]+) [\d.]+" fill="none" stroke="#ff0000"/);
+    assert.deepStrictEqual(path && [path[1], path[2]], ["64.0", "780.0"], JSON.stringify(range));
+  }
+});
+
+test("a zoom is kept while the panes' points meet it (#3128)", () => {
+  const g = grid([["t", 7, ["9000", "10000", "11000", ""]], ["a", 9, ["1", "2", "", "4"]]]);
+  const d = M.linkedData(g, all(g), [1]);
+  assert.strictEqual(M.zoomOver(d, { min: 1500, max: 3000 }), null);
+  assert.strictEqual(M.zoomOver(d, { min: 10500, max: 12000 }), null, "the point at 11000 has no value");
+  assert.deepStrictEqual(M.zoomOver(d, { min: 9200, max: 9800 }), { min: 9200, max: 9800 }, "between two points: their line crosses it");
+  assert.deepStrictEqual(M.zoomOver(d, { min: 1, max: 9000 }), { min: 1, max: 9000 });
+  assert.strictEqual(M.zoomOver(d, null), null);
+  // Nothing to judge it by: kept, for the rows that come back.
+  assert.deepStrictEqual(M.zoomOver({ panes: [] }, { min: 1, max: 2 }), { min: 1, max: 2 });
+});
+
+test("a map coloured by more values than the theme has colours gives each its own, and its legend counts the ones it leaves out (#3141)", () => {
+  const cities = ["NYC", "LDN", "TKY", "HKG", "SGP", "FRA", "SYD", "CHI"];
+  const places = (names) => grid([["lat", 9, names.map((_, i) => String(i % 90))], ["lon", 9, names.map((_, i) => String(i % 180))], ["city", 11, names]]);
+  const g = places(cities);
+  const d = M.mapData(g, all(g), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual(d.legend.map((e) => e.label), cities);
+  const colours = d.legend.map((e) => e.colour);
+  assert.deepStrictEqual(colours.slice(0, 6), look.colours, "the theme's first");
+  assert.strictEqual(new Set(colours).size, 8, colours.join(" "));
+  assert.ok(colours.every((c) => /^#[0-9a-f]{6}$/.test(c)));
+  assert.deepStrictEqual(d.datasets[0].colours, colours, "a point in its value's colour");
+  assert.strictEqual(d.legendMore, 0);
+  assert.ok(!M.mapSvg(d, look, {}, WORLD).includes(" more<"));
+  // Fifteen values: twelve named, the rest counted; every point its own colour still.
+  const many = places(cities.concat(["a", "b", "c", "d", "e", "f", "g"]));
+  const m = M.mapData(many, all(many), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual([m.legend.length, m.legendMore, new Set(m.datasets[0].colours).size], [12, 3, 15]);
+  assert.ok(M.mapSvg(m, look, {}, WORLD).includes(">and 3 more<"));
+  // More values than there are colours: they are shared, not looked for without end.
+  const names = [...Array(3000).keys()].map(String);
+  const lots = places(names);
+  assert.strictEqual(M.mapData(lots, all(lots), { size: -1, colour: 2 }, look).legendMore, 2988);
+  // No colour column, or a number: no count.
+  assert.strictEqual(M.mapData(g, all(g), { size: -1, colour: -1 }, look).legendMore, 0);
 });

@@ -78,6 +78,12 @@
       return { columns: can };
     }
     const columns = can.filter(function (c) { return chosen.indexOf(c) >= 0; });
+    // Ticked for a kind that draws other columns - a histogram's first -
+    // and none of them is this kind's: every one, as before any is ticked,
+    // not a note that none is ticked beside a ticked box (#3138).
+    if (columns.length === 0 && chosen.length > 0) {
+      return { columns: can };
+    }
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
@@ -1528,7 +1534,11 @@
             counts.bars++;
           }
         } else if (chart && chart.kind === "spark") {
-          const values = LOOK.parseNumbers(raw);
+          // The vector GRID sent (#2465) when it sent one: the cell's text
+          // is `-3!`'s, cut at the process's `\c` width, so a line drawn
+          // from it is of the vector's start only (#3122).
+          const sent = grid.vectors && grid.vectors[ci] ? grid.vectors[ci][r] : null;
+          const values = sent || LOOK.parseNumbers(raw);
           const url = values ? LOOK.sparkUrl(values, d.colour) : null;
           if (url) {
             td.style.backgroundImage = url;
@@ -1537,6 +1547,12 @@
             td.textContent = "";
             td.className += " spark";
             counts.sparks++;
+            // No vector came (a list of integers, or a long one): the line
+            // is of the text, and says so where q cut it.
+            if (!sent && /\.\.\.?$/.test(String(raw).trim())) {
+              td.className += " cut";
+              td.title += "\nThe line is of the first " + values.length + " values only: q cut this cell's text.";
+            }
           }
         }
         const level = heat[ci] && !marked && !filled ? heat[ci][r] : null;
@@ -1701,22 +1717,55 @@
 
   // --- chart
 
+  /// The columns a chart of `kind` can draw: a box each.
+  function chartCan(grid, kind) {
+    return C.chartable(grid, kind === "linked" ? "line" : kind);
+  }
+
+  /// What a picked colour and a preset know column `c` by, of those the
+  /// chart `can` draw: its name, and from the second of one name on its
+  /// place among them too (`x`, `x#2`). By the name alone two series of one
+  /// name were one (#3136), and the first column of a name was meant, even
+  /// one the chart cannot draw - a key of the value's name (#3135).
+  function seriesKey(grid, can, c) {
+    const name = grid.columns[c].name;
+    const nth = can.filter(function (x) { return x < c && grid.columns[x].name === name; }).length;
+    return nth === 0 ? name : name + "#" + (nth + 1);
+  }
+
   /// The colours the chart draws its datasets in: the theme's, in turn, or
   /// the one chosen for a series' column (#1019).
   function seriesColours(grid, datasets, theme) {
+    const can = chartCan(grid, state.kind);
     return datasets.map(function (d, i) {
-      const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
-      return (feature("chartPresets") && name && ownValue(state.colours, name)) || theme.colours[i % theme.colours.length];
+      const key = d.column !== undefined && grid.columns[d.column] ? seriesKey(grid, can, d.column) : null;
+      return (feature("chartPresets") && key && ownValue(state.colours, key)) || theme.colours[i % theme.colours.length];
     });
   }
 
+  /// The kinds only some results offer, found by their columns.
+  const OWN_KINDS = ["depth", "map"];
+
+  /// Set the chart's kind. `state.usual` keeps the last one every result
+  /// offers, for the result after one drawn as depth or as a map (#3137).
+  function setKind(kind) {
+    [state.kind, kind].forEach(function (k) {
+      if (OWN_KINDS.indexOf(k) < 0) {
+        state.usual = k;
+      }
+    });
+    state.kind = kind;
+  }
+
   /// The chart drawn, as a preset a saved query keeps (#1019): its kind,
-  /// series, right axis, bins, colours and map columns, by name.
-  function currentPreset(picked) {
+  /// series, right axis, bins, colours and map columns, by name - a
+  /// series by its seriesKey() among the columns it `can` draw.
+  function currentPreset(can, picked) {
     const grid = result.grid;
     const name = function (c) { return c >= 0 && grid.columns[c] ? grid.columns[c].name : undefined; };
+    const key = function (c) { return seriesKey(grid, can, c); };
     // A depth chart and a map find their own columns.
-    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
+    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(key);
     const colours = {};
     series.forEach(function (n) {
       if (ownValue(state.colours, n)) {
@@ -1725,7 +1774,7 @@
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
     if (picked.indexOf(state.y2) >= 0) {
-      out.y2 = name(state.y2);
+      out.y2 = key(state.y2);
     }
     if (state.kind === "map") {
       if (name(state.mapSize)) {
@@ -1742,10 +1791,19 @@
   /// series by name.
   function applyPreset(grid, preset) {
     const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
+    // A series is one of the columns the kind can draw (#3135).
+    const can = chartCan(grid, preset.kind);
+    const drawn = function (k) {
+      const c = can.find(function (x) { return seriesKey(grid, can, x) === k; });
+      return c === undefined ? -1 : c;
+    };
     state.view = "chart";
-    state.kind = preset.kind;
-    state.columns = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
-    state.y2 = preset.y2 ? at(preset.y2) : -1;
+    setKind(preset.kind);
+    // No series - a depth chart and a map keep none - is the kind's own
+    // choice of columns, not every box unticked (#3134).
+    const series = (preset.series || []).map(drawn).filter(function (i) { return i >= 0; });
+    state.columns = series.length > 0 ? series : null;
+    state.y2 = preset.y2 ? drawn(preset.y2) : -1;
     if (preset.bins) {
       state.bins = preset.bins;
     }
@@ -1793,7 +1851,9 @@
     kind.setAttribute("aria-label", "Chart kind");
     const KINDS = kinds();
     if (KINDS.indexOf(state.kind) < 0) {
-      state.kind = "line";
+      // Not a kind this result offers - depth, after a book: the kind
+      // chosen before it, not Line whatever that was (#3137).
+      state.kind = KINDS.indexOf(state.usual) >= 0 ? state.usual : "line";
     }
     KINDS.forEach(function (k) {
       const o = el("option", "", KIND_NAMES[k] || k[0].toUpperCase() + k.slice(1));
@@ -1802,14 +1862,14 @@
       kind.append(o);
     });
     kind.addEventListener("change", function () {
-      state.kind = kind.value;
+      setKind(kind.value);
       save();
       drawChart();
     });
     controls.append(kind);
     // A depth chart and a map find their columns by name.
     const own = state.kind === "depth" || state.kind === "map";
-    const can = C.chartable(grid, state.kind === "linked" ? "line" : state.kind);
+    const can = chartCan(grid, state.kind);
     const chosen = chartColumns(can, state.columns);
     const picked = chosen.columns;
     // A candle chart's columns are its open, high, low and close.
@@ -1828,12 +1888,13 @@
       if (feature("chartPresets") && box.checked) {
         // A series' own colour, kept with a chart preset.
         const name = grid.columns[c].name;
+        const key = seriesKey(grid, can, c);
         const colour = el("input", "swatch");
         colour.type = "color";
         colour.title = "The colour of " + name;
-        colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.value = ownValue(state.colours, key) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
-          setOwn(state.colours, name, colour.value);
+          setOwn(state.colours, key, colour.value);
           save();
           drawChart();
         });
@@ -1896,12 +1957,14 @@
       label.append(y2);
       controls.append(label);
     }
+    const saves = [];
     if (feature("charts")) {
       ["png", "svg"].forEach(function (format) {
         const b = el("button", "", "Save " + format.toUpperCase());
         b.title = "Save the chart as a " + format.toUpperCase() + " file";
         b.addEventListener("click", function () { sendImage(format); });
         controls.append(b);
+        saves.push(b);
       });
     }
     if (feature("chartPresets")) {
@@ -1910,7 +1973,7 @@
         ? "Keep this chart with the saved query " + result.saved + ", to draw again when it runs"
         : "Save this result's query to Saved Queries with this chart, to draw again when it runs";
       keep.addEventListener("click", function () {
-        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(picked) });
+        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(can, picked) });
       });
       controls.append(keep);
     }
@@ -1931,6 +1994,10 @@
         summary.cut = true;
         chartView.append(el("p", "note", "The process cut a list of this book at its console width (\\c): only the levels before the cut are drawn."));
       }
+      if (data.unsided) {
+        summary.unsided = data.unsided;
+        chartView.append(el("p", "note", MORE.unsidedText(data.unsided) + ": left out of the book."));
+      }
     } else if (state.kind === "map") {
       data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);
       summary = C.summary("map", data);
@@ -1940,6 +2007,8 @@
       }
     } else if (state.kind === "linked") {
       data = chosen.note ? { x: -1, panes: [], note: chosen.note } : MORE.linkedData(grid, rows, picked);
+      // A zoom the points have moved out of is dropped (#3128).
+      state.zoom = MORE.zoomOver(data, state.zoom);
       summary = { kind: "linked", datasets: data.panes.map(function (p) { return { label: p.label, points: p.data.length }; }) };
       if (data.note) {
         summary.note = data.note;
@@ -1951,12 +2020,17 @@
         summary.y2 = grid.columns[y2].name;
       }
     }
-    const preset = feature("chartPresets") ? currentPreset(picked) : undefined;
+    const preset = feature("chartPresets") ? currentPreset(can, picked) : undefined;
     drawnChart = null;
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
       summary.note = note;
+      // No chart: nothing to save, which the buttons did without a word (#3139).
+      saves.forEach(function (b) {
+        b.disabled = true;
+        b.title = "No chart is drawn, so there is nothing to save";
+      });
       rendered({ chart: summary, preset: preset });
       return;
     }
@@ -2261,7 +2335,7 @@
 
   /// What is kept of a result's page when another is chosen from the tabs.
   /// Its chart kind, bins and Compare too, so it is drawn as it was (#1638).
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "bins", "compare"];
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "usual", "bins", "compare"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -2297,9 +2371,13 @@
           state.mapSize = -1;
           state.mapColour = -1;
           state.zoom = null;
-          // An order book is drawn as its depth (#1016) when its columns fit.
-          if ((!m.features || m.features.depthChart !== false) && MORE.depthColumns(m.grid)) {
-            state.kind = "depth";
+          // An order book is drawn as its depth (#1016) when its columns fit
+          // and its rows are one book, not a history (#3124) - which the
+          // depth of the book before it is not carried on to either.
+          if ((!m.features || m.features.depthChart !== false) && MORE.depthByItself(m.grid)) {
+            setKind("depth");
+          } else if (state.kind === "depth") {
+            state.kind = state.usual || "line";
           }
         }
         state.view = m.view;

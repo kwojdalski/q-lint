@@ -323,6 +323,9 @@ test("the panel's chart draws the columns ticked, told apart by place, not name"
   assert.deepStrictEqual(none.columns, []);
   assert.match(none.note, /No column is ticked/);
   assert.doesNotMatch(none.note, /No numeric column/);
+  // Ticked for another kind, a histogram's first column, which this kind
+  // does not draw: every column it can (#3138).
+  assert.deepStrictEqual(panel.chartColumns([1, 2], [0]), { columns: [1, 2] });
 });
 
 test("a histogram bins every series over one range", () => {

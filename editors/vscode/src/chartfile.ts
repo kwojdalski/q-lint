@@ -19,7 +19,7 @@ import { readDelimited } from "./pastetable";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const charts = require("../media/chartspec.js") as {
   chartable: (grid: Grid, kind: string) => number[];
-  chartData: (grid: Grid, rows: number[], kind: string, columns: number[], bins: number) => { datasets: { column: number }[]; note?: string };
+  chartData: (grid: Grid, rows: number[], kind: string, columns: number[], bins: number, ohlc?: number[]) => { datasets: { column: number }[]; note?: string };
   chartSvg: (grid: Grid, rows: number[], kind: string, data: unknown, look: unknown, opts: unknown) => string;
   BINS: number;
 };
@@ -32,11 +32,18 @@ export type ChartKind = (typeof CHART_KINDS)[number];
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 const isNumber = (s: string) => DECIMAL.test(s.trim()) && Number.isFinite(Number(s));
 
+/// An infinity or a null as q's `csv 0:` writes one among numbers (`0w`,
+/// `-0w`, `0W`, `-0W`, `0n`, `0N`), or as other tools do (`inf`, `nan`):
+/// no value to plot, and no reason to read its column as text (#3127).
+const GAP = /^([+-]?0w|0n|[+-]?inf|nan)$/i;
+const isGap = (s: string) => GAP.test(s.trim());
+
 /// A grid of named columns of text cells: numeric where every non-empty
-/// cell is a number, and `numbers` (by column) does not say it holds none.
+/// cell is a number or a gap among them, and `numbers` (by column) does
+/// not say it holds none.
 export function gridOf(names: string[], cells: string[][], numbers?: boolean[]): Grid {
   const columns: Column[] = names.map((name, i) => {
-    const numeric = (numbers?.[i] ?? true) && cells[i].some((c) => c.trim() !== "") && cells[i].every((c) => c.trim() === "" || isNumber(c));
+    const numeric = (numbers?.[i] ?? true) && cells[i].some(isNumber) && cells[i].every((c) => c.trim() === "" || isNumber(c) || isGap(c));
     return { name, type: numeric ? 9 : 11, typeName: numeric ? "float" : "symbol", key: false, numeric, temporal: false };
   });
   return {
@@ -135,7 +142,8 @@ export const LIGHT = {
 export interface ChartOptions {
   kind: ChartKind;
   /// Columns to plot, by name; all the numeric ones (not the first) when
-  /// none.
+  /// none. A candlestick's are four: its open, high, low and close, in
+  /// that order (#3126).
   y?: string[];
   /// The column on the x axis, by name; the first when none.
   x?: string;
@@ -163,6 +171,7 @@ export function chartFromGrid(source: Grid, options: ChartOptions): string {
   const rows = [...Array(grid.cells[0]?.length ?? 0).keys()];
   const can = charts.chartable(grid, options.kind);
   let columns = can;
+  let ohlc: number[] | undefined;
   if (options.y !== undefined && options.y.length > 0) {
     columns = options.y.map((name) => {
       const at = grid.columns.findIndex((c) => c.name === name);
@@ -170,8 +179,14 @@ export function chartFromGrid(source: Grid, options: ChartOptions): string {
       if (!can.includes(at)) throw new Error(`column ${name} is not numeric, or is the x axis`);
       return at;
     });
+    if (options.kind === "candlestick") {
+      // The columns named are the candles, not the ones the chart would
+      // find by itself (#3126).
+      if (columns.length !== 4) throw new Error(`a candlestick takes four columns, its open, high, low and close in that order: ${columns.length} given`);
+      ohlc = columns;
+    }
   }
-  const data = charts.chartData(grid, rows, options.kind, columns, charts.BINS);
+  const data = charts.chartData(grid, rows, options.kind, columns, charts.BINS, ohlc);
   return charts.chartSvg(grid, rows, options.kind, data, LIGHT, {
     width: options.width ?? 800,
     height: options.height ?? 450,
