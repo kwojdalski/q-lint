@@ -522,6 +522,36 @@ test("in a workspace not trusted, a launch with no working directory starts in t
   assert.ok(output("rdb").includes(`[the workspace is not trusted: started in ${home}, not in ${ws}]`), output("rdb"));
 });
 
+test("a working directory that does not exist is what the error names, and ${workspaceFolder} before one is the folder (#3104)", async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-")));
+  fs.mkdirSync(path.join(dir, "torq"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  fs.writeFileSync(path.join(dir, "file"), "");
+  const fake = { command: process.execPath, script: path.join(dir, "fake.js") };
+  const [a, b] = [await freePort(), await freePort()];
+  const { launcher, output } = await setUp(t, [proc("gone", a, { ...fake, cwd: path.join(dir, "renamed") }), proc("file", a, { ...fake, cwd: path.join(dir, "file") }), proc("var", b, { ...fake, cwd: "${workspaceFolder}/torq" })]);
+  const vscode = require("vscode");
+  const folders = vscode.workspace.workspaceFolders;
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(dir), name: "ws", index: 0 }];
+  t.after(() => (vscode.workspace.workspaceFolders = folders));
+  await stub.commands.get(LAUNCH_COMMANDS.start)("gone");
+  await stub.commands.get(LAUNCH_COMMANDS.start)("file");
+  assert.deepStrictEqual(stub.messages, [
+    ["error", `q-lint: gone's working directory ${path.join(dir, "renamed")} does not exist; it was not started.`],
+    ["error", `q-lint: file's working directory ${path.join(dir, "file")} is not a directory; it was not started.`],
+  ]);
+  assert.deepStrictEqual([launcher.running(), output("gone")], [[], ""]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("var");
+  await until(() => output("var").includes("listening"), "listening in var's output");
+  assert.match(output("var"), new RegExp(`listening on ${b} in ${path.join(dir, "torq")} A=`));
+  // As data: the folder alone, and only where it starts the path.
+  const cwd = (text, ...folder) => launchPlan(proc("v", 1, { cwd: text }), "q", folder.length > 0 ? folder[0] : "/w", "/home/me");
+  assert.deepStrictEqual([cwd("${workspaceFolder}").cwd, cwd("${workspaceFolder}/a/b").cwd, cwd("/x/${workspaceFolder}").cwd], ["/w", "/w/a/b", "/x/${workspaceFolder}"]);
+  assert.match(cwd("${workspaceFolder}/torq", undefined).error, /is relative, and there is no workspace folder/);
+  // Not trusted, it is the folder still: not started there (#1527).
+  assert.strictEqual(fromWorkspace({ cwd: "${workspaceFolder}/torq" }, "/home/me"), true);
+});
+
 test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {
   const port = await freePort();
   const { launcher, output } = await setUp(t, [proc("gone", port, { command: path.join(os.tmpdir(), "no-such-q-1679") })]);

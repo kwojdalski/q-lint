@@ -124,10 +124,16 @@ export interface Plan {
 /// user's q (#1527), or the repository's program (#1714).
 export function fromWorkspace(launch: Launch, home: string = os.homedir()): boolean {
   if (launch.cwd !== undefined) {
-    return scriptPath(launch.cwd, home, undefined) === undefined;
+    return scriptPath(inFolder(launch.cwd), home, undefined) === undefined;
   }
   const relative = (file: string | undefined): boolean => file !== undefined && scriptPath(file, home, undefined) === undefined;
   return relative(launch.script) || (/[\\/]/.test(launch.command ?? "") && relative(launch.command));
+}
+
+/// `cwd` without a `${workspaceFolder}` it starts with: relative, which is
+/// from the folder.
+function inFolder(cwd: string): string {
+  return /^\$\{workspaceFolder\}([\\/]|$)/.test(cwd) ? `.${cwd.slice("${workspaceFolder}".length)}` : cwd;
 }
 
 /// What starting `process` runs: its command (else `qBinary`), its script,
@@ -158,7 +164,10 @@ export function launchPlan(
   if (ipv6(bare(process.host)) === "::1") {
     return { error: `${process.label} is at ::1, and q listens on IPv4 only: give it the host 127.0.0.1 or localhost to start it here.` };
   }
-  const cwd = launch.cwd !== undefined ? scriptPath(launch.cwd, home, folder) : (folder ?? home);
+  // `${workspaceFolder}` before a cwd, as a task writes the folder, is where
+  // a relative one is from already; read as text, it was a directory of
+  // that name in the folder (#3104).
+  const cwd = launch.cwd !== undefined ? scriptPath(inFolder(launch.cwd), home, folder) : (folder ?? home);
   if (cwd === undefined) {
     return { error: `${process.label}'s working directory ${launch.cwd} is relative, and there is no workspace folder.` };
   }

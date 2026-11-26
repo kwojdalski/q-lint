@@ -3,6 +3,7 @@
 // own, and stopped when VS Code closes. What is started is `launcher.ts`'s;
 // only a process the user gave a definition, and asked to start, is.
 import { spawn, type ChildProcess } from "node:child_process";
+import { stat } from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
 import { commands, window, workspace, type ExtensionContext, type OutputChannel } from "vscode";
@@ -208,6 +209,16 @@ export class Launcher {
     const plan = launchPlan(process, binary, trusted ? first?.fsPath : undefined);
     if ("error" in plan) {
       return plan.error;
+    }
+    // A working directory that is none - a folder renamed, another
+    // machine's path - fails the spawn with ENOENT for the program, which
+    // exists (#3104).
+    const there = await stat(plan.cwd).then(
+      (s) => (s.isDirectory() ? undefined : "is not a directory"),
+      () => "does not exist",
+    );
+    if (there !== undefined) {
+      return `${process.label}'s working directory ${plan.cwd} ${there}; it was not started.`;
     }
     // A process already on the port would make this one fail to listen.
     if (await listening(process.port, process.host)) {
