@@ -355,6 +355,8 @@ test("statements that switch the context are strings valued one by one, each in 
   assert.strictEqual(gatewayStatement(["\\d .x", "f 1"], ["hdb"]), '.gw.syncexec["last value each (\\"system \\\\\\"d .x\\\\\\"\\";\\"f 1\\")";enlist `hdb]');
   // The call is still one string with its types, so it is read back.
   assert.deepStrictEqual(gatewayParts(gatewayStatement(["\\d .x", "f 1"], ["hdb"])), { query: 'last value each ("system \\"d .x\\"";"f 1")', types: ["hdb"] });
+  // A switch beside other code on its line is one too (#2916).
+  assert.strictEqual(joined(['a:1;system "d .x"', "f:{x}"]), 'last value each ("a:1;system \\"d .x\\"";"f:{x}")');
   // One statement, and statements that switch no context, go as they did.
   assert.strictEqual(joined(["\\d .x"]), 'system "d .x"');
   assert.strictEqual(joined(["a:1", "\\c 20 200", "a"]), 'a:1\n ;system "c 20 200"\n ;a');

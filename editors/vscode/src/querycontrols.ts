@@ -31,7 +31,7 @@ import { QError, type DirectMode } from "./qclient";
 import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
-import { contextSwitch } from "./statements";
+import { contextLeft } from "./statements";
 import { SHARED_SOURCE } from "./discovery";
 import { isGatewayCall } from "./gateway";
 import { qString, stringLiteral } from "./qliteral";
@@ -291,7 +291,7 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
   for (const statement of statements) {
     try {
       last = await connection.evaluate(inContextText(statement, context));
-      context = contextSwitch(statement) ?? context;
+      context = contextLeft(statement) ?? context;
     } catch (error) {
       if (error instanceof QError) {
         return { ok: false, error: error.message };

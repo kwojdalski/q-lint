@@ -15,7 +15,7 @@
 // what a lambda around it would answer is discarded: a gateway call is sent
 // as a plain string, never inside q-lint's lambda (#2584).
 import { qString } from "./qliteral";
-import { contextSwitch, lineKinds, statements, trimBlanks } from "./statements";
+import { contextLeft, contextSwitch, lineKinds, statements, trimBlanks } from "./statements";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -63,7 +63,7 @@ export function symbols(types: string[]): string {
 /// of a function beside it failed, or found the root's (#3057).
 export function joined(statements: string[]): string {
   const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : s));
-  return each.length > 1 && statements.some((s) => contextSwitch(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
+  return each.length > 1 && statements.some((s) => contextLeft(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
 }
 
 /// The one statement that runs `statements` through the gateway on a server

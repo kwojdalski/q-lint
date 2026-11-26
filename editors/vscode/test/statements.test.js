@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextSwitch, inContext } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextLeft, contextSwitch, inContext } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -133,6 +133,38 @@ test("a \\d with a trailing comment, or after q), switches the context as q does
   assert.strictEqual(contextAfter("q)\\d .a\nf:1"), ".a");
   // A slash with no blank before it is no comment: not a name.
   assert.strictEqual(contextSwitch("\\d .a/b"), undefined);
+});
+
+// Each of these switches the context on KDB-X, and was read as switching
+// none: the cell, REPL entry or statement after it ran in the root.
+test("system[\"d .ns\"], a switch beside other code on its line, and a name that starts with a digit switch the context (#2916)", () => {
+  assert.strictEqual(contextSwitch('system["d .ns"]'), ".ns");
+  assert.strictEqual(contextSwitch('system[ "d .ns" ] / the library\'s'), ".ns");
+  assert.strictEqual(contextSwitch("\\d .1a"), ".1a");
+  assert.strictEqual(contextSwitch("\\d .a._b / c"), ".a._b");
+  assert.strictEqual(contextSwitch('system "d ._a"'), "._a");
+  // Beside other code it is no switch alone, and leaves its context.
+  for (const [statement, left] of [
+    ['a:1;system "d .ns"', ".ns"],
+    ['system "d .ns";a:1', ".ns"],
+    ['r:system "d .ns" / kept', ".ns"],
+    ['system "d .a";system["d .b"]', ".b"],
+    ['system "d .a";system "d ."', "."],
+    ['a:1;\n system "d .m"\n/ system "d .c"\n ;b:2', ".m"],
+  ]) {
+    assert.strictEqual(contextSwitch(statement), undefined, statement);
+    assert.strictEqual(contextLeft(statement), left, statement);
+  }
+  // Not one that may not run, is computed, or is no code.
+  for (const none of ['f:{system "d .x"}', 'if[c;system "d .x"]', 'system "d .x",y', 's:"system \\"d .x\\""', 'a:1 / system "d .x"', 'mysystem "d .x"', '`system "d .x"', 'system "d foo"', '\\echo system "d .x"']) {
+    assert.strictEqual(contextLeft(none), undefined, none);
+  }
+  assert.strictEqual(contextLeft("\\d .a"), ".a");
+  assert.strictEqual(contextAfter('a:1;system "d .ns"\nf:{x+1}'), ".ns");
+  assert.strictEqual(contextAfter('system["d .nt"]\ng:{x+2}', ".ns"), ".nt");
+  assert.strictEqual(contextAfter("\\d .1a\nf:1"), ".1a");
+  // A definition under one is named in it.
+  assert.deepStrictEqual(definitions('f:{x}\na:1;system "d .ns"\ng:{x}\nsystem["d .1a"]\nh:{x}\n').map((d) => d.name), ["f", ".ns.g", ".1a.h"]);
 });
 
 test("the lines above tell whether a line is commented out, or starts inside a string (#2910)", () => {

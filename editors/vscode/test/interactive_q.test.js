@@ -127,6 +127,25 @@ test("cells and REPL entries run in the \\d the text before them left, as \\l an
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
 });
 
+// `\l` of the same file defines .ns.f and .nt.g: the cells defined both in
+// the root, where each `system` switch was read as none (#2916).
+test("a cell runs in the context a system[\"d .ns\"], or one beside other code, left above it (#2916)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { interactive, repl, editor } = await setUp(t, q.port);
+  editor('/ %% setup\na:1;system "d .ns"\n/ %% define\nf:{x+1}\n/ %% setup2\nsystem["d .nt"]\n/ %% define2\ng:{x+2}\n/ %% setup3\n\\d .1a\n/ %% define3\nh:{x+3}');
+  await stub.commands.get(C.runAllCells)();
+  assert.deepStrictEqual(interactive.entries().map((e) => e.ok), [true, true, true, true, true, true]);
+  assert.strictEqual(await repl.enter("(.ns.f 1;@[value;`f;`undefined];.nt.g 1;@[value;`g;`undefined];(` sv `.1a`h) 1;@[value;`h;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined", "3", "`undefined", "4", "`undefined"]);
+  // The REPL keeps one typed so, as q's console does.
+  assert.strictEqual(await repl.enter('b:2;system "d .zz7"'), "ran");
+  assert.strictEqual(await repl.enter("dd:4"), "ran");
+  assert.strictEqual(await repl.enter('system["d ."]'), "ran");
+  assert.strictEqual(await repl.enter("(.zz7.dd;@[value;`dd;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
+});
+
 test("code Smart Send gives the REPL runs as the editor has it, a block comment in a lambda no code (#2284)", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());

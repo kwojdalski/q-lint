@@ -299,19 +299,72 @@ export function statements(text: string): string[] {
   return statementSpans(text).map((s) => s.text);
 }
 
-// After any `q)` prompts, and before a trailing comment, as q reads it (#2785).
-const CONTEXT = /^(?:q\))*\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)(?:[ \t]+\/.*)?\s*$/;
+// After any `q)` prompts, and before a trailing comment, as q reads it
+// (#2785). A context's name may start with a digit or an underscore, at any
+// level: KDB-X switches to `.1a` and `.a._b` (#2916).
+const CONTEXT = /^(?:q\))*\\d\s+(\.\w+(?:\.\w+)*|\.)(?:[ \t]+\/.*)?\s*$/;
 // `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
-// language server reads it (#261); a computed one leaves the context as it was.
-const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
+// language server reads it (#261), in brackets too, `system["d .ns"]`; a
+// computed one leaves the context as it was.
+const SYSTEM_D = /system[ \t]*(?:"d[ \t]+(\.\w+(?:\.\w+)*|\.)[ \t]*"|\[[ \t]*"d[ \t]+(\.\w+(?:\.\w+)*|\.)[ \t]*"[ \t]*\])/y;
+
+/// The literal `system "d .ns"` call that starts at `at` of `text`: the
+/// context it names, and where the call ends.
+function systemContext(text: string, at: number): { context: string; end: number } | undefined {
+  SYSTEM_D.lastIndex = at;
+  const m = SYSTEM_D.exec(text);
+  return m === null ? undefined : { context: m[1] ?? m[2], end: SYSTEM_D.lastIndex };
+}
 
 /// The context `statement` switches to - `.ns`, or `.` for the root - when
-/// it is a `\d` line or a `system "d .ns"` with a literal name.
+/// it is a `\d` line or a `system "d .ns"` with a literal name, and nothing
+/// else.
 export function contextSwitch(statement: string): string | undefined {
   if (statement.includes("\n")) {
     return undefined;
   }
-  return (CONTEXT.exec(statement.trim()) ?? SYSTEM_CONTEXT.exec(statement.trim()))?.[1];
+  const line = statement.trim();
+  const call = systemContext(line, 0);
+  return CONTEXT.exec(line)?.[1] ?? (call !== undefined && /^\s*;?\s*(?:\s\/.*)?$/.test(line.slice(call.end)) ? call.context : undefined);
+}
+
+/// The context running `statement` leaves q in, when it switches one: a
+/// `contextSwitch`, or the last literal `system "d .ns"` among the
+/// expressions `;` separates at its top level, as `a:1;system "d .ns"`
+/// (#2916). Not one in a lambda or a bracket, which may not run, nor in a
+/// string or a comment.
+export function contextLeft(statement: string): string | undefined {
+  const whole = contextSwitch(statement);
+  if (whole !== undefined || statement.startsWith("\\")) {
+    return whole;
+  }
+  let left: string | undefined;
+  let depth = 0;
+  for (let i = 0; i < statement.length; i++) {
+    const c = statement[i];
+    const before = statement[i - 1] ?? "\n";
+    if (c === '"') {
+      for (i++; i < statement.length && statement[i] !== '"'; i++) {
+        i += statement[i] === "\\" ? 1 : 0;
+      }
+    } else if (c === "/" && (before === " " || before === "\t" || before === "\n")) {
+      // A comment, to its line's end.
+      const end = statement.indexOf("\n", i);
+      i = end < 0 ? statement.length : end;
+    } else if (c === "(" || c === "[" || c === "{") {
+      depth++;
+    } else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+    } else if (depth === 0 && c === "s" && !/[\w.`]/.test(before)) {
+      const call = systemContext(statement, i);
+      if (call !== undefined) {
+        // `system "d .a",x` is a computed one.
+        left = /^[ \t]*(?:;|\n|$|[ \t]\/)/.test(statement.slice(call.end)) ? call.context : left;
+        i = call.end - 1;
+      }
+    }
+  }
+  return left;
 }
 
 /// The context running `code` leaves, started in `context`: q's console
@@ -319,7 +372,7 @@ export function contextSwitch(statement: string): string | undefined {
 /// after it, where a query is read afresh in the root (#2286).
 export function contextAfter(code: string, context = "."): string {
   for (const statement of statements(code)) {
-    context = contextSwitch(statement) ?? context;
+    context = contextLeft(statement) ?? context;
   }
   return context;
 }
