@@ -251,6 +251,7 @@ struct Read<'a> {
     mentions: Vec<Mention>,
     placement: Placement,
     holders: Vec<Holder>,
+    chains: HashMap<usize, Vec<usize>>,
 }
 
 /// A top-level definition that carries its statement, for `Read::home`: the
@@ -308,6 +309,38 @@ fn holders(mentions: &[Mention]) -> Vec<Holder> {
     out
 }
 
+/// The names one statement gives one value, `a:b:{f[]}`: each holder that
+/// is all another is assigned, by its place in `mentions`, with every name
+/// of its chain in the order written. What the lambda reads is read by `a`
+/// as much as by `b` - they are one function (#2954) - where two names a
+/// statement assigns apart, `if[c; a:{f[]}; b:{g[]}]`, each read their own.
+fn chains(holders: &[Holder], mentions: &[Mention], text: &str) -> HashMap<usize, Vec<usize>> {
+    let mut out: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut chain: Vec<&Holder> = vec![];
+    let mut close = |chain: &mut Vec<&Holder>| {
+        if chain.len() > 1 {
+            let all: Vec<usize> = chain.iter().map(|h| h.mention).collect();
+            out.extend(all.iter().map(|&i| (i, all.clone())));
+        }
+        chain.clear();
+    };
+    let mut named: Vec<&Holder> = holders.iter().collect();
+    named.sort_by_key(|h| (h.at, h.mention));
+    for h in named {
+        let follows = chain.last().is_some_and(|last| {
+            let between = text.get(last.at + mentions[last.mention].len..h.at);
+            (last.start, last.end) == (h.start, h.end)
+                && between.is_some_and(|between| matches!(between.trim(), ":" | "::"))
+        });
+        if !follows {
+            close(&mut chain);
+        }
+        chain.push(h);
+    }
+    close(&mut chain);
+    out
+}
+
 impl<'a> Read<'a> {
     /// The indexed file `key`, when `wanted` of its text - which is how a
     /// file that does not spell a name at all is left unparsed.
@@ -320,8 +353,10 @@ impl<'a> Read<'a> {
             return None;
         }
         let mentions = mentions(&text);
+        let holders = holders(&mentions);
         Some(Read {
-            holders: holders(&mentions),
+            chains: chains(&holders, &mentions, &text),
+            holders,
             mentions,
             placement: sources.placement(key),
             uri,
@@ -347,6 +382,14 @@ impl<'a> Read<'a> {
     /// falls to `at`.
     fn home(&self, at: usize) -> Option<usize> {
         home(&self.holders, at)
+    }
+
+    /// Every definition that is the one at `mentions[i]` under another
+    /// name, itself among them: both names of `a:b:{f[]}` for either.
+    fn peers<'s>(&'s self, i: &'s usize) -> &'s [usize] {
+        self.chains
+            .get(i)
+            .map_or(std::slice::from_ref(i), Vec::as_slice)
     }
 
     /// Each read of a global, with the definition it belongs to.
@@ -542,10 +585,17 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
                 continue;
             }
             let place = range(&lines, m.at, m.len);
-            let slot = *seen.entry(home).or_insert(callers.len());
-            match callers.get_mut(slot) {
-                Some((_, places)) => places.push(place),
-                None => callers.push((home, vec![place])),
+            // Each name of `a:b:{f[]}` is a caller: one lambda, held twice.
+            let homes: Vec<Option<usize>> = match &home {
+                Some(i) => file.peers(i).iter().copied().map(Some).collect(),
+                None => vec![None],
+            };
+            for home in homes {
+                let slot = *seen.entry(home).or_insert(callers.len());
+                match callers.get_mut(slot) {
+                    Some((_, places)) => places.push(place.clone()),
+                    None => callers.push((home, vec![place.clone()])),
+                }
             }
         }
         for (caller, places) in callers {
@@ -561,15 +611,21 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
 
 /// `callHierarchy/outgoingCalls`: each workspace function the item's
 /// statement names - or, for the item of a file, each one the file names
-/// outside every definition - with the places it is named there.
+/// outside every definition - with the places it is named there. Of two
+/// names one statement gives one value, `a:b:{f[]}`, either names what the
+/// value does.
 fn outgoing(params: &Value, sources: &Sources) -> Value {
     let Some((read, which)) = of_item(sources, &params["item"]) else {
         return Value::Null;
     };
     let lines = Lines::new(&read.text);
+    let held = |home: &Option<usize>| match (home, &which) {
+        (Some(home), Some(which)) => read.peers(which).contains(home),
+        _ => *home == which,
+    };
     let named: Vec<(Value, Vec<String>)> = read
         .reads()
-        .filter(|(_, home)| *home == which)
+        .filter(|(_, home)| held(home))
         .map(|(m, _)| (range(&lines, m.at, m.len), read.names(sources, m)))
         .collect();
     let wanted: HashSet<&str> = named

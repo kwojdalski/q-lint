@@ -2020,6 +2020,40 @@ fn a_function_assigned_inside_another_ends_no_statement() {
     assert_eq!(changed, json!(["f"]));
 }
 
+// #2954: only the first name of `a:b:{x}` had the statement, so a change
+// to the lambda changed `a` alone and a test calling `b` was not reached.
+#[test]
+fn a_change_to_a_lambda_two_names_hold_changes_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "a:b:{x}
+c:1+d:{x}
+";
+    let tests = "test_a:{a 1}
+test_b:{b 1}
+test_d:{d 1}
+";
+    let files = [("lib.q", lib), ("test_lib.q", tests)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let now = "a:b:{x+1}
+c:1+d:{x}
+";
+    let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, now);
+    assert_eq!(
+        (changed, tests),
+        (json!(["a", "b"]), vec!["test_a".into(), "test_b".into()])
+    );
+    let (changed, tests) = reaching(
+        &mut server,
+        dir.path(),
+        "lib.q",
+        now,
+        "a:b:{x+1}
+c:1+d:{x+1}
+",
+    );
+    assert_eq!((changed, tests), (json!(["d"]), vec!["test_d".into()]));
+}
+
 /// A name that holds a function without being a lambda calls it all the
 /// same: `al:f`, `h:f each` and both names of `a:b:f` run the changed `f`,
 /// so the tests calling them are reached beside the ones calling a

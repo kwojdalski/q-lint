@@ -220,11 +220,12 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
 
 /// The statement of the top-level function `m` defines, when it defines
 /// one. A function assigned inside a lambda, `g::{x}`, spans its name alone
-/// and is part of the statement around it (#1360).
+/// and is part of the statement around it (#1360); one named further into
+/// its statement, the `b` of `a:b:{x}`, has that statement (#2954).
 fn top_level(m: &Mention) -> Option<&Definition> {
     m.definition
         .as_ref()
-        .filter(|d| d.function && m.at == d.start && d.end > m.at + m.len)
+        .filter(|d| d.function && d.start <= m.at && d.end > m.at + m.len)
 }
 
 /// Each top-level function a text defines, by name, with its statements in

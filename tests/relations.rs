@@ -940,6 +940,47 @@ h:{x}
     }
 }
 
+// #2954: what the lambda of `a:b:{f[x]}` reads was `b`'s alone, the name
+// nearest before it, so `a` - the same function - called nothing and was
+// no caller of `f`.
+#[test]
+fn each_name_one_statement_gives_a_lambda_calls_what_the_lambda_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "a:b:{f[x]}
+f:{x}
+g:{x}
+if[1b; c:{f[x]}; d:{g[x]}]
+";
+    let uri = server.open(dir.path(), "chain.q", text);
+    let f = [call("f", FUNCTION, "chain.q", &[(0, 5, 6)])];
+    for name in ["a:b", "b:{"] {
+        let item = server.item(&uri, text, name, 0);
+        assert_eq!(server.summaries("outgoingCalls", &item), f, "{name}");
+    }
+    let f = server.item(&uri, text, "f:", 0);
+    assert_eq!(
+        server.summaries("incomingCalls", &f),
+        [
+            call("a", FUNCTION, "chain.q", &[(0, 5, 6)]),
+            call("b", FUNCTION, "chain.q", &[(0, 5, 6)]),
+            call("c", FUNCTION, "chain.q", &[(3, 10, 11)]),
+        ]
+    );
+    // Two names a statement assigns apart are two functions, and each
+    // calls its own.
+    let c = server.item(&uri, text, "c:", 0);
+    assert_eq!(
+        server.summaries("outgoingCalls", &c),
+        [call("f", FUNCTION, "chain.q", &[(3, 10, 11)])]
+    );
+    let g = server.item(&uri, text, "g:", 0);
+    assert_eq!(
+        server.summaries("incomingCalls", &g),
+        [call("d", FUNCTION, "chain.q", &[(3, 20, 21)])]
+    );
+}
+
 #[test]
 fn a_call_by_a_string_is_not_seen_and_a_recursive_one_is() {
     let dir = tempfile::tempdir().unwrap();
