@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const net = require("node:net");
-const { address, consoleSize, hostProblem, parseProcesses } = require("../out/processes.js");
+const { address, consoleSize, hostProblem, parseProcesses, plainHost } = require("../out/processes.js");
 const { readLive } = require("../out/liveconfig.js");
 
 // An IPv6 address was written `::1:5000`: the port read as part of the
@@ -244,4 +244,16 @@ test("a key of a listed process written as it is not read is said, not left out 
   ]);
   // A list that may run nothing is not told of what it would not read anyway.
   assert.deepStrictEqual(parseProcesses([{ label: "a", host: "h", port: 1, launch: "q", credentialCommand: 1 }]).problems, []);
+});
+
+test("a host name with letters outside ASCII is taken, and kept as it is looked up (#3120)", () => {
+  assert.strictEqual(hostProblem("münchen.example"), undefined);
+  assert.strictEqual(hostProblem(" 日本語.jp "), undefined);
+  assert.deepStrictEqual(["münchen.example", "MÜNCHEN.Example.", "日本語.jp", "rdb.example"].map(plainHost), ["xn--mnchen-3ya.example", "xn--mnchen-3ya.example.", "xn--wgv71a119e.jp", "rdb.example"]);
+  assert.deepStrictEqual(parseProcesses([{ label: "a", host: "münchen.example", port: 1 }]), { processes: [{ label: "a", host: "xn--mnchen-3ya.example", port: 1, tags: [] }], problems: [] });
+  // Not what only starts as a name: nothing of it is cut off to make one.
+  for (const bad of ["mün chen", "ü/x", "ü#1", "ü:5000", "me@ü", "ü,x"]) {
+    assert.ok(hostProblem(bad) !== undefined, bad);
+    assert.strictEqual(plainHost(bad), bad);
+  }
 });

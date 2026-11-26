@@ -3,6 +3,7 @@
 // here talks to a process or to VS Code, so all of it is tested with node.
 
 import { isIPv6 } from "net";
+import { domainToASCII } from "url";
 
 export interface Process {
   /// Unique among the processes; what the view and the status bar show.
@@ -87,10 +88,17 @@ export function portProblem(port: string): string | undefined {
 }
 
 /// `host` as it is connected to: an IPv6 address written in brackets, as a
-/// URL writes one (`[::1]`), without them.
+/// URL writes one (`[::1]`), without them; and a name with letters outside
+/// ASCII (`münchen.example`) as it is looked up, in its `xn--` spelling,
+/// which was the only one of the two that could be added (#3120).
 export function plainHost(host: string): string {
   const h = host.trim();
-  return /^\[[^\]]*:[^\]]*\]$/.test(h) ? h.slice(1, -1) : h;
+  if (/^\[[^\]]*:[^\]]*\]$/.test(h)) {
+    return h.slice(1, -1);
+  }
+  // A name only: of anything else domainToASCII reads the part it takes for
+  // a host (`ü/x` is `xn--tda`), and the rest would be gone unsaid.
+  return /[^\x00-\x7f]/.test(h) && /^[\p{L}\p{M}\p{N}_.-]+$/u.test(h) ? domainToASCII(h) || h : h;
 }
 
 /// Why `host` is not a host, or undefined when it is: a name or an address,
