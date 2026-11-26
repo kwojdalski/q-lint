@@ -454,6 +454,28 @@ test("a rule on a long past 2^53 compares the integers q wrote, not the doubles 
   assert.strictEqual(L.ruleText({ column: "s", op: "=", value: "12", style: { bold: true } }), 's = "12": bold');
 });
 
+test("a rule on a float column compares as q does, to its tolerance: = 0.3 matches 0.1+0.2 (#3086)", () => {
+  const g = grid([["a", 9, ["0.1", "0.2", "0.3", "0.3000001", "", "0w", "-0.3", "0"], [0.1, 0.2, 0.1 + 0.2, 0.3000001, null, null, -(0.1 + 0.2), 0]]]);
+  const rows = (op, value) => [...L.ruleRows(g, { column: "a", op, value, style: { bold: true } })].sort();
+  assert.deepStrictEqual(rows("=", 0.3), [2]);
+  assert.deepStrictEqual(rows("<>", 0.3), [0, 1, 3, 5, 6, 7]);
+  // q's < and > are of values it does not hold equal.
+  assert.deepStrictEqual(rows(">", 0.3), [3, 5]);
+  assert.deepStrictEqual(rows(">=", 0.3), [2, 3, 5]);
+  assert.deepStrictEqual(rows("<", 0.3), [0, 1, 6, 7]);
+  assert.deepStrictEqual(rows("<=", 0.3), [0, 1, 2, 6, 7]);
+  assert.deepStrictEqual(rows("=", -0.3), [6]);
+  assert.deepStrictEqual(rows("<", -0.3), []);
+  // Nothing but 0 is 0, and an infinity is only itself.
+  assert.deepStrictEqual(rows("=", 0), [7]);
+  assert.deepStrictEqual(rows("=", 1e-300), []);
+  assert.deepStrictEqual(rows(">=", 1e308), [5]);
+  // A long column's values are exact: these two are within the tolerance.
+  const whole = grid([["a", 7, ["100000000000000", "100000000000001"]]]);
+  assert.deepStrictEqual([...L.ruleRows(whole, { column: "a", op: "=", value: 100000000000000, style: {} })], [0]);
+  assert.deepStrictEqual([...L.ruleRows(whole, { column: "a", op: ">", value: 100000000000000, style: {} })], [1]);
+});
+
 test("Excel colours a long it holds as text, past 2^53, as the grid's rule does (#2459)", () => {
   // ([] id:5 1700000000000000123 9007199254740993), id > 100 and id top 1.
   const p = {

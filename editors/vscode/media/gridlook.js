@@ -125,6 +125,10 @@
   /// The colours a rule can give, by name: the editor's chart colours.
   const PALETTE = { red: "#f14c4c", green: "#89d185", blue: "#3794ff", orange: "#d18616", yellow: "#cca700", purple: "#b180d7", grey: "#808080" };
 
+  /// How far apart, of the greater, two floats can be and still be equal
+  /// to q: its comparison tolerance, 2^-43.
+  const TOLERANCE = Math.pow(2, -43);
+
   /// The rows of the grid a rule matches, as a Set: those of its column
   /// (the first of that name) whose value compares as it asks. On a numeric
   /// column the comparisons are of numbers, and top or bottom N are the
@@ -133,7 +137,9 @@
   /// any case. A null matches nothing; an infinity (0w, -0w) compares as
   /// one (#1645). A whole number past 2^53, in a short, int or long column
   /// or as the rule's value, is compared as its digits, not as the double
-  /// it rounds to (#3085). An empty Set for a rule its column cannot take. `shown`,
+  /// it rounds to (#3085). A real or float column compares as q's own
+  /// comparisons do, to q's tolerance: `= 0.3` matches 0.1+0.2, and `>`
+  /// does not (#3086). An empty Set for a rule its column cannot take. `shown`,
   /// when given, is what a cell shows (column, row) where a format changes
   /// q's text: `contains` finds either, as a filter does (#1646).
   function ruleRows(grid, rule, shown) {
@@ -200,13 +206,14 @@
     if (typeof x !== "bigint" && !isFinite(x)) {
       return out;
     }
+    const float = [8, 9].indexOf(grid.columns[c].type) >= 0;
     values.forEach(function (v, r) {
       if (v === null) {
         return;
       }
       // Not ===, which a BigInt and a number never are.
-      const same = v >= x && v <= x;
-      const hit = rule.op === ">" ? v > x : rule.op === ">=" ? v >= x : rule.op === "<" ? v < x : rule.op === "<=" ? v <= x : rule.op === "=" ? same : !same;
+      const same = (v >= x && v <= x) || (float && isFinite(v) && Math.abs(v - x) <= TOLERANCE * Math.max(Math.abs(v), Math.abs(x)));
+      const hit = rule.op === ">" ? v > x && !same : rule.op === ">=" ? v > x || same : rule.op === "<" ? v < x && !same : rule.op === "<=" ? v < x || same : rule.op === "=" ? same : !same;
       if (hit) {
         out.add(r);
       }
