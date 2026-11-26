@@ -13,14 +13,18 @@
 // `.qlint.<ns>` there: the caller restores first, so a run that was
 // interrupted is put right before another starts.
 //
-// Coverage puts `qlintcov:.qlint.cov.hit k;` in front of each statement of a
-// function's own body: INSTALL defines it to add 1 to `.qlint.cov.d[k]`
-// under a trap, so a caller q refuses a global write to (`reval`, a
-// secondary thread of `peach`) still gets the function's answer, uncounted
-// (#1894), and to answer `k+1`. Only the first probe is given its index as
-// a constant; each after it passes on the local the one before set, since
-// the body's own statements run in order. A constant a probe would give
-// a function of about 120 statements more than q allows ('limit, #2543). The locals capture keeps the call's arguments as the
+// Coverage puts `qlintcov:qlintcovh k;` in front of each statement of a
+// function's own body, `qlintcovh` being `.qlint.cov.hit`: INSTALL defines
+// it to add 1 to `.qlint.cov.d[k]` under a trap, so a caller q refuses a
+// global write to (`reval`, a secondary thread of `peach`) still gets the
+// function's answer, uncounted (#1894), and to answer `k+1`. Only the first
+// probe is given its index as a constant; each after it passes on the local
+// the one before set, since the body's own statements run in order. A
+// constant a probe would give a function of about 120 statements more than
+// q allows ('limit, #2543). The first probe takes `.qlint.cov.hit` only
+// while `.qlint.cov` is there, and counts nothing otherwise: a reference to
+// the instrumented function, taken during the run by a handler or a timer,
+// outlives the restore and keeps answering (#2975). The locals capture keeps the call's arguments as the
 // parameter cache (#892) does, which statement it is on, and each local as
 // a statement at the top of the body assigns it - in a frame of its own for
 // each call that has not returned, so a function that calls itself shows
@@ -150,7 +154,7 @@ export function coverageText(text: string, first: number): Covered | undefined {
   return {
     text: inserted(
       text,
-      statements.map((s, k) => ({ offset: s.start, text: `qlintcov:.qlint.cov.hit ${k === 0 ? first : "qlintcov"};` })),
+      statements.map((s, k) => ({ offset: s.start, text: k === 0 ? `qlintcovh:$[\`cov in key\`.qlint;.qlint.cov.hit;{x}];qlintcov:qlintcovh ${first};` : "qlintcov:qlintcovh qlintcov;" })),
     ),
     statements,
   };

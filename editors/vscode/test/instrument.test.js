@@ -4,7 +4,7 @@ const assert = require("node:assert");
 const { coverageText, localsText, restoreApart, restoreExpression, leftInstrumented, guardDeclined } = require("../out/instrument.js");
 
 test("a coverage probe goes in front of a statement that starts with a string (#1421)", () => {
-  assert.strictEqual(coverageText('{[x] "a",x}', 0).text, '{[x] qlintcov:.qlint.cov.hit 0;"a",x}');
+  assert.strictEqual(coverageText('{[x] "a",x}', 0).text, '{[x] qlintcovh:$[`cov in key`.qlint;.qlint.cov.hit;{x}];qlintcov:qlintcovh 0;"a",x}');
   // A `;` inside the string does not split the statement.
   assert.strictEqual(coverageText('{[x] "a;b",x}', 0).statements.length, 1);
 });
@@ -37,9 +37,9 @@ test("the locals capture closes a call's frame wherever its text hands a value b
 });
 
 test("a trailing comment is still left out of a statement", () => {
-  assert.strictEqual(coverageText("{[x] x+1 / \"note\"\n }", 0).text, "{[x] qlintcov:.qlint.cov.hit 0;x+1 / \"note\"\n }");
+  assert.strictEqual(coverageText("{[x] x+1 / \"note\"\n }", 0).text, "{[x] qlintcovh:$[`cov in key`.qlint;.qlint.cov.hit;{x}];qlintcov:qlintcovh 0;x+1 / \"note\"\n }");
   // Only the first probe holds its index as a constant (#2543).
-  assert.strictEqual(coverageText("{[x] a:x; a+1}", 7).text, "{[x] qlintcov:.qlint.cov.hit 7;a:x; qlintcov:.qlint.cov.hit qlintcov;a+1}");
+  assert.strictEqual(coverageText("{[x] a:x; a+1}", 7).text, "{[x] qlintcovh:$[`cov in key`.qlint;.qlint.cov.hit;{x}];qlintcov:qlintcovh 7;a:x; qlintcov:qlintcovh qlintcov;a+1}");
 });
 
 test("a restore over a connection of its own goes to the process it is given, through the guard, and does not wait for long (#1892)", async () => {

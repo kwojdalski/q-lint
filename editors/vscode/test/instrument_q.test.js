@@ -229,3 +229,22 @@ test("the locals capture shows the call that failed, not the last call a recursi
   // A call whose error a caller trapped is not the one shown.
   assert.deepStrictEqual(await capture("safe", "safe 5"), { error: "type", args: { n: "5" }, locals: { a: "6", r: "-1" }, at: 2 });
 });
+
+// A probe called `.qlint.cov.hit` by name: a handler or a timer set to an
+// instrumented function during the run kept that copy, and every call of it
+// after the restore failed with '.qlint.cov.hit (#2975).
+test("a reference taken to a function under coverage keeps answering after the restore (#2975)", { skip }, async (t) => {
+  const src = "{[x] y:x+1; y*2}";
+  const { connection: c } = await connect(t, `.ns.tick:${src}\n`);
+  const cov = coverageText(src, 0);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), [".ns.tick"], [src], [cov.text], 2), 1), ["ok"]);
+  // What a test under coverage does: it registers the function as a handler.
+  assert.strictEqual(Number(await value(c, "handler:.ns.tick; handler 1")), 4);
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.d.map(Number), [1, 1]);
+  assert.strictEqual(await value(c, "last value .ns.tick"), src);
+  // The handler still holds the instrumented copy: it answers, counting nothing.
+  assert.strictEqual(Number(await value(c, "handler 1")), 4);
+  assert.strictEqual(Number(await value(c, "handler 5")), 12);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+});
