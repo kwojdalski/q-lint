@@ -568,6 +568,27 @@ test("the setup asks git whether *.qnb goes through the filter: a later line tur
   assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: qnb-strip/);
 });
 
+// .git/info/attributes is read after .gitattributes: its "*.qnb -filter"
+// left the line written doing nothing, said to be done, and appended again
+// on every run (#2386).
+test("the setup says when a file git reads later turns the filter off, and adds its line once", async () => {
+  const { dir, git } = repo({ "README": "r\n" });
+  fs.mkdirSync(path.join(dir, ".git", "info"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".git", "info", "attributes"), "*.qnb -filter\n");
+  const fake = fakeVscode();
+  load(fake);
+  const folder = fake.vscode.Uri.file(dir);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.match(git("check-attr", "filter", "--", "a.qnb"), /filter: unset/);
+  assert.doesNotMatch(fake.messages.at(-1), /now commits/);
+  assert.match(fake.messages.at(-1), /git reads filter unset for it: .*[\\/]info[\\/]attributes, which git reads after it, says otherwise\. Notebooks are still committed with their outputs/);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](folder, "gitattributes");
+  assert.match(fake.messages.at(-1), /Notebooks are still committed with their outputs/);
+  assert.strictEqual(fs.readFileSync(path.join(dir, ".gitattributes"), "utf8"), "*.qnb filter=qnb-strip\n");
+});
+
 test("an integer too big for a number is saved and stripped as written (#1562)", () => {
   const raw = '{"qnb":1,"cells":[{"kind":"code","source":["1"],"metadata":{"id":-98765432109876543210}}],"metadata":{"t":1700000000123456789,"f":0.5,"n":12}}';
   const saved = serializeQnb(parseQnb(raw));
