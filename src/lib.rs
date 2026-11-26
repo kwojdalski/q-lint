@@ -563,12 +563,33 @@ pub fn argument_slots(source: &str) -> Vec<BracketCall> {
 
 /// The paths of the loads in `source` - `\l path`, `system "l path"` and a
 /// file symbol - as start and length, in order.
+///
+/// A `\l` after a language prefix or a run of them loads as well: KDB-X 5
+/// runs b.q for `k)\l b.q`, `q)k)\l b.q` and `K)\l b.q` (#2994). The views
+/// blank another language's line whole, so that one is read from the
+/// source, where `foreign_offsets` says it is a line that runs.
 pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
     let v = views(source);
-    semantics::load_paths(&v.code, source)
+    let mut paths: Vec<(usize, usize)> = semantics::load_paths(&v.code, source)
         .into_iter()
         .map(|path| (path.start, path.len()))
-        .collect()
+        .collect();
+    let mut at = 0;
+    for line in source.split_inclusive('\n') {
+        let run = language_prefixes(line);
+        if run > 0
+            && (v.foreign_offsets.binary_search(&at).is_ok()
+                || v.code[at + run..].starts_with("\\l"))
+            && let Some(m) = re!(r"^\\l[ \t]+(\S+)").captures(&line[run..])
+        {
+            let path = m.get(1).unwrap();
+            paths.push((at + run + path.start(), path.len()));
+        }
+        at += line.len();
+    }
+    paths.sort_unstable();
+    paths.dedup();
+    paths
 }
 
 /// The module names of the `` use`name `` loads in `source` - `mymod` of

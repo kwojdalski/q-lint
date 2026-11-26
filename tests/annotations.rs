@@ -503,6 +503,31 @@ fn each_load_path_links_to_the_file_it_loads() {
     assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
 }
 
+/// A load after a language prefix is a load: KDB-X 5 runs b.q for
+/// `k)\l b.q`, `q)k)\l b.q` and `K)\l b.q`, and none of them was linked
+/// (#2994).
+#[test]
+fn a_load_after_a_language_prefix_links_to_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[("b.q", "b:1\n")]);
+    let text = "k)\\l b.q\nq)k)\\l b.q\nq)\\l b.q\nK)\\l b.q\r\nk)a:1\n\
+                /\nk)\\l b.q\n\\\nk)s:\"\\l b.q\"\n";
+    std::fs::write(dir.path().join("main.q"), text).unwrap();
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            (0, 5, 8, "b.q".to_string()),
+            (1, 7, 10, "b.q".into()),
+            (2, 5, 8, "b.q".into()),
+            (3, 5, 8, "b.q".into()),
+            // Not the one in the block comment, nor a k string.
+        ],
+        "{reply}"
+    );
+}
+
 #[test]
 fn document_links_are_announced_and_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
