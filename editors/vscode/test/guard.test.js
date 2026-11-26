@@ -2097,3 +2097,15 @@ test("upsert on a value - a name alone or a table written out - gives a new tabl
   // What the right side does is still read.
   assert.deepStrictEqual(writes("t upsert `:f set 1"), ["calls set"]);
 });
+
+test("embedPy and PyKX named by a symbol run Python as their names do (#2636)", () => {
+  const cases = {
+    '`.p.e "import os"': [".p.e"], '`.p.e @ "import os"': [".p.e"], 'value[`.p.e] "import os"': [".p.e"],
+    'get[`.pykx.pyexec] "import os"': [".pykx.pyexec"], '(`.pykx.pyexec) "import os"': [".pykx.pyexec"], '(`$".p.e") "import os"': [".p.e"],
+  };
+  for (const [code, [name]] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [`runs Python with ${name}`], code);
+  }
+  // Its namespace listed is a read.
+  assert.deepStrictEqual(writes("key `.p"), []);
+});

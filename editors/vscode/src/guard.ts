@@ -2489,6 +2489,12 @@ function readStatement(statement: string, found: Set<string>): void {
       found.add(`calls ${k.text.slice(1)}`);
       continue;
     }
+    // embedPy and PyKX named by a symbol so too: `` `.p.e "x" ``,
+    // `` get[`.pykx.pyexec] "x" ``, `` (`.pykx.pyexec) "x" `` (#2636).
+    if (k.kind === "sym" && /^`\.(p|pykx)\./.test(k.text)) {
+      found.add(`runs Python with ${k.text.slice(1)}`);
+      continue;
+    }
     // The amend or `!` passed as a value and applied to a list headed by a
     // symbol: `` .[@;(`.;`a;:;1)] ``, `` (@) . (`.;`a;:;1) ``, `` .[!;(`t;..)] ``.
     if (k.kind === "op" && ["@", ".", "!"].includes(k.text) && t[i - 1]?.kind === "open" && (next?.text === ";" || next?.text === ")")) {
