@@ -46,7 +46,10 @@ function setup() {
     activeLabel: () => "dev",
     activeProcess: () => process,
     borrow: (use) => use(connection, process),
-    onDidChange: () => ({ dispose() {} }),
+    onDidChange(listener) {
+      this.changed = listener;
+      return { dispose() {} };
+    },
     async runOnActive(code, query) {
       this.guarded.push(code);
       return { process: "dev", value: await query(connection) };
@@ -55,8 +58,28 @@ function setup() {
   const lines2 = [];
   vscode.window.createOutputChannel = () => ({ clear() {}, appendLine: (l) => lines2.push(l), show() {}, dispose() {} });
   const api = registerLogpoints(stub.newContext(), live);
-  return { sent, live, api, decorated, output: lines2 };
+  return { sent, live, api, decorated, output: lines2, held };
 }
+
+// A function redefined by a query lost its wrapper, yet the editor kept
+// marking it from the window's list (#2558).
+test("after a query, a process marked with logpoints is read again: a redefined function is no longer marked", async () => {
+  const s = setup();
+  await stub.commands.get(LOGPOINT_COMMANDS.add)("sq");
+  assert.deepStrictEqual(s.api.marked(), [1]);
+  // The user's file run again redefines sq: the process lists it no more.
+  s.held.delete("sq");
+  s.live.changed("queried");
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(s.sent.at(-1), [LOG_LIST, undefined]);
+  assert.deepStrictEqual(s.api.logged(), { dev: [] });
+  assert.deepStrictEqual(s.api.marked(), []);
+  // With nothing marked, a query sends nothing more.
+  const before = s.sent.length;
+  s.live.changed("queried");
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(s.sent.length, before);
+});
 
 test("Add Logpoint wraps the function at the cursor through the guard and marks it; Remove puts it back", async () => {
   const s = setup();

@@ -112,6 +112,21 @@ export function registerLogpoints(
     return got.value;
   };
 
+  /// The active process's logpoints read again, quietly, where this window
+  /// marks some on it: a query may have redefined one of the functions, and
+  /// a process connected to again may have restarted (#2558).
+  const recheck = async (): Promise<void> => {
+    const process = live.activeLabel();
+    if (!on() || process === undefined || !logged.get(process)?.size) {
+      return;
+    }
+    const got = await borrowWhenFree(live, async (connection, p) => ({ process: p.label, names: readLogpoints(await connection.call(LOG_LIST)).names }), 0).catch(() => undefined);
+    if (got !== undefined) {
+      logged.set(got.value.process, new Set(got.value.names));
+      mark();
+    }
+  };
+
   const add = async (name?: unknown): Promise<void> => {
     if (refuse()) {
       return;
@@ -235,7 +250,14 @@ export function registerLogpoints(
     workspace.onDidChangeConfiguration((event) => event.affectsConfiguration("q-lint.logpoints") && sync()),
     window.onDidChangeActiveTextEditor(() => mark()),
     workspace.onDidSaveTextDocument(() => mark()),
-    live.onDidChange((what) => what !== "queried" && mark()),
+    live.onDidChange((what) => {
+      if (what !== "queried") {
+        mark();
+      }
+      if (what === "queried" || what === "connected") {
+        void recheck();
+      }
+    }),
     { dispose: () => decoration?.dispose() },
   );
   return {

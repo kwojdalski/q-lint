@@ -47,6 +47,22 @@ test("a logpoint logs each call and comes off leaving the function as it was", {
   assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)), { names: [], hits: [] });
 });
 
+// Redefined, the logpoint is gone: it was still listed, and Add Logpoint
+// refused the name (#2558).
+test("a function redefined since its logpoint is listed with none, and takes a new one", { skip }, async (t) => {
+  const { connection: c } = await connect(t, SRC);
+  assert.strictEqual(await c.call(LOG_ADD, "sq"), "sq");
+  await value(c, "sq:{x*x*x}");
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, []);
+  assert.strictEqual(await c.call(LOG_ADD, "sq"), "sq");
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, ["sq"]);
+  assert.strictEqual(Number(await value(c, "sq 2")), 8);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).hits.map((h) => [h.name, h.args]), [["sq", ",2"]]);
+  await assert.rejects(c.call(LOG_ADD, "sq"), /it has a logpoint already/);
+  assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
+  assert.strictEqual(await value(c, "last value sq"), "{x*x*x}");
+});
+
 test("the last logpoint off leaves .qlint empty, and a root variable named qlint alone (#1871)", { skip }, async (t) => {
   const { connection: c } = await connect(t, SRC + "qlint:7\n.qlint.cache.p1:42\n");
   for (const name of ["sq", "now"]) await c.call(LOG_ADD, name);
