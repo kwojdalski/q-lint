@@ -583,7 +583,8 @@ export function oneLine(q: QValue, precision = 7, cap = Infinity): string {
       return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision, cap)}`;
     }
     case "table":
-      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision, cap)}`;
+      // Its attribute before it, as `-3!` writes `` `s#+(,`a)!,`s#1 2 `` (#2581).
+      return `${attrText(q.attr)}+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: q.colAttr ?? 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision, cap)}`;
     case "func":
       return funcText(q, precision);
   }
