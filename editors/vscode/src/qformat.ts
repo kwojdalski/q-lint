@@ -936,14 +936,30 @@ function itemsOf(q: QValue): QValue[] {
     return q.v;
   }
   if (q.kind === "table") {
+    const columns = q.data.map(itemsOf);
     return Array.from({ length: countOf(q) }, (_, r) => ({
       kind: "dict",
       sorted: false,
       k: { kind: "vector", t: 11, attr: 0, v: q.cols },
-      v: { kind: "list", attr: 0, v: q.data.map((c) => itemsOf(c)[r]) },
+      v: collapsed(columns.map((c) => c[r])),
     }));
   }
   return [q];
+}
+
+/// `items` as q makes a row's values: a simple list where every one is an
+/// atom of one type, `` `x`y!1 3 ``, not `` `x`y!(1;3) `` (#2582).
+function collapsed(items: QValue[]): QValue {
+  const atoms = items.filter((x): x is QValue & { kind: "atom" } => x.kind === "atom");
+  const t = atoms[0]?.t;
+  if (t === undefined || atoms.length !== items.length || atoms.some((x) => x.t !== t)) {
+    return { kind: "list", attr: 0, v: items };
+  }
+  if (t === -10) {
+    return { kind: "chars", attr: 0, v: Buffer.from(atoms.map((x) => Number(x.v ?? 32))) };
+  }
+  const bytes = atoms.some((x) => x.bytes !== undefined) ? atoms.map((x) => x.bytes ?? false) : undefined;
+  return { kind: "vector", t: -t, attr: 0, v: atoms.map((x) => x.v), ...(bytes !== undefined ? { bytes } : {}) };
 }
 
 /// Each row's place among the distinct values of a simple column sorted

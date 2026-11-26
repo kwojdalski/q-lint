@@ -334,3 +334,15 @@ test("a general column's time q cannot read back as -3! writes it copies as a ca
     assert.strictEqual(copied(hex).literal, literal, hex);
   }
 });
+
+test("a dictionary of a table's rows shows each row's values as q makes them, a simple list of one type (#2582)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const syms = (...v) => ({ kind: "vector", t: 11, attr: 0, v });
+  const table = (cols, ...data) => ({ kind: "table", attr: 0, cols, data });
+  const longs = (...v) => ({ kind: "vector", t: 7, attr: 0, v: v.map(BigInt) });
+  // `a`b!([] x:1 2; y:3 4), `a`b!([] s:`x`y; t:`p`q), `a`b!([] c:"ab"; n:1 2)
+  const cells = (v) => gridOfQ({ kind: "dict", sorted: false, k: syms("a", "b"), v }, 10).cells[1];
+  assert.deepStrictEqual(cells(table(["x", "y"], longs(1, 2), longs(3, 4))), ["`x`y!1 3", "`x`y!2 4"]);
+  assert.deepStrictEqual(cells(table(["s", "t"], syms("x", "y"), syms("p", "q"))), ["`s`t!`x`p", "`s`t!`y`q"]);
+  assert.deepStrictEqual(cells(table(["c", "n"], { kind: "chars", attr: 0, v: Buffer.from("ab") }, longs(1, 2))), ['`c`n!("a";1)', '`c`n!("b";2)']);
+});
