@@ -224,6 +224,66 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
+/// Whether `where` reads `s` as counts with a negative one among them, where
+/// `s` is no vector literal: a general list of two integer atoms or more,
+/// all long or all int - q 5 `where (1i;-2)` and `where (1;-2h)` are 'type -
+/// or a literal dictionary of as many keys as counts, whose values are such
+/// a list or an integer vector. A null is the least of its type, as in a
+/// vector (#2242).
+fn negative_counts(s: &str) -> bool {
+    let s = s.trim();
+    if !s.contains('"')
+        && let [keys, values] = s.split('!').collect::<Vec<_>>()[..]
+    {
+        let count = literal(keys).map(|k| k.len);
+        return match literal(values) {
+            Some(v) => {
+                v.kind == Kind::Integer
+                    && v.vector
+                    && v.negative
+                    && !v.short_integer
+                    && count == Some(v.len)
+            }
+            None => count == general_counts(values) && negative_counts(values),
+        };
+    }
+    general_counts(s).is_some()
+        && items_of(s)
+            .iter()
+            .any(|item| literal(item).is_some_and(|v| v.negative || v.integer_null))
+}
+
+/// The items of the general list `s` is, inside the parentheses that wrap
+/// all of it; none when it is no such list.
+fn items_of(s: &str) -> Vec<&str> {
+    let mut s = s.trim();
+    for _ in 0..crate::MAX_NESTING {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            return vec![];
+        }
+        s = s[1..s.len() - 1].trim();
+        let items = slots(s);
+        if items.len() > 1 {
+            return items;
+        }
+    }
+    vec![]
+}
+
+/// How many integer atoms of one width the general list `s` holds, when
+/// that is all it holds: the vector q makes of `(1;-2)` and `(1i;2i)`.
+fn general_counts(s: &str) -> Option<usize> {
+    let items = items_of(s);
+    let int = |item: &str| item.trim().ends_with('i');
+    (items.len() > 1
+        && items.iter().all(|item| {
+            int(item) == int(items[0])
+                && literal(item)
+                    .is_some_and(|v| v.kind == Kind::Integer && !v.vector && !v.short_integer)
+        }))
+    .then_some(items.len())
+}
+
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
 /// since `within` asks for low <= x <= high. A pair of numbers, infinities
@@ -422,6 +482,32 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             at: whole.start(),
             name: call.get(1).unwrap().as_str(),
             args: vec![&comments[arg.start()..arg.end()]],
+            projection: false,
+        });
+    }
+    // `where` counts a dictionary by its values and a list in parentheses
+    // as the vector its items make, and the literal above stops short of
+    // both: `` where `a`b!1 -1 `` and `where ((1;-2))` (#2941). The argument
+    // is the rest of the expression, which `negative_counts` reads; the `!`
+    // is one in `code`, where a string has none.
+    for name in re!(r"\bwhere\b").find_iter(code) {
+        if !boundary(code, name.start()) || crate::query_clause(code, name.start()) == Some("from")
+        {
+            continue;
+        }
+        let Some(end) = argument_end(code, comments, raw, name.end()) else {
+            continue;
+        };
+        let arg = &comments[name.end()..end];
+        if arg.trim_start().starts_with('[')
+            || !(code[name.end()..end].contains('!') || arg.trim_start().starts_with("(("))
+        {
+            continue;
+        }
+        out.push(Call {
+            at: name.start(),
+            name: &code[name.range()],
+            args: vec![arg],
             projection: false,
         });
     }
@@ -885,6 +971,17 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 report(&mut out, "QD001", detail.into());
                 continue;
             }
+        }
+        // A general list of long atoms, or of int ones, is the vector they
+        // make, and a dictionary is counted by its values: q 5 `where (1;-2)`
+        // and `` where `a`b!1 -1 `` are 'limit, as `where 1 -2` is (#2941).
+        if name == "where" && negative_counts(args[0]) {
+            report(
+                &mut out,
+                "QD002",
+                "where: where cannot repeat an index a negative number of times".into(),
+            );
+            continue;
         }
         let Some(value) = literal(args[0]) else {
             continue;

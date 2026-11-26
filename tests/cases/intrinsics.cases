@@ -941,6 +941,31 @@ a:where 1 0N
 b:where 1 0Ni
 c:where 1 -0W
 
+=== QD002 profile: general | a general list of integer atoms is the vector they make, and a dictionary is counted by its values (KDB-X: each is 'limit, #2941)
+a:where (1;-2)
+b:where ((1;-2))
+c:where (1i;-2i)
+d:where (0N;1)
+e:where `a`b!1 -1
+g:where[`a`b!1 -1]
+h:where 1 2!(1;-2)
+i:where (`a`b)!1 -1i
+j:where `a`b ! 0N 1
+
+=== clean profile: general | counts none of which is negative, and what q refuses for another reason (KDB-X: a and b run; c, d and e are 'type)
+t:([] a:1 2)
+a:where (1;2)
+b:where `a`b!1 2
+c:where (1i;-2)
+d:where (1;-2h)
+e:where `a`b!1 -1h
+i:select from t where a in key `a`b!1 -1
+j:where "a!b"~/:("a!b";"c")
+
+=== QT001 profile: general | a dictionary with more keys than counts is 'length, and QT001's (KDB-X)
+g:where `a`b!-1
+h:where `a`b`c!1 -1
+
 === QT009 profile: general | a float vector holding an infinity is no count to where (q 5: 'type, #2242)
 a:where 0w 1
 b:where 0N 1h
