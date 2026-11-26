@@ -220,3 +220,17 @@ test("a test whose body holds a block comment passes, as it does loaded (#2283)"
   const scoped = { code: `\\d .qt.b\n${code}\n\\d .`, call: ".qt.b.test_blk[]" };
   assert.deepStrictEqual(await run(c, testStatements(scoped)), { passed: true, text: "1b", errored: false });
 });
+
+test("under reval a test run changes nothing: a write it misses is refused, a read passes, qUnit's state is left alone (#2639)", { skip }, async (t) => {
+  const { runTest } = require("../out/testing.js");
+  const c = await connect(t, ".qunit.failFlag:1b;\n");
+  c.readOnly = true;
+  const written = await runTest(c, ['00"zt:1"', "1b"], "test");
+  assert.strictEqual(written.passed, false);
+  assert.match(c.refused ?? "", /^(noupdate|restricted|access)/);
+  assert.strictEqual(await c.call("`zt in key`."), false);
+  c.refused = undefined;
+  assert.strictEqual((await runTest(c, ["1b"], "true")).passed, true);
+  c.readOnly = false;
+  assert.strictEqual(await c.call(".qunit.failFlag"), true);
+});

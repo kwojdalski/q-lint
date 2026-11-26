@@ -18,6 +18,7 @@ const {
   splitMatch,
 } = require("../out/testing.js");
 const { guardText, writes } = require("../out/guard.js");
+const { EVALUATE } = require("../out/query.js");
 const { registerTestExplorer, TESTS_REQUEST } = require("../out/testexplorer.js");
 const { EDITOR_SETTINGS, editorFeatureOn, editorFeatureOff } = require("../out/editorfeatures.js");
 const pkg = require("../package.json");
@@ -240,13 +241,13 @@ function fakeLive(process = { label: "dev", tags: [] }) {
       return true;
     },
     async runOnActive(code, query) {
-      const value = await query({
-        call: async (_lambda, statements, mode) => {
-          sent.push({ statements, mode });
-          const last = statements[statements.length - 1];
-          return last.includes("bad") ? { ok: false, failed: true, text: "boom" } : { ok: true, failed: false, text: "1b" };
-        },
-      });
+      const call = async (_lambda, statements, mode) => {
+        sent.push({ statements, mode });
+        const last = statements[statements.length - 1];
+        return last.includes("bad") ? { ok: false, failed: true, text: "boom" } : { ok: true, failed: false, text: "1b" };
+      };
+      // Not read-only: `guarded` sends the plain lambda, as a connection does.
+      const value = await query({ call, guarded: async (lambda, ...args) => call(lambda(EVALUATE), ...args), noteRefusal: () => {} });
       return { process: this.active.label, value };
     },
   };
@@ -524,6 +525,71 @@ test("a test run on a process the read-only guard guards goes through the guard:
   stub.picks.push("Run Anyway", "Run Anyway");
   await explorer.run();
   assert.strictEqual(sent.length, 2);
+});
+
+test("a test the guard reads as read-only runs under reval on a guarded process, and reval's refusal is asked about (#2639)", async (t) => {
+  const net = require("node:net");
+  const { serialize, deserialize } = require("node-q/lib/c.js");
+  const { Live } = require("../out/live.js");
+  const { TEST_RUN, testRunLambda } = require("../out/testing.js");
+  const { EVALUATE_READ_ONLY } = require("../out/query.js");
+  stub.reset();
+  fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  stub.config.user["processes.readOnlyGuard.tags"] = ["live"];
+  // A q process with reval, played by a socket server: the read-only
+  // lambda is answered as reval refusing a write.
+  const sent = [];
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.length >= 8 && buffer.length >= buffer.readUInt32LE(4)) {
+        const message = buffer.subarray(0, buffer.readUInt32LE(4));
+        buffer = buffer.subarray(message.length);
+        const m = deserialize(message);
+        const lambda = Array.isArray(m) ? m[0] : m;
+        sent.push(lambda === TEST_RUN ? "TEST_RUN" : lambda === testRunLambda(EVALUATE_READ_ONLY) ? "TEST_RUN_READ_ONLY" : lambda);
+        const out = serialize(
+          lambda === "`reval in key`.q" ? true : lambda === TEST_RUN ? { ok: true, failed: false, text: "1b" } : { ok: false, failed: true, text: "noupdate: `. `zt" },
+        );
+        out.writeUInt8(2, 1);
+        socket.write(out);
+      }
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const context = stub.newContext();
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: server.address().port, tags: ["live"] }]);
+  const live = new Live(context);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+    for (const s of sockets) s.destroy();
+    server.close();
+  });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  const listed = [{ uri: "file:///ws/suite.q", tests: [{ name: "test_r", range: range(1, 0, 6), code: "", call: "1b" }] }];
+  const explorer = registerTestExplorer(stub.newContext(), live, () => ({ sendRequest: async () => listed }));
+  await explorer.discover();
+  stub.picks.push(undefined);
+  await explorer.run();
+  assert.deepStrictEqual(sent, ["`reval in key`.q", "TEST_RUN_READ_ONLY"]);
+  assert.ok(stub.messages.some(([kind, text]) => kind === "warning" && /^Refused by the read-only evaluation of rdb/.test(text)));
+  // Confirmed, it is sent again as it is.
+  stub.picks.push("Run Anyway");
+  await explorer.run();
+  assert.deepStrictEqual(sent.slice(2), ["`reval in key`.q", "TEST_RUN_READ_ONLY", "TEST_RUN"]);
+  assert.deepStrictEqual(explorer.results().map((r) => r.state), ["passed"]);
 });
 
 test("a run stays on the process it started on: a connection made mid-run gets none of its tests (#1283)", async (t) => {
