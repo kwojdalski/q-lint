@@ -7545,10 +7545,15 @@ fn lint_rules(
         blank!(),
         r"*\)|(?:enlist",
         blank!(),
-        r"+)?`[A-Za-z0-9_.:]*)"
+        r"+)?(?:`[A-Za-z0-9_.:]*)+)"
     ))
     .find_iter(code)
     {
+        // Symbols that key a dictionary of patterns are no pattern:
+        // `` x like/: `a`b!("a*";"b*") `` matches each string.
+        if code[m.end()..].trim_start().starts_with('!') {
+            continue;
+        }
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
@@ -8573,6 +8578,9 @@ fn lint_rules(
         if opaque
             || !boundary(code, whole.start())
             || after.starts_with('.')
+            // Written, not read: an assignment, or a table literal's column,
+            // `([] return:())`.
+            || after.starts_with(':')
             || in_query
             || declared(whole.start(), name)
             || elsewhere(&qualified(whole.start(), name))

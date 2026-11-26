@@ -519,6 +519,9 @@ g:{[a] return a}
 h:{[x] else:x+1; else}
 k:{[x] x+else}
 
+=== clean | a table literal's column spelling the keyword is written, not read (#2704)
+detail:([name:`u#`symbol$()] public:`boolean$(); return:())
+
 === clean | but a symbol set as a global, and the lambda's own local or pattern, do (#2703, #2704)
 `true set 1b
 f:{[a] $[a;true;0b]}

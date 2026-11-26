@@ -250,6 +250,7 @@ d:s like/: `a`b
 s:("ab";"cd")
 a:s like ("a*")
 b:s like' ("a*";"c*")
+c:first where "ab" like/: `x`y!("a*";"b*")
 
 === QB008 | equality against a vector literal
 select from t where px=1 2
