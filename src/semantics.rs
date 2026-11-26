@@ -1070,6 +1070,11 @@ pub fn tokens(
         if crate::system_command(&raw[line..]) {
             continue;
         }
+        // Nor is a timed line's own `\t`, `\ts` or `\t:n`, though what
+        // follows it is q: its `t` was coloured as the function `t` (#2777).
+        if m.start() < line + crate::timed_prefix(&raw[line..]) {
+            continue;
+        }
         // The assignment itself is the grammar's to colour, as a definition.
         if code[m.end()..]
             .trim_start_matches([' ', '\t'])
@@ -1320,7 +1325,7 @@ fn global_writes(
     // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
     // last part of the path, and `\l data/trades` defines `trades` (#534).
     // Not a script, `\l x.q`, whose name defines nothing.
-    for (at, rest) in load_lines(code, raw) {
+    for (at, _, rest) in load_lines(code, raw) {
         if let Some(m) =
             re!(r"^[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(rest)
         {
@@ -1461,16 +1466,38 @@ fn assigned_by_amend(code: &str, at: usize) -> usize {
 /// What one file defines for the files around it: its global names, and
 /// which of them it assigns a lambda. Read, never run - the same passes the
 /// checks use, stopped before any rule.
-/// Each `\l` line, with where it starts and what follows the `\l` in the
-/// code view. `q)\l b.q` loads as `\l b.q` does (q 5), though `views` has
-/// blanked the prompt (#536).
-fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, &'a str)> {
-    let mut offset = 0;
+/// Each `\l` line, with where it starts, and where and what follows the
+/// `\l` in the code view. `q)\l b.q` loads as `\l b.q` does (q 5), though
+/// `views` has blanked the prompt (#536). So does one after `k)`, or a run of
+/// prefixes: KDB-X has lib.q's `kl` after `k)\l lib.q` and after
+/// `q)k)\l lib.q` (#2819). The views blank a k line whole, so that one is
+/// read from the source, where no block comment holds it.
+fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, usize, &'a str)> {
+    // Whether a block comment holds the line, and whether a lone `\` has
+    // ended the script above it.
+    let (mut offset, mut comment, mut ended) = (0, false, false);
     code.split_inclusive('\n').filter_map(move |line| {
         let at = offset;
         offset += line.len();
-        let prompt = if raw[at..].starts_with("q)") { 2 } else { 0 };
-        line[prompt..].strip_prefix("\\l").map(|rest| (at, rest))
+        let source = &raw[at..at + line.len()];
+        match source.trim_end() {
+            "/" => comment = true,
+            "\\" if comment => comment = false,
+            "\\" => ended = true,
+            _ => {}
+        }
+        let prefixes = crate::language_prefixes(source);
+        let line = if prefixes > 2 || source.starts_with("k)") {
+            if comment || ended {
+                return None;
+            }
+            source
+        } else {
+            line
+        };
+        line[prefixes..]
+            .strip_prefix("\\l")
+            .map(|rest| (at, at + prefixes + 2, rest))
     })
 }
 
@@ -1490,8 +1517,64 @@ fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
         .collect()
 }
 
+/// Where `system` is handed a `d` command joined at run time, `system "d ",ns`:
+/// a switch to a context the text does not name. KDB-X runs `ns:".app"`,
+/// `system "d ",ns`, `dfun:{x}`, and `` key `.app `` is ``` ``dfun ``` (#2813).
+/// `view` has strings blank, and `raw` is the source.
+fn computed_contexts(raw: &str, view: &str) -> Vec<usize> {
+    re!(r"\bsystem\b")
+        .find_iter(view)
+        .filter(|m| {
+            boundary(view, m.start())
+                && re!(r#"^[ \t]*[(\[]?[ \t]*"d[ \t][^"\n]*"[ \t]*,"#).is_match(&raw[m.end()..])
+        })
+        .map(|m| m.start())
+        .collect()
+}
+
+/// The context `unplaced` gives a stretch of code whose context is computed:
+/// no name is written under it, so one `resolved` there is told apart.
+const UNPLACED: &str = "?";
+
+/// `namespaces` with each stretch of top-level code after a computed
+/// `system "d ",ns` - up to the next switch that names its context - put in
+/// `UNPLACED`, so what is assigned there is a global of no known name
+/// rather than one of the context before it. The switch stays for the call
+/// to end in a lambda, so one there is left to `dynamic` to list.
+fn unplaced(
+    code: &str,
+    raw: &str,
+    scopes: &[Scope],
+    namespaces: &[(usize, String)],
+) -> Vec<(usize, String)> {
+    let mut placed = namespaces.to_vec();
+    for at in computed_contexts(raw, code) {
+        if scope_at(scopes, at).is_some() {
+            continue;
+        }
+        let named = |p: usize| {
+            let end = code[p..].find('\n').map_or(code.len(), |i| p + i + 1);
+            !raw[..p].ends_with('\n') || opens(&code[p..end], &raw[p..end]).is_some()
+        };
+        let end = namespaces
+            .iter()
+            .map(|(p, _)| *p)
+            .find(|&p| p > at && named(p))
+            .unwrap_or(code.len());
+        for (p, ns) in &mut placed {
+            if (at..end).contains(p) {
+                *ns = UNPLACED.into();
+            }
+        }
+        let after = placed.partition_point(|(p, _)| *p <= at);
+        placed.insert(after, (at, UNPLACED.into()));
+    }
+    placed
+}
+
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
+    let namespaces = unplaced(code, raw, &scopes, &namespaces);
     let mut globals = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     for name in k_writes(raw, &namespaces) {
         globals.entry(name).or_default();
@@ -1508,6 +1591,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
         .1;
         globals.entry(resolved(&m[1], ns)).or_default();
     }
+    globals.retain(|name, _| !name.starts_with(UNPLACED));
     let lambdas = holds_functions(code, raw, &globals, &scopes, &namespaces)
         .into_iter()
         .filter_map(|(name, function)| function.then_some(name))
@@ -1559,6 +1643,32 @@ fn commands_blanked(code: &str, raw: &str) -> String {
     String::from_utf8(view).unwrap_or_default()
 }
 
+/// The column list of each `delete a,b from t`, which names columns and
+/// reads nothing: KDB-X, with a global `px:{x}`, runs `delete px from t` to
+/// `t` without its column `px`, and to `t` whole where it has none (#2806).
+/// Not that of `` delete px from `. ``, which names the global it removes.
+/// `code` has strings and comments blank. In order, for `within`.
+fn deleted_columns(code: &str) -> Vec<Range<usize>> {
+    re!(r"\bdelete[ \t]+((?:[A-Za-z][A-Za-z0-9_]*[ \t]*,[ \t]*)*[A-Za-z][A-Za-z0-9_]*)[ \t]+from\b")
+        .captures_iter(code)
+        .filter(|m| {
+            let all = m.get(0).unwrap();
+            boundary(code, all.start())
+                && !code[all.end()..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with('`')
+        })
+        .map(|m| m.get(1).unwrap().range())
+        .collect()
+}
+
+/// Whether `at` is in one of `ranges`, which are in order and apart.
+fn within(ranges: &[Range<usize>], at: usize) -> bool {
+    ranges
+        .get(ranges.partition_point(|r| r.end <= at))
+        .is_some_and(|r| r.start <= at)
+}
+
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
     let first_switch = first_switch(code, raw);
@@ -1593,6 +1703,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         names.insert(key);
     };
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
+    let deleted = deleted_columns(&view);
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
             continue;
@@ -1605,7 +1716,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             continue;
         }
         if !m.as_str().contains('.')
-            && scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(m.as_str()))
+            && (scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(m.as_str()))
+                || within(&deleted, m.start()))
         {
             continue;
         }
@@ -1686,40 +1798,53 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     names.sort();
     let mut relative: Vec<_> = relative.into_iter().collect();
     relative.sort();
-    let writes = global_writes(code, raw, &scopes, &namespaces, resolved, false);
+    let placed = unplaced(code, raw, &scopes, &namespaces);
+    let mut writes = global_writes(code, raw, &scopes, &placed, resolved, false);
+    writes.retain(|name, _| !name.starts_with(UNPLACED));
     let mut implicit_defines: Vec<_> = writes
         .iter()
         .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
         .map(|(name, _)| name.clone())
         .collect();
     implicit_defines.sort();
+    let root_defines: Vec<_> = implicit_defines
+        .iter()
+        .filter(|&name| writes[name].iter().any(|&a| a >= first_switch))
+        .cloned()
+        .collect();
     let mut defines: Vec<_> = writes
         .into_keys()
-        .chain(k_writes(raw, &namespaces))
+        .chain(k_writes(raw, &placed))
+        .filter(|name| !name.starts_with(UNPLACED))
         .collect();
     defines.sort();
     defines.dedup();
-    let mut moved = vec![];
+    let (mut moved, mut mentions) = (vec![], vec![]);
+    let loads = loads(
+        code,
+        raw,
+        &view,
+        &scopes,
+        |at| {
+            if scope_at(&scopes, at).is_some() || at < first_switch {
+                String::new()
+            } else if ns_at(at).is_empty() {
+                ".".into()
+            } else {
+                ns_at(at).to_string()
+            }
+        },
+        &mut moved,
+        &mut mentions,
+    );
     crate::References {
         names,
         relative,
         defines,
         implicit_defines,
-        loads: loads(
-            code,
-            raw,
-            &view,
-            |at| {
-                if scope_at(&scopes, at).is_some() || at < first_switch {
-                    String::new()
-                } else if ns_at(at).is_empty() {
-                    ".".into()
-                } else {
-                    ns_at(at).to_string()
-                }
-            },
-            &mut moved,
-        ),
+        root_defines,
+        loads,
+        mentions,
         module: is_module(code, raw),
         uses: uses(&view, &scopes),
         dynamic: dynamic(raw, &view, &call_time_access, &moved),
@@ -1851,6 +1976,24 @@ fn value_of_symbols<'n>(
             .or_default()
             .push((scope, ns_at(whole.start()), symbol(after)));
     }
+    // Whether `name`, read at `at`, is assigned in its scope, and nothing but
+    // a symbol atom. Not a parameter, which could hold anything.
+    let holds_symbol = |name: &str, at: usize| {
+        let scope = scope_at(scopes, at);
+        let local = scope.filter(|&s| scopes[s].locals.contains(name));
+        if local.is_some_and(|s| scopes[s].params.contains(name)) {
+            return false;
+        }
+        let namespace = ns_at(at);
+        let writes: Vec<bool> = assigned
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|(s, ns, _)| *s == local && (local.is_some() || *ns == namespace))
+            .map(|&(_, _, sym)| sym)
+            .collect();
+        !writes.is_empty() && writes.iter().all(|&sym| sym)
+    };
     let mut found = vec![];
     for m in re!(r"\bvalue\b").find_iter(view) {
         if !boundary(view, m.start()) {
@@ -1877,22 +2020,34 @@ fn value_of_symbols<'n>(
         if !ends {
             continue;
         }
-        let name = arg.as_str();
-        let scope = scope_at(scopes, m.start());
-        let local = scope.filter(|&s| scopes[s].locals.contains(name));
-        if local.is_some_and(|s| scopes[s].params.contains(name)) {
+        if holds_symbol(arg.as_str(), m.start()) {
+            found.push((m.start(), "value"));
+        }
+    }
+    // `nm upsert x` is a write on the same evidence, into the table `nm`
+    // names: KDB-X, after `` nm:`$"dyn3" ``, has a `dyn3` for
+    // `nm upsert ([]a:1 2)`, where `t upsert x` of a table writes nothing
+    // and returns one (#2826).
+    for m in re!(r"\bupsert\b").find_iter(view) {
+        if !boundary(view, m.start()) {
             continue;
         }
-        let namespace = ns_at(m.start());
-        let writes: Vec<bool> = assigned
-            .get(name)
-            .into_iter()
-            .flatten()
-            .filter(|(s, ns, _)| *s == local && (local.is_some() || *ns == namespace))
-            .map(|&(_, _, sym)| sym)
-            .collect();
-        if !writes.is_empty() && writes.iter().all(|&sym| sym) {
-            found.push((m.start(), "value"));
+        let after = view[m.end()..].trim_start_matches([' ', '\t']);
+        let target = match after.strip_prefix('[') {
+            Some(args) => args.split([';', ']']).next().unwrap_or(""),
+            None => {
+                let before = view[..m.start()].trim_end_matches([' ', '\t']);
+                re!(r"(?:\(\s*)?[`$A-Za-z0-9_.]+\s*\)?$")
+                    .find(before)
+                    .map_or("", |t| t.as_str())
+            }
+        };
+        let target = target.trim_matches(['(', ')', ' ', '\t']);
+        if target.starts_with("`$")
+            || re!(r"^\.Q\.dd\b").is_match(target)
+            || re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(target) && holds_symbol(target, m.start())
+        {
+            found.push((m.start(), "set"));
         }
     }
     found
@@ -1914,19 +2069,28 @@ fn value_of_symbols<'n>(
 /// `system "cd lib"` or the load of a directory, is read from a directory
 /// the text does not settle: q 5 loads lib/x.q for `\cd lib` then `\l x.q`
 /// (#763). Its offset goes in `moved` instead, for `dynamic` to list.
+///
+/// A file symbol handed to a keyword that runs none of the file is no load,
+/// and its path goes in `mentions`: KDB-X runs `\d .a` /
+/// `` sz:hcount `:b.q `` and `` key `.a `` is ``` ``sz ```, with b.q's names
+/// where its loader put them (#2805).
 fn loads(
     code: &str,
     raw: &str,
     view: &str,
+    scopes: &[Scope],
     namespace_at: impl Fn(usize) -> String,
     moved: &mut Vec<usize>,
+    mentions: &mut Vec<String>,
 ) -> Vec<(String, String)> {
     let sites = load_sites(code, raw, view);
-    let cd = changes_directory(code, raw, view).min(loads_directory(raw, &sites));
+    let changes = changes_directory(code, raw, view, &sites);
     let mut loads = vec![];
     for (at, path, symbol) in sites {
         let path = &raw[path];
-        if !symbol && at > cd && !path.starts_with('/') {
+        if symbol && only_read(view, at) {
+            mentions.push(path.to_string());
+        } else if !symbol && displaced(scopes, &changes, at) && !path.starts_with('/') {
             moved.push(at);
         } else {
             loads.push((path.to_string(), namespace_at(at)));
@@ -1934,12 +2098,45 @@ fn loads(
     }
     loads.sort();
     loads.dedup();
+    mentions.sort();
+    mentions.dedup();
     loads
 }
 
-/// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
-/// or past the end when it never does.
-fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
+/// Whether the file symbol at `at` is the argument of a keyword that runs
+/// nothing of the file: `hcount`, `hdel`, `hopen` and `key` measure, delete,
+/// open and look for it, and `read0` and `read1` hand back its text - which
+/// is a load after all where the statement evaluates it,
+/// `` value each read0 `:x.q ``.
+fn only_read(view: &str, at: usize) -> bool {
+    let line = &view[view[..at].rfind('\n').map_or(0, |i| i + 1)..at];
+    let Some(word) = re!(r"\b(hcount|hdel|hopen|key|read0|read1)[ \t]*[\[(]?[ \t]*$").find(line)
+    else {
+        return false;
+    };
+    boundary(line, word.start())
+        && !(word.as_str().starts_with("read")
+            && re!(r"\b(?:value|get|eval|reval|system)\b").is_match(&line[..word.start()]))
+}
+
+/// Where the script changes directory: `\cd lib`, `system "cd lib"`, or the
+/// load of what may be a directory. q stays in a directory it loads: KDB-X,
+/// after `\l db`, loads db/helper.q for `\l helper.q` and fails where only
+/// the directory it started in has one (#1365). The text cannot tell a
+/// directory from a data file, which moves nowhere, so any last component
+/// without a dot counts; `\l .`, a database reloading itself, stays where it
+/// is.
+fn changes_directory(
+    code: &str,
+    raw: &str,
+    view: &str,
+    sites: &[(usize, Range<usize>, bool)],
+) -> Vec<usize> {
+    let directory = |path: &str| {
+        let name = path.trim_end_matches(['/', '\\']);
+        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        name == ".." || !name.contains('.')
+    };
     raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
@@ -1948,74 +2145,115 @@ fn changes_directory(code: &str, raw: &str, view: &str) -> usize {
         })
         // Not one a block comment holds, which `code` has blank: KDB-X loads
         // the b.q beside the script for `\l b.q` under such a comment (#1363).
-        .find(|(at, line)| {
+        .filter(|(at, line)| {
             re!(r"^\\cd[ \t]+\S").is_match(line) && code.as_bytes().get(*at) == Some(&b'\\')
         })
         .map(|(at, _)| at)
-        .into_iter()
         .chain(
             re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
                 .find_iter(raw)
                 .map(|m| m.start())
                 .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
         )
-        .min()
-        .unwrap_or(usize::MAX)
+        .chain(
+            sites
+                .iter()
+                .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
+                .map(|&(at, ..)| at),
+        )
+        .collect()
 }
 
-/// Where the script first loads what may be a directory, or past the end
-/// when it never does. q stays in a directory it loads: KDB-X, after `\l db`,
-/// loads db/helper.q for `\l helper.q` and fails where only the directory it
-/// started in has one (#1365). The text cannot tell a directory from a data
-/// file, which moves nowhere, so any last component without a dot counts;
-/// `\l .`, a database reloading itself, stays where it is.
-fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)]) -> usize {
-    let directory = |path: &str| {
-        let name = path.trim_end_matches(['/', '\\']);
-        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        name == ".." || !name.contains('.')
-    };
-    sites
-        .iter()
-        .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
-        .map(|&(at, ..)| at)
-        .min()
-        .unwrap_or(usize::MAX)
+/// Whether a relative load at `at` comes after one of `changes`, a change of
+/// directory that has run by then: one at the top level, or in a lambda the
+/// load is in. A lambda's own change runs only when it is called: KDB-X
+/// loads the lib.q beside the script for `\l lib.q` under
+/// `cdTo:{system "cd ",x}` (#2821).
+fn displaced(scopes: &[Scope], changes: &[usize], at: usize) -> bool {
+    changes.iter().any(|&change| {
+        change < at
+            && scope_at(scopes, change).is_none_or(|lambda| {
+                std::iter::successors(scope_at(scopes, at), |&s| scopes[s].parent)
+                    .any(|s| s == lambda)
+            })
+    })
 }
 
-/// Whether what a load pattern found at `at` is q's `system` and not a name
-/// ending in it: after `.my.system:{-1 x}`, KDB-X's `.my.system "l b.q"`
-/// prints `l b.q` and loads nothing (#1362). A trap, `@[system;...]`, starts
-/// at its `@`.
-fn is_system(view: &str, at: usize) -> bool {
-    view[at..].starts_with('@') || boundary(view, at)
+/// Each load `system` is handed as a string, `"l x.q"`, however it is
+/// applied: where the `system` is, and the bytes of the path - or nothing
+/// for a load no edge follows, which `dynamic` lists. q's `system` and not a
+/// name ending in it: after `.my.system:{-1 x}`, KDB-X's
+/// `.my.system "l b.q"` prints `l b.q` and loads nothing (#1362).
+///
+/// Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
+/// lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
+/// `@[system;"l lib.q";{-1 x}]` (#762). So it does in parentheses,
+/// `system ("l lib.q")`, trapped with `.`, `.[system;enlist "l lib.q";h]`,
+/// and applied to each of a list of one, `system each enlist "l lib.q"`,
+/// `system'[enlist ...]`, `system@'enlist ...`, `system . enlist ...`; KDB-X
+/// has lib.q's names after each (#2804). Any other way of handing it the
+/// string is taken for a load that reading does not follow, as is the head
+/// of a path joined at run time, `system "l dir/",x`, which is no load of
+/// `dir/`.
+fn system_loads(raw: &str, view: &str) -> Vec<(usize, Option<Range<usize>>)> {
+    let mut found = vec![];
+    for m in re!(r"\bsystem\b").find_iter(view) {
+        if !boundary(view, m.start()) {
+            continue;
+        }
+        let Some(load) = re!(r#"^((?:\s|[(\[;@'.]|\b(?:each|peach|enlist)\b)*)"(l\s[^"]*)""#)
+            .captures(&raw[m.end()..])
+        else {
+            continue;
+        };
+        let applied: String = load[1]
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '(')
+            .collect();
+        // An argument of a trap, and of nothing else: `(system;"l b.q")` is
+        // a list.
+        let before = view[..m.start()].trim_end();
+        let followed = match applied.as_str() {
+            ";" if before.ends_with("@[") => true,
+            ";enlist" if before.ends_with(".[") => true,
+            _ if applied.starts_with(';') => continue,
+            "" | "[" | "@" | "eachenlist" | "peachenlist" | "'[enlist" | "@'enlist" | ".enlist" => {
+                true
+            }
+            _ => false,
+        };
+        let text = load.get(2).unwrap();
+        let from = m.end() + text.start();
+        let joined = raw[m.end() + load.get(0).unwrap().end()..]
+            .trim_start_matches([' ', '\t'])
+            .starts_with(',');
+        let path = re!(r"^l\s+(\S+)\s*$")
+            .captures(text.as_str())
+            .map(|p| p.get(1).unwrap().range())
+            .map(|p| from + p.start..from + p.end);
+        match path {
+            Some(path) if followed && !joined => found.push((m.start(), Some(path))),
+            Some(_) => found.push((m.start(), None)),
+            None if joined => found.push((m.start(), None)),
+            None => {}
+        }
+    }
+    found
 }
 
 /// Each literal load `loads` reads: where its statement starts, the bytes of
 /// its path, and whether it is a file symbol, which no `\cd` moves.
 fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bool)> {
     let mut sites = vec![];
-    for (at, rest) in load_lines(code, raw) {
+    for (at, from, rest) in load_lines(code, raw) {
         if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
-            let from = rest.as_ptr() as usize - code.as_ptr() as usize;
             let path = m.get(1).unwrap().range();
             sites.push((at, from + path.start..from + path.end, false));
         }
     }
-    // Applied with brackets or `@`, or trapped, it loads as well: q 5 loads
-    // lib.q for `system["l lib.q"]`, `system@"l lib.q"` and
-    // `@[system;"l lib.q";{-1 x}]` (#762).
-    for m in re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s+([^"\s]+)\s*""#)
-        .captures_iter(raw)
-    {
-        let at = m.get(0).unwrap().start();
-        // Not the head of a path joined at run time, `system "l dir/",x`,
-        // which is a dynamic load, not one of `dir/`.
-        let joined = raw[m.get(0).unwrap().end()..]
-            .trim_start_matches([' ', '\t'])
-            .starts_with(',');
-        if view[at..].starts_with(&raw[at..at + 2]) && !joined && is_system(view, at) {
-            sites.push((at, m.get(1).unwrap().range(), false));
+    for (at, path) in system_loads(raw, view) {
+        if let Some(path) = path {
+            sites.push((at, path, false));
         }
     }
     // The symbol runs on over `:` and `/`, so `.q` must end it: `` `:x.qd ``
@@ -2030,18 +2268,22 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 /// navigation request on one follows to the file it names.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
+    let (scopes, _) = scopes(code, raw);
     let sites = load_sites(code, raw, &view);
-    let cd = changes_directory(code, raw, &view).min(loads_directory(raw, &sites));
+    let changes = changes_directory(code, raw, &view, &sites);
     sites
         .into_iter()
-        .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
+        .filter(|(at, path, symbol)| {
+            *symbol || !displaced(&scopes, &changes, *at) || raw[path.clone()].starts_with('/')
+        })
         .map(|(_, path, _)| path)
         .collect()
 }
 
 /// The places a name is reached by a value computed at run time, which no
 /// amount of reading resolves: `value "..."`, `get` of anything but a
-/// literal, a name built with `` ` sv ``, `set` into a computed name, and a
+/// literal, a name built with `` ` sv ``, `set` into a computed name, a
+/// switch to a computed context, and a
 /// load whose path is concatenated or that `value` runs from a string. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string. `call_time`
 /// holds the literal symbols `call_time` says are resolved where the lambda
@@ -2063,6 +2305,9 @@ fn dynamic(
     }
     for &at in moved {
         push(at, "load");
+    }
+    for at in computed_contexts(raw, view) {
+        push(at, "namespace");
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
@@ -2097,15 +2342,21 @@ fn dynamic(
             push(m.start(), "get");
         }
     }
-    // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path.
+    // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path,
+    // in a list written out too: KDB-X's `` ` sv (`:dir;`file) `` is
+    // `` `:dir/file `` (#2816).
     for m in re!(r"`[ \t]+sv\b").find_iter(view) {
-        if !next(m.end()).starts_with("`:") {
+        let parts = next(m.end()).trim_start_matches(['(', ' ', '\t']);
+        if !parts.starts_with("`:") {
             push(m.start(), "sv");
         }
     }
     // A literal target is a definition `index` already holds, and `hsym`
     // or `` `: `` a file; anything else is a name computed at run time.
-    for m in re!(r"\bset\b").find_iter(view) {
+    // So is the target of an `insert`, which takes a table by its name and
+    // nothing else: KDB-X refuses `t insert x` of a table itself with 'type
+    // (#2826).
+    for m in re!(r"\b(?:set|insert)\b").find_iter(view) {
         if !boundary(view, m.start()) || next(m.end()).starts_with(':') {
             continue;
         }
@@ -2133,13 +2384,44 @@ fn dynamic(
             push(m.start(), "set");
         }
     }
-    for m in
-        re!(r#"(?:\bsystem\s*(?:\[\s*|@\s*)?|@\[\s*system\s*;\s*)"l\s[^"]*"\s*,"#).find_iter(raw)
-    {
-        if view[m.start()..].starts_with(&raw[m.start()..m.start() + 2])
-            && is_system(view, m.start())
-        {
-            push(m.start(), "load");
+    // A write by amend, or a delete, of a name computed at run time, where
+    // the same with a literal name is a definition `index` holds: KDB-X,
+    // after `` nm:`$"dyn1" ``, has a `dyn1` for `` @[`.;nm;:;1 2] `` and for
+    // `.[nm;();:;1 2]`, and none after `` ![`.;();0b;enlist nm] `` (#2826).
+    let named = |target: &str| {
+        let target = target.trim();
+        target.is_empty()
+            || target.contains("hsym")
+            || re!(r"^(?:enlist\b\s*|\(\s*)*(?:`[A-Za-z0-9_.:/]*\s*)+\)?$").is_match(target)
+    };
+    // Applied, and not the verb after a noun: `x![...]` makes a dictionary.
+    let applied = |at: usize| {
+        !view[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}".contains(c))
+    };
+    for m in re!(r"@\s*\[\s*`\.\s*;").find_iter(view) {
+        if !named(view[m.end()..].split([';', ']']).next().unwrap_or("")) {
+            push(m.start(), "set");
+        }
+    }
+    for m in re!(r"\.\s*\[([^;\[\]]*);\s*\(\s*\)\s*;").captures_iter(view) {
+        let at = m.get(0).unwrap().start();
+        if applied(at) && !named(&m[1]) {
+            push(at, "set");
+        }
+    }
+    for m in re!(r"!\s*\[\s*`\.\s*;").find_iter(view) {
+        let open = m.start() + view[m.start()..].find('[').unwrap_or(0);
+        let Some(close) = matching(view, open, b'[', b']') else {
+            continue;
+        };
+        let slots = crate::slots(&view[open + 1..close - 1]);
+        if applied(m.start()) && slots.len() == 4 && !named(slots[3]) {
+            push(m.start(), "set");
+        }
+    }
+    for (at, path) in system_loads(raw, view) {
+        if path.is_none() {
+            push(at, "load");
         }
     }
     found.sort_by_key(|d| (d.line, d.kind));
@@ -2187,8 +2469,8 @@ pub(crate) fn unnamed_writes<'c>(
     raw: &str,
 ) -> Vec<(usize, Unnamed)> {
     let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
-        .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
-        .map(|(at, _)| (at, Unnamed::Evaluation))
+        .filter(|(_, _, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        .map(|(at, ..)| (at, Unnamed::Evaluation))
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
@@ -2596,7 +2878,8 @@ pub fn check(
     // Asked where the file is loaded, as well as where it switches to: a
     // bare name a file loaded under `\d .ns` reads is `.ns.`'s (#2178).
     let placement = ws.placement(path);
-    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement);
+    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement, false);
+    let first_switch = first_switch(code, raw);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
     // which is what a q library is.
@@ -3773,8 +4056,14 @@ pub fn check(
                     || elsewhere(&format!(".q.{name}"))
                     // Exactly too: another file's `.cfg` is not a root
                     // `cfg`, and q 5 does not fall back from `\d .ns` to
-                    // the root (#359).
-                    || elsewhere(&resolved(name, namespace))
+                    // the root (#359) - nor from the context a loader put
+                    // the file in, for a read before its first `\d` (#2818).
+                    || ws.defined_elsewhere_as_loaded(
+                        &resolved(name, namespace),
+                        &own,
+                        placement,
+                        start + value.start() < first_switch,
+                    )
                     // QF010 and QF005 already explain these more precisely.
                     || (scope.is_some() && matches!(name, "x" | "y" | "z"))
                     || std::iter::successors(scope.and_then(|s| s.parent), |&p| scopes[p].parent)

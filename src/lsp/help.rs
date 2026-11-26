@@ -898,7 +898,7 @@ impl Loads {
         for key in sources.keys() {
             let file = &sources.idx.files[key];
             let mut loaded = file.own.clone();
-            placement.apply(&mut loaded, &file.implicit);
+            placement.apply(&mut loaded, &file.read);
             for name in loaded.defined {
                 definers.entry(name).or_default().push(key.to_string());
             }

@@ -88,7 +88,11 @@ pub fn build_from(
     let root = rooted(&loads, &tree, &contexts, &modules);
     for (d, read) in reads.iter().enumerate() {
         if !root[d] {
-            for name in &read.implicit_defines {
+            // But for one the script assigns again after a `\d .`: KDB-X
+            // runs b.q's `xx:1` / `\d .` / `xx:2` under `\d .a` to `.a.xx` 1
+            // and a root `xx` 2 (#2824).
+            let moved = |name: &&String| !read.root_defines.contains(name);
+            for name in read.implicit_defines.iter().filter(moved) {
                 if let Some(defs) = definers.get_mut(name) {
                     defs.retain(|&x| x != d);
                 }
@@ -104,6 +108,20 @@ pub fn build_from(
                 }
             }
         }
+    }
+    // A namespace nobody assigns whole is made by the files assigning its
+    // members, and a read of it reads them all: KDB-X runs `.cfg.port:5010`
+    // in one file and `\d .cfg` / `retries:3` in another, and `.cfg` is
+    // ``` ``port`retries!(::;5010;3) ``` (#2827).
+    let mut members: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (name, defs) in &definers {
+        for (dot, _) in name.match_indices('.').filter(|&(dot, _)| dot > 0) {
+            members.entry(&name[..dot]).or_default().extend(defs);
+        }
+    }
+    for defs in members.values_mut() {
+        defs.sort_unstable();
+        defs.dedup();
     }
     let identity = &tree.identity;
     let targets = |i: usize, load: &str| tree.targets(i, load);
@@ -146,11 +164,18 @@ pub fn build_from(
             }
         }
         for name in &names {
-            let Some((name, defs)) = resolve(name, &definers).or_else(|| {
-                in_q.get(name)
-                    .and_then(|q| definers.get_key_value(q))
-                    .map(|(k, d)| (k.as_str(), d.as_slice()))
-            }) else {
+            let Some((name, defs)) = resolve(name, &definers)
+                .or_else(|| {
+                    in_q.get(name)
+                        .and_then(|q| definers.get_key_value(q))
+                        .map(|(k, d)| (k.as_str(), d.as_slice()))
+                })
+                .or_else(|| {
+                    members
+                        .get_key_value(name.as_str())
+                        .map(|(k, d)| (*k, d.as_slice()))
+                })
+            else {
                 continue;
             };
             let others: Vec<_> = defs
@@ -170,7 +195,10 @@ pub fn build_from(
                 );
             }
         }
-        for (load, _) in &reads[i].loads {
+        // A script only measured or read, `` hcount `:b.q ``, is reached
+        // too, though nothing puts it in a context (#2805).
+        let loads = reads[i].loads.iter().map(|(load, _)| load);
+        for load in loads.chain(&reads[i].mentions) {
             for d in targets(i, load) {
                 if identity[d] != identity[i] {
                     node.dependencies.insert(paths[d].clone());
@@ -249,7 +277,7 @@ impl<'a> Tree<'a> {
         // `.Q.lo`), so it leads to each of them (#533).
         let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
         for (i, p) in files.iter().enumerate() {
-            if let Some(dir) = p.parent() {
+            if let Some(dir) = p.parent().filter(|_| !partition_named(p)) {
                 scripts_in.entry(dir).or_default().push(i);
             }
         }
@@ -274,14 +302,27 @@ impl<'a> Tree<'a> {
     }
 }
 
+/// Whether a directory's load takes the file at `path` for a partition and
+/// not a script, by its name: `.Q.lo` runs no entry that starts with a digit,
+/// nor `par.txt`. KDB-X's `\l db` with a db/1b.q stops with 'part and never
+/// runs it (#2815).
+pub fn partition_named(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name == "par.txt"
+            || name
+                .as_encoded_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_digit)
+    })
+}
+
 /// The files `\l load` in the file at `from` leads to, as the graph follows
 /// it: the first place q tries that `file` finds, under the path tried or
 /// the real path it names, or else the scripts `scripts_in` finds directly
 /// in the directory at the first place - a directory only where q looks, the
-/// current one: `\l .`, a database reloading itself, is no load of the
-/// scripts beside the file that says it. Nothing for a load that reaches no
-/// file. The language server follows a load line with this too, over the
-/// files it indexes.
+/// current one, and never `\l .`, a database reloading itself, which runs
+/// no script. Nothing for a load that reaches no file. The language server
+/// follows a load line with this too, over the files it indexes.
 pub fn loaded<T>(
     from: &Path,
     load: &str,
@@ -289,6 +330,12 @@ pub fn loaded<T>(
     file: impl Fn(&Path) -> Option<T>,
     scripts_in: impl FnOnce(&Path) -> Vec<T>,
 ) -> Vec<T> {
+    // `.Q.lo` runs a directory's scripts unless the load is of `.` itself:
+    // KDB-X, started beside b.q, runs it for `\l ./` and `\l ../here` and
+    // not for `\l .` (#2814).
+    if load == "." {
+        return vec![];
+    }
     let candidates = load_targets(from, load, cwd);
     candidates
         .iter()
@@ -510,10 +557,12 @@ impl Default for Placement {
 }
 
 impl Placement {
-    /// `file`, the index of a script whose root definitions are `implicit`
-    /// (its `References::implicit_defines`), with them where q puts them.
-    pub fn apply(&self, file: &mut FileIndex, implicit: &[String]) {
-        for name in implicit {
+    /// `file`, the index of the script `read` is the `References` of, with
+    /// its root definitions (`References::implicit_defines`) where q puts
+    /// them. One assigned again after a `\d .` stays at the root too: that
+    /// write is the root's wherever the script is loaded (#2824).
+    pub fn apply(&self, file: &mut FileIndex, read: &References) {
+        for name in &read.implicit_defines {
             let lambda = file.lambdas.contains(name);
             for ns in &self.contexts {
                 let qualified = format!("{ns}.{name}");
@@ -522,7 +571,7 @@ impl Placement {
                 }
                 file.defined.insert(qualified);
             }
-            if !self.root {
+            if !self.root && !read.root_defines.contains(name) {
                 file.lambdas.remove(name);
                 file.defined.remove(name);
             }

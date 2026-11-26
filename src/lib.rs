@@ -152,13 +152,20 @@ impl Workspace {
     /// root read after a `\d .` is asked about those too, which can only
     /// keep a finding back, never make one. The file's own root names are
     /// its own in those contexts as well.
+    ///
+    /// `implicit` for a read before the file's first `\d`, which is the
+    /// root's only where the file is loaded at the root: KDB-X, after
+    /// `helper:{x}`, runs a `\d .a` / `\l b.q` to 'helper at b.q's
+    /// `r:helper`, for it falls back to no root (#2818).
     pub(crate) fn defined_elsewhere_as_loaded(
         &self,
         name: &str,
         own: &std::collections::HashSet<String>,
         placement: Option<&graph::Placement>,
+        implicit: bool,
     ) -> bool {
-        if self.defined_elsewhere(name, own) {
+        let rootless = implicit && placement.is_some_and(|p| !p.root);
+        if !rootless && self.defined_elsewhere(name, own) {
             return true;
         }
         let Some(placement) = placement.filter(|_| !name.starts_with('.')) else {
@@ -229,12 +236,19 @@ pub struct References {
     /// Those of `defines` assigned before the file's first `\d`, by a name
     /// without a leading dot: a load under `\d .a` puts them in `.a`.
     pub implicit_defines: Vec<String>,
+    /// Those of `implicit_defines` assigned again after a `\d .`, which is
+    /// the root wherever the file is loaded: q keeps that one there.
+    pub root_defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
     /// written, each with the `\d` in force where it is loaded, since the
     /// loaded script runs in it: `""` before the file's first `\d`, where
     /// that is whichever context the file is loaded in, and `"."` at the
     /// root after it.
     pub loads: Vec<(String, String)>,
+    /// The file symbols naming a script that are handed to a keyword which
+    /// measures, opens, deletes or reads the file and runs none of it,
+    /// `` hcount `:lib/x.q ``: the file is reached, and loaded nowhere.
+    pub mentions: Vec<String>,
     /// Whether the file is a KDB-X module: one that assigns `export` at its
     /// top level, which `use` reads back (`semantics::is_module`).
     pub module: bool,
@@ -258,8 +272,9 @@ pub struct Relative {
 
 /// A place reading cannot see through: `kind` is `value` (of a string),
 /// `get` (of anything but a literal), `eval` (or `reval`, of a parse tree),
-/// `sv` (a name built from parts), `set` (into a computed name) or `load` (a
-/// concatenated `system "l ..."`, or a `value "\\l ..."`). A
+/// `sv` (a name built from parts), `set` (into a computed name), `namespace`
+/// (a `system "d ",ns`, which puts what follows in a context computed) or
+/// `load` (a concatenated `system "l ..."`, or a `value "\\l ..."`). A
 /// `get`, `value` or `set` of an unqualified symbol inside a lambda written
 /// under `\d` is one too: q looks the symbol up in the `\d` current when the
 /// lambda is called, which the source does not say.
@@ -416,7 +431,7 @@ pub fn on_k_line(source: &str, offsets: &[usize]) -> Option<usize> {
 }
 
 /// What Extract Function writes for a selection: see `extract`.
-pub use semantics::extract::{Extraction, fresh_name};
+pub use semantics::extract::{Extraction, fresh_name, fresh_name_but};
 
 /// The selection `from..to` of `source` made a lambda of its own - its
 /// trimmed range, the lambda's parameters (the locals of the lambda around
@@ -5673,6 +5688,17 @@ fn iterated_type(s: &str) -> bool {
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
     names_within(slot, 0)
 }
+/// The names the parameter slot `slot` of a signature binds, for whoever
+/// documents them: `x` for `` x:`j ``, a and b for `(a;b)`, and none for an
+/// empty slot or a pattern that only matches (#2778).
+pub fn slot_names(slot: &str) -> Vec<&str> {
+    pattern_names(slot)
+}
+/// The parameter slot `slot` without its type or filter, for whoever shows
+/// it at an argument: `x` of `` x:`j ``, `(a;b)` of `` (a;b):`j `` (#2778).
+pub fn slot_pattern(slot: &str) -> &str {
+    typed_at(slot).map_or(slot, |at| &slot[..at]).trim()
+}
 /// `pattern_names` at a nesting `depth`; past `MAX_NESTING` it binds nothing.
 fn names_within(slot: &str, depth: usize) -> Vec<&str> {
     if depth > MAX_NESTING {
@@ -8326,7 +8352,7 @@ fn lint_rules(
     let own = semantics::index(code, source).defined;
     let placement = ws.placement(path);
     let foreign = |at: usize, key: &str| {
-        ws.defined_elsewhere_as_loaded(key, &own, placement) && in_lambda(at)
+        ws.defined_elsewhere_as_loaded(key, &own, placement, false) && in_lambda(at)
     };
     // Between the name and its bracket, the statement's blanks and nothing
     // else: a column-0 `[1;2;3]` under `r:f` is a statement of its own
@@ -9164,7 +9190,8 @@ fn lint_rules(
     // `\d .ns` the name is `.ns.true`, which a root `true` does not define
     // and lib.q's own `\d .ns` does (q 5, #520).
     let placement = ws.placement(path);
-    let elsewhere = |key: &str| ws.defined_elsewhere_as_loaded(key, &Default::default(), placement);
+    let elsewhere =
+        |key: &str| ws.defined_elsewhere_as_loaded(key, &Default::default(), placement, false);
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
     // `no, which the fix to 1b would turn to `yes (#750).
@@ -9943,10 +9970,15 @@ fn lint_rules(
             add(
                 name.start(),
                 "QS007",
+                // The names its slots bind, not the slots: `` x:`j `` declares
+                // x (#2778).
                 format!(
                     "`@param {}` names a parameter this lambda does not take; it declares {:?}",
                     name.as_str(),
                     sig.slots
+                        .iter()
+                        .flat_map(|slot| pattern_names(slot))
+                        .collect::<Vec<_>>()
                 ),
             );
         }

@@ -314,7 +314,6 @@ const MAX_ENTRIES: usize = 500_000;
 struct Indexed {
     own: FileIndex,
     loads: Vec<(String, String)>,
-    implicit: Vec<String>,
     placement: Placement,
     placed: FileIndex,
     /// What the file reads, for the dependency graph `relate` draws when it
@@ -357,7 +356,7 @@ impl Index {
     fn put_keyed(&mut self, path: String, text: &str, withheld: bool) -> bool {
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
-        let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
+        let loads = read.loads.clone();
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| {
             old.loads != loads || old.read.module != read.module || old.read.uses != read.uses
@@ -382,7 +381,7 @@ impl Index {
             .map(|old| old.placement.clone())
             .unwrap_or_default();
         let mut placed = own.clone();
-        placement.apply(&mut placed, &implicit);
+        placement.apply(&mut placed, &read);
         if old.is_none() {
             self.ws.place(Path::new(&path), &placement);
         }
@@ -405,7 +404,6 @@ impl Index {
         let file = Indexed {
             own,
             loads,
-            implicit,
             placement,
             placed,
             read,
@@ -499,7 +497,7 @@ impl Index {
             changed = true;
             self.ws.place(Path::new(key), &placement);
             let mut placed = file.own.clone();
-            placement.apply(&mut placed, &file.implicit);
+            placement.apply(&mut placed, &file.read);
             file.placement = placement;
             if placed != file.placed {
                 if !file.withheld {
@@ -2751,7 +2749,7 @@ fn code_actions(
         // The reason it is refused only to a menu that asked for refactors
         // by name: the lightbulb asks as the cursor moves.
         let why = opts.disabled_actions && only.is_some();
-        actions.extend(extract_action(params, docs, why));
+        actions.extend(extract_action(params, docs, ws, why));
     }
     if only
         .as_ref()
@@ -3014,12 +3012,23 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     if above.contains("@param") || above.contains("@return") {
         return None;
     }
+    // A file written with CRLF gets CRLF (#2795).
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    // The names each slot binds: `` x:`j `` is x, and the pattern `(a;b)` a
+    // and b, as QS007 reads the block back (#2778). An empty slot, the
+    // second of `{[a;] a}`, has no name to document (#2779).
     let mut block: String = definition
         .params
         .iter()
-        .map(|param| format!("/ @param {param}\n"))
+        .flat_map(|param| q_lint_rs::slot_names(param))
+        .map(|name| format!("/ @param {name}{newline}"))
         .collect();
-    block.push_str("/ @return\n");
+    block.push_str("/ @return");
+    block.push_str(newline);
     let at = lines.json(m.at);
     let mut changes = serde_json::Map::new();
     changes.insert(
@@ -3114,7 +3123,7 @@ fn functional_actions(params: &Value, docs: &Documents, why: bool) -> Vec<Value>
 /// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
 /// empty selection; for one it refuses, nothing, or with `why` the action
 /// disabled with the reason.
-fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> {
+fn extract_action(params: &Value, docs: &Documents, ws: &Workspace, why: bool) -> Option<Value> {
     let uri = uri_of(&params["textDocument"]);
     let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
     let lines = Lines::new(source);
@@ -3131,7 +3140,11 @@ fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> 
     let title = "Extract function";
     match q_lint_rs::extract(source, from, to) {
         Ok(found) => {
-            let name = q_lint_rs::fresh_name(source, "extracted");
+            // A name another file defines is in use as well, under whatever
+            // namespace: this file may load that one, or be loaded by it,
+            // into the context the new definition is made in (#2793).
+            let taken = |name: &str| ws.names().any(|(n, _)| n.rsplit('.').next() == Some(name));
+            let name = q_lint_rs::fresh_name_but(source, "extracted", taken);
             let insert = lines.json(found.insert_at);
             let mut changes = serde_json::Map::new();
             // Both edits are in the original's positions, as LSP has them;

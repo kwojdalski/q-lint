@@ -1154,6 +1154,46 @@ fn a_foreign_keyword_in_a_script_loaded_under_a_context_is_read_there() {
 }
 
 #[test]
+fn a_script_only_measured_under_a_context_keeps_its_root_definitions() {
+    // KDB-X runs b.q, mon.q, then c.q's `r:bfun` to `{x+1}`: `hcount` under
+    // `\\d .a` loads nothing, and `` key `.a `` is ``` ``sz ``` (#2805).
+    let repo = Repo::new();
+    repo.write("b.q", "bfun:{x+1}\n")
+        .write("mon.q", "\\d .a\nsz:hcount `:b.q\n")
+        .write("c.q", "r:bfun\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+    // A loader called there does put them in `.a`.
+    repo.write("mon.q", "\\d .a\n.ld.f `:b.q\n");
+    assert_eq!(repo.codes(".", &[&style[..], &["."]].concat()), ["QF018"]);
+}
+
+#[test]
+fn a_name_assigned_under_a_computed_context_is_not_a_root_definition() {
+    // KDB-X runs lib.q, then use.q to 'dfun: `system "d ",ns` put `dfun` in
+    // `.app`, the context `ns` held (#2813).
+    let repo = Repo::new();
+    repo.write(
+        "lib.q",
+        "ns:\".app\"\nsystem \"d \",ns\ndfun:{x}\nsystem \"d .\"\nkept:1\n",
+    )
+    .write("use.q", "r:dfun\n")
+    .write("ok.q", "r:kept\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["use.q", "lib.q"]].concat()),
+        ["QF018"]
+    );
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["ok.q", "lib.q"]].concat()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
     // q 5: after main.q's `\d .a` / `\l b.q`, the root has no `ff`, and
     // d.q's `h:{ff}` throws 'ff (#525).
@@ -1175,6 +1215,43 @@ fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
         repo.codes(".", &[&style[..], &["."]].concat()),
         Vec::<String>::new()
     );
+    // A name the script assigns again after a `\\d .` is the root's too:
+    // KDB-X runs `\\d .a` / `\\l c.q`, then r.q's `r:xx`, to 2 (#2824).
+    let repo = Repo::new();
+    repo.write("main.q", "\\d .a\n\\l c.q\n")
+        .write("c.q", "xx:1\nonly:1\n\\d .\nxx:2\n")
+        .write("r.q", "r:xx\n");
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+    repo.write("r.q", "r:only\n");
+    assert_eq!(repo.codes(".", &[&style[..], &["."]].concat()), ["QF018"]);
+}
+
+#[test]
+fn a_bare_read_in_a_script_loaded_only_under_a_context_is_not_the_root_name() {
+    // KDB-X: `\l main.q` is 'helper at b.q's first line, and `.a.g 1` after
+    // a b.q without that line is 'helper too: under `\d .a` the name is
+    // `.a.helper`, and q falls back to no root (#2818).
+    let repo = Repo::new();
+    repo.write("util.q", "helper:{x}\n")
+        .write("main.q", "\\l util.q\n\\d .a\n\\l b.q\n")
+        .write("b.q", "r:helper\ng:{helper}\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    let all = [&style[..], &["."]].concat();
+    assert_eq!(repo.codes(".", &all), ["QF018", "QF018"]);
+    // A name another script loaded there defines is `.a`'s, and found.
+    repo.write("main.q", "\\d .a\n\\l util.q\n\\l b.q\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
+    // Loaded at the root as well, the read is the root's there; and after
+    // the script's own `\d .` it is the root's wherever it is loaded.
+    repo.write("main.q", "\\l util.q\n\\d .a\n\\l b.q\n")
+        .write("e.q", "\\l b.q\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
+    repo.write("e.q", "e:1\n")
+        .write("b.q", "\\d .\nr:helper\ng:{helper}\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
 }
 
 #[test]

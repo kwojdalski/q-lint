@@ -10,7 +10,8 @@
 //! columns keeps the last row of each group; `update` and `delete` return a
 //! changed copy of a table named by value and change a table named by
 //! symbol (`` `t ``) in place; `exec` returns a list, or a dictionary of
-//! them, rather than a table.
+//! them, rather than a table. A query q refuses whatever its table holds
+//! is said to be refused, with q's error.
 use super::functional::{Node, infix_text, tree};
 use super::layout;
 
@@ -368,6 +369,26 @@ fn explain(p: &layout::Parts) -> String {
             code("select[2;<px]")
         );
     }
+    // So are the shapes KDB-X refuses whatever the table holds (#2781):
+    // an update that names no column was said to set nothing on every
+    // row, an exec of no column by one unnamed group to return the last
+    // row, and a delete with a by clause to remove every row.
+    let refused = match p.lead {
+        "update" if head.is_empty() => Some(("type", "an update names the columns it sets")),
+        "exec" if head.is_empty() && matches!(&by[..], [one] if name(one).is_none()) => Some((
+            "nyi",
+            "an exec that names no column takes its group named, as in `exec by s:sym from t`",
+        )),
+        "delete" if !by.is_empty() => Some(("by", "a delete takes no by clause")),
+        "delete" if !head.is_empty() && !wheres.is_empty() => Some((
+            "nyi",
+            "a delete removes columns or rows, not columns of some rows",
+        )),
+        _ => None,
+    };
+    if let Some((error, why)) = refused {
+        return format!("**In words.** q refuses this query with '{error}: {why}.");
+    }
     let in_place = from.trim_start().starts_with('`');
     let mut lines = vec![];
     lines.push(match p.lead {
@@ -432,7 +453,9 @@ fn explain(p: &layout::Parts) -> String {
                     list(&by, column)
                 ));
             }
-            steps.push(if head.is_empty() {
+            steps.push(if head.is_empty() && !by.is_empty() {
+                "Returns the last row of each group.".to_string()
+            } else if head.is_empty() {
                 "Returns the last row, as a dictionary from each column to its value.".to_string()
             } else if head.len() == 1 && !head[0].contains(':') {
                 format!("Returns {} as a list, not a table.", column(&head[0]))

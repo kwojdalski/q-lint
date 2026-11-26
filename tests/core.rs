@@ -537,6 +537,28 @@ fn a_name_inside_a_file_symbol_is_not_coloured() {
 }
 
 #[test]
+fn the_command_word_of_a_timed_line_is_not_coloured() {
+    // `\t` times what follows it and reads no `t`, whatever function is
+    // named `t` or `ts` (#2777); what follows it is q, and is coloured.
+    let text =
+        "t:{x}\nts:{x}\n\\t foo 1\n\\t r:1+1\n\\t:10 t 2\nq)\\t ts 1\n\\ts t 3\n\\ts:5 ts 4\n";
+    let at: Vec<usize> = q_lint_rs::semantic_tokens(text)
+        .iter()
+        .map(|t| t.0)
+        .collect();
+    assert_eq!(functions(text), ["t", "ts", "t", "ts"]);
+    assert_eq!(
+        at,
+        [
+            text.find("t 2").unwrap(),
+            text.find("ts 1").unwrap(),
+            text.find("t 3").unwrap(),
+            text.find("ts 4").unwrap()
+        ]
+    );
+}
+
+#[test]
 fn a_function_a_k_line_defines_or_calls_is_coloured() {
     // KDB-X: after `k)g:{[a] a+1}`, `type g` is 100h and `t:g 3` is 4; a
     // `k)` line calls q's `f` as q does (#2314).
@@ -2129,6 +2151,25 @@ fn many_documented_functions_lint_in_linear_time() {
     assert!(
         large < small * 16,
         "1000 documented functions took {small:?} and 8000 {large:?}"
+    );
+}
+/// QS007 says what the lambda declares by the names its slots bind: a
+/// typed slot's name and a pattern's, not the slots as written (#2778).
+#[test]
+fn a_stale_param_is_told_the_names_the_signature_binds() {
+    let source = "/ @param zz nothing\nf:{[x:`j;(a;b);] x+a+b}\n";
+    let found = lint(source, "t.q", Profile::StyleQ);
+    let messages: Vec<&str> = found
+        .iter()
+        .filter(|f| f.code == "QS007")
+        .map(|f| f.detail.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "`@param zz` names a parameter this lambda does not take; it declares \
+          [\"x\", \"a\", \"b\"]"
+        ]
     );
 }
 /// QB004 read on from each top-level signal to the next `;` or closer,

@@ -593,6 +593,71 @@ fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
     }
 }
 
+/// An empty slot has no name: no `/ @param ` line with nothing after it,
+/// and no hint that is a colon alone (#2779).
+#[test]
+fn an_empty_parameter_slot_is_neither_documented_nor_hinted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "a.q", "f:{[a;] a}\nr:f[1;2]\n");
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @param a\n/ @return\n");
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(hints(&reply), [hint(1, 4, "a:")], "{reply}");
+}
+
+/// A typed slot is the name it binds, and a pattern the names in it: the
+/// type is no part of what is documented or hinted (#2778).
+#[test]
+fn a_typed_parameter_is_documented_and_hinted_by_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "f:{[x:`j;y:`J] x+y}\ng:{[(a;b):`j;c] a+b+c}\nr:f[1;2 3]\ns:g[1 2;3]\nt:f[x;4]\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri).unwrap().1,
+        "/ @param x\n/ @param y\n/ @return\n"
+    );
+    let actions = actions_at(&mut server, &uri, 1, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri).unwrap().1,
+        "/ @param a\n/ @param b\n/ @param c\n/ @return\n"
+    );
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(2, 4, "x:"),
+            hint(2, 6, "y:"),
+            hint(3, 4, "(a;b):"),
+            hint(3, 8, "c:"),
+            // An argument that is the parameter's own name needs none.
+            hint(4, 6, "y:"),
+        ],
+        "{reply}"
+    );
+}
+
+/// The block's lines end as the file's own do: a CRLF file is left with no
+/// bare LF (#2795).
+#[test]
+fn a_qdoc_block_ends_its_lines_as_the_file_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "a.q", "a:1\r\nf:{[a;b] a+b}\r\ng:2\r\n");
+    let actions = actions_at(&mut server, &uri, 1, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri),
+        Some((
+            "Generate qDoc for f".to_string(),
+            "/ @param a\r\n/ @param b\r\n/ @return\r\n".to_string(),
+            (1, 0)
+        )),
+        "{actions:?}"
+    );
+}
+
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();
@@ -715,6 +780,27 @@ fn a_selection_is_extracted_into_a_lambda_of_the_locals_it_reads() {
         actions
             .iter()
             .all(|a| a["kind"] != "refactor.extract.function"),
+        "{actions:?}"
+    );
+}
+
+/// The new lambda's name is one no file of the workspace defines: a file
+/// this one loads defining `extracted` would have it replaced for every
+/// caller (#2793).
+#[test]
+fn an_extracted_lambda_takes_no_name_another_file_defines() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [("lib.q", "extracted:{x*100}\n\\d .u\nextracted2:{x}\n")];
+    let mut server = Server::start(dir.path(), &files);
+    let text = "\\l lib.q\nf:{[a;b] 1+a*b}\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let actions = actions_over(&mut server, &uri, (1, 11), (1, 14), None);
+    assert_eq!(
+        extracted(&actions, &uri, text),
+        Some((
+            "Extract function as extracted3".to_string(),
+            "\\l lib.q\nextracted3:{[a;b] a*b}\nf:{[a;b] 1+extracted3[a;b]}\n".to_string()
+        )),
         "{actions:?}"
     );
 }
@@ -1119,6 +1205,24 @@ fn a_name_read_through_one_the_workspace_defines_is_not_listed() {
     assert_eq!(
         unresolved(&mut server, &uri),
         [(".nope.x".to_string(), 3, 3)]
+    );
+}
+
+#[test]
+fn a_bare_read_in_a_script_loaded_only_under_a_context_is_listed() {
+    // KDB-X: `\l main.q` is 'helper at b.q's first line, for under `\d .a`
+    // the name is `.a.helper` and q falls back to no root (#2818).
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("util.q", "helper:{x}\n"),
+        ("main.q", "\\l util.q\n\\d .a\n\\l b.q\n"),
+        ("b.q", "r:helper\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let uri = server.open(dir.path(), "b.q", "r:helper\n");
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [("helper".to_string(), 0, 2)]
     );
 }
 

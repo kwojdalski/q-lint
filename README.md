@@ -263,6 +263,8 @@ A file depends on another when:
   local or parameter of the same name is not a read, and neither is a name
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
+  namespace no file assigns whole, `.cfg` read as a dictionary, reaches each
+  file assigning a name in it. A
   symbol handed straight to `get` or `value`, `` get`.ns.x `` or
   `` get[`.ns.x] ``, is a read too, and so is a name on a `k)` line, which
   reads q's globals as k has its names;
@@ -276,7 +278,10 @@ A file depends on another when:
   runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
   `name`, and so is what the scripts it loads at its root define; a name it
-  reads there is looked up in `.a` as well;
+  reads there is looked up in `.a` as well. A file symbol handed to
+  `hcount`, `hdel`, `hopen`, `key`, `read0` or `read1` is an edge and no
+  load - nothing of the file runs, so it is put in no context - unless the
+  text read is evaluated, `` value each read0`:x.q ``;
 - it loads the other as a KDB-X module, `` use`name ``: `name.q` or
   `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
   tried, the module's search path not being in the source, and `` use`.b ``
@@ -294,7 +299,9 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
-`set` into a computed name, and a
+`set` into a computed name (an amend, `insert` or functional delete of one
+too), a `system "d ",ns` switching to a context joined at run time, listed as
+`namespace`, and a
 concatenated `system "l ",path` or a `value "\\l lib.q"`, both listed as
 `load`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument

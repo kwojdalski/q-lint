@@ -212,7 +212,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         for (&(start, len), param) in call.arguments.iter().zip(declared.iter()) {
-            if len == 0 || text[start..start + len] == **param {
+            // A typed slot is shown by its name alone: `` x:`j: `` reads as
+            // an assignment (#2778). An empty slot, the second of
+            // `{[a;] a}`, names nothing (#2779).
+            let param = q_lint_rs::slot_pattern(param);
+            if len == 0 || param.is_empty() || text[start..start + len] == *param {
                 continue;
             }
             hints.push(json!({

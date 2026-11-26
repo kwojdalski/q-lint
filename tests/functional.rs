@@ -16,6 +16,12 @@ const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:
 const CASES: &[(&str, &str)] = &[
     ("select from t", "?[t;();0b;()]"),
     ("select from t where px>2", "?[t;enlist (>;`px;2);0b;()]"),
+    // An update or an exec may name a column as its group (#2788).
+    (
+        "update sum size by size from t",
+        "![t;();(enlist`size)!enlist `size;(enlist`size)!enlist (sum;`size)]",
+    ),
+    ("exec size by size from t", "?[t;();`size;`size]"),
     (
         "select from t where px>2, sym=`a",
         "?[t;((>;`px;2);(=;`sym;enlist`a));0b;()]",
@@ -340,6 +346,12 @@ const REFUSED: &[(&str, &str)] = &[
     ("select #px from t", "monad"),
     // q refuses it too: `neg px` is the monad.
     ("select m:-px from t", "monad"),
+    // q refuses these too, 'dup names for cols/groups, and their functional
+    // forms run (#2788).
+    ("select sum size by 2 xbar size from t", "dup names"),
+    ("select size by size from t", "dup names"),
+    ("select v:px by v:sym from t", "dup names"),
+    ("select px, px by px1:sym from t", "dup names"),
 ];
 
 #[test]
@@ -435,6 +447,128 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
     let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
     let got = functional_to_qsql(source, 3).unwrap().unwrap();
     assert_eq!(got.text, "update first sym by sym from t");
+}
+
+/// The queries `REFUSED` says q refuses for a column named as its group
+/// are refused by a q that is here (#2788).
+#[test]
+fn a_select_naming_a_column_as_its_group_is_one_q_refuses() {
+    for (qsql, why) in REFUSED.iter().filter(|(_, why)| *why == "dup names") {
+        if let Some(out) = run_q(&format!(
+            "{TABLE}\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+            quoted(qsql)
+        )) {
+            assert!(out.starts_with("dup names"), "{qsql}: {out} ({why})");
+        }
+    }
+}
+
+/// What KDB-X says of `form`, where a q is here: its error, or `ran`.
+fn q_says(form: &str) -> Option<String> {
+    let out = run_q(&format!(
+        "{TABLE}\nc:(>;`px;2);\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+        quoted(form)
+    ))?;
+    Some(out.trim().to_string())
+}
+
+#[test]
+fn a_functional_form_of_a_shape_q_refuses_is_not_written_as_qsql() {
+    // #2801: each was written as qSQL that runs - `delete px from t`,
+    // `select a:px from t`, `update a, b by sym from t` - where KDB-X
+    // refuses the form: a delete takes a list of columns, a dictionary of
+    // columns lists its values, and a `!` is grouped by a boolean or a
+    // dictionary (by a symbol, q signals that symbol).
+    for (form, why, error) in [
+        ("![t;();0b;`px]", "not a list of them", "type"),
+        ("?[t;();0b;(enlist `a)!`px]", "not a list", "type"),
+        ("?[t;();`sym;(enlist `a)!`px]", "not a list", "type"),
+        (
+            "?[t;();(enlist`sym)!`sym;(enlist`a)!enlist `px]",
+            "not a list",
+            "type",
+        ),
+        ("![t;();`sym;`a`b!(`px;`size)]", "grouped by", "sym"),
+        ("![t;();();`a`b!(`px;`size)]", "grouped by", "type"),
+        ("![t;();`sym;enlist`px]", "grouped by", "sym"),
+        ("![t;();();enlist`px]", "grouped by", "type"),
+        (
+            "![t;enlist (>;`px;2);`sym;`symbol$()]",
+            "grouped by",
+            "type",
+        ),
+        ("![t;enlist (>;`px;2);();`symbol$()]", "grouped by", "type"),
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains(why), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(said) = q_says(form) {
+            assert_eq!(said, error, "{form}");
+        }
+    }
+    // The shapes q takes are written as before: a list of columns, a
+    // dictionary of two symbols, a delete grouped by `1b` or a dictionary.
+    for (form, qsql) in [
+        ("![t;();0b;enlist`px]", "delete px from t"),
+        ("![t;();0b;`px`size]", "delete px,size from t"),
+        ("![t;();1b;enlist`px]", "delete px from t"),
+        ("?[t;();0b;`a`b!`px`size]", "select a:px, b:size from t"),
+        (
+            "![t;enlist (>;`px;2);(enlist`sym)!enlist `sym;`symbol$()]",
+            "delete from t where px>2",
+        ),
+    ] {
+        let got = functional_to_qsql(&format!("r:{form}\n"), 3)
+            .unwrap()
+            .unwrap_or_else(|e| panic!("{form}: {e}"));
+        assert_eq!(got.text, qsql, "{form}");
+        if let Some(out) = run_q(&format!("{TABLE}\n-1 string ({form})~{qsql};\n\\\\\n")) {
+            assert_eq!(out.trim(), "1", "{form}");
+        }
+    }
+}
+
+#[test]
+fn a_where_argument_that_lists_no_constraints_is_not_written_as_qsql() {
+    // #2802: one constraint that is not enlisted is 'type on KDB-X, and
+    // its items were written as constraints, `where >, px, 2`. A name is
+    // no constraint written out either: q evaluates `c`, and `where c`
+    // reads a column.
+    for (form, error) in [
+        ("?[t;(>;`px;2);0b;()]", "type"),
+        ("![t;(>;`px;2);0b;`symbol$()]", "type"),
+        ("?[t;enlist enlist (>;`px;2);0b;()]", "type"),
+        ("?[t;(1;2);0b;()]", "type"),
+        ("?[t;enlist 1;0b;()]", "type"),
+        ("?[t;enlist c;0b;()]", "ran"),
+    ] {
+        match functional_to_qsql(&format!("r:{form}\n"), 3) {
+            Some(Err(e)) => assert!(e.contains("not a list of constraints"), "{form}: {e}"),
+            other => panic!("{form}: {other:?}"),
+        }
+        if let Some(said) = q_says(form) {
+            assert_eq!(said, error, "{form}");
+        }
+    }
+    // A constraint is a parse tree, a column or a boolean constant.
+    for (form, qsql) in [
+        (
+            "?[t;((>;`px;2);`flag);0b;()]",
+            "select from t where px>2, flag",
+        ),
+        ("?[t;enlist `flag;0b;()]", "select from t where flag"),
+        ("?[t;enlist 10101b;0b;()]", "select from t where 10101b"),
+        ("?[t;enlist 1b;0b;()]", "select from t where 1b"),
+    ] {
+        let got = functional_to_qsql(&format!("r:{form}\n"), 3)
+            .unwrap()
+            .unwrap_or_else(|e| panic!("{form}: {e}"));
+        assert_eq!(got.text, qsql, "{form}");
+        if let Some(out) = run_q(&format!("{TABLE}\n-1 string ({form})~{qsql};\n\\\\\n")) {
+            assert_eq!(out.trim(), "1", "{form}");
+        }
+    }
 }
 
 #[test]
@@ -738,6 +872,61 @@ fn a_query_is_said_in_words() {
     // What it has no words for is quoted.
     let words = q_lint_rs::explain_qsql("r:select from t where px>f[a;b]\n", 3).unwrap();
     assert!(words.contains("`px` is greater than `f[a;b]`"), "{words}");
+}
+
+#[test]
+fn a_query_q_refuses_is_said_to_be_refused() {
+    // #2781: `update from t` was "Sets  on every row", `exec by sym from
+    // t` "Returns the last row" and `delete by sym from t` "Removes every
+    // row". KDB-X refuses each, whatever the table holds.
+    for (qsql, error) in [
+        ("update from t", "type"),
+        ("update by sym from t", "type"),
+        ("update from t where px>2", "type"),
+        ("exec by sym from t", "nyi"),
+        ("exec by sym from t where px>2", "nyi"),
+        ("delete by sym from t", "by"),
+        ("delete px by sym from t", "by"),
+        ("delete px from t where size>20", "nyi"),
+    ] {
+        let words = q_lint_rs::explain_qsql(&format!("r:{qsql}\n"), 3).unwrap();
+        assert!(
+            words.starts_with(&format!(
+                "**In words.** q refuses this query with '{error}: "
+            )),
+            "{qsql}: {words}"
+        );
+        assert!(!words.contains("\n1. "), "{qsql}: {words}");
+        if let Some(said) = q_says(qsql) {
+            assert_eq!(said, error, "{qsql}");
+        }
+    }
+    // Their neighbours run, and are described: a group that is named, or
+    // more than one, keys an exec of no column by a table.
+    for (qsql, says) in [
+        (
+            "exec by s:sym from t",
+            "Returns the last row of each group.",
+        ),
+        (
+            "exec by sym, flag from t",
+            "Returns the last row of each group.",
+        ),
+        (
+            "exec from t where px>2",
+            "Returns the last row, as a dictionary",
+        ),
+        ("select by sym from t", "the last row of each group"),
+        ("delete from t where px>2", "Removes those rows."),
+        ("delete from t", "Removes every row"),
+        ("update px:0f by sym from t", "Sets `px`: `0f` on every row"),
+    ] {
+        let words = q_lint_rs::explain_qsql(&format!("r:{qsql}\n"), 3).unwrap();
+        assert!(words.contains(says), "{qsql}: {words}");
+        if let Some(said) = q_says(qsql) {
+            assert_eq!(said, "ran", "{qsql}");
+        }
+    }
 }
 
 #[test]

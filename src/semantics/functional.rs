@@ -649,12 +649,26 @@ fn form(p: &layout::Parts) -> Result<Form, String> {
             if p.lead == "update" && cols.is_empty() {
                 return Err("an update with no columns".into());
             }
+            let groups = columns(&by)?;
+            // A column named as a group is 'dup names for cols/groups in a
+            // select, where the functional form runs and gives a keyed
+            // table (#2788, as #1301 the other way). An update may.
+            if p.lead == "select"
+                && let Some((dup, _)) = cols
+                    .iter()
+                    .find(|(n, _)| groups.iter().any(|(g, _)| g == n))
+            {
+                return Err(format!(
+                    "a column `{dup}` named as a group too, which a select refuses: \
+                     'dup names for cols/groups"
+                ));
+            }
             let b = if distinct {
                 "1b".to_string()
             } else if by.is_empty() {
                 "0b".to_string()
             } else {
-                dict(&columns(&by)?)
+                dict(&groups)
             };
             let a = if cols.is_empty() {
                 "()".to_string()
@@ -1060,14 +1074,29 @@ fn one_item(text: String) -> String {
     text
 }
 
-/// The trees a functional form's where argument lists.
+/// The trees a functional form's where argument lists. Each item is a
+/// constraint: a parse tree, a column or a boolean constant. One
+/// constraint that is not enlisted, `(>;`a;1)`, is 'type on KDB-X, and
+/// its items are no constraints: it was written `where >, a, 1` (#2802).
+/// A name holds a constraint q evaluates, where qSQL would read a column.
 fn where_list(d: &Data) -> Result<Vec<Node>, String> {
-    match d {
-        Data::List(items) if items.is_empty() => Ok(vec![]),
-        Data::Enlist(one) => Ok(vec![node(one)?]),
-        Data::List(items) => items.iter().map(node).collect(),
-        _ => Err("a where argument that is not a list of constraints".into()),
+    let items = match d {
+        Data::List(items) => &items[..],
+        Data::Enlist(one) => std::slice::from_ref(&**one),
+        _ => return Err("a where argument that is not a list of constraints".into()),
+    };
+    let constraint = |d: &Data| match d {
+        Data::List(items) => !items.is_empty(),
+        Data::Sym(s) => s.len() == 1,
+        Data::Leaf(l) => l
+            .strip_suffix('b')
+            .is_some_and(|bits| !bits.is_empty() && bits.bytes().all(|c| matches!(c, b'0' | b'1'))),
+        _ => false,
+    };
+    if !items.iter().all(constraint) {
+        return Err("a where argument that is not a list of constraints".into());
     }
+    items.iter().map(node).collect()
 }
 
 /// The names and trees of a functional form's dictionary argument.
@@ -1089,7 +1118,9 @@ fn dict_items(d: &Data) -> Result<Vec<(String, Node)>, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let vals: Vec<Node> = match &**v {
         Data::Enlist(one) => vec![node(one)?],
-        Data::Sym(s) => s
+        // One symbol is an atom, and `(enlist`a)!`b` 'type in a query
+        // (#2801).
+        Data::Sym(s) if s.len() > 1 => s
             .iter()
             .map(|s| column(s).map(Node::Name))
             .collect::<Result<_, _>>()?,
@@ -1400,8 +1431,23 @@ fn written(verb: u8, table: &str, c: &Data, b: &Data, a: &Data) -> Result<String
             let gap = if cols.is_empty() { "" } else { " " };
             Ok(format!("{lead}{gap}{cols}{by} from {table}{tail}"))
         }
+        // An update or a delete is grouped by `0b`, `1b` or a dictionary:
+        // by `()` it is 'type on KDB-X and by a symbol q signals that
+        // symbol, and the qSQL written from either ran (#2801).
+        _ if !matches!(b, Data::Dict(..))
+            && !matches!(b, Data::Leaf(l) if l == "0b" || l == "1b") =>
+        {
+            Err("a `![...]` grouped by neither a boolean nor a dictionary, which q refuses".into())
+        }
         _ => match &a {
             Data::NoSymbols => Ok(format!("delete from {table}{tail}")),
+            // One symbol is an atom, where a delete takes a list of
+            // columns: `![t;();0b;`a]` is 'type (#2801).
+            Data::Sym(s) if s.len() == 1 => Err(
+                "a delete whose columns are a symbol and not a list of them, which q refuses: \
+                 'type"
+                    .into(),
+            ),
             Data::Sym(s) if wheres.is_empty() => {
                 let names = s.iter().map(|n| column(n)).collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("delete {} from {table}", names.join(",")))
