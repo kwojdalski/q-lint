@@ -235,6 +235,13 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] (a;0)}\nh:{[a] 10 20 30 extracted[a]}\n",
         "h 2",
     ),
+    // A glyph or a blank after the selection that assigns nothing (#2792).
+    (
+        "g:{[t] t[`x] , 1}\n",
+        "t[`x]",
+        "extracted:{[t] t[`x]}\ng:{[t] extracted[t] , 1}\n",
+        "g `x`y!1 2",
+    ),
 ];
 
 #[test]
@@ -329,6 +336,22 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
     assert!(e.contains("modified or assigned"), "{e}");
     let e = apply_nth("g:{[d] d[`a]:1; d}\n", "d", 1).unwrap_err();
     assert!(e.contains("assigned"), "{e}");
+    // An assignment through an operator, or after a blank (#2792).
+    for (source, selected, nth) in [
+        ("g:{[t] t[`x],:1; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x]+:1; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] :5; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] ,:5; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] ::5; t}\n", "t[`x]", 0),
+        ("g:{v[0] :9; v}\n", "v[0]", 0),
+        ("g:{[t] t[`x],:1; t}\n", "t", 1),
+        ("g:{[t] t [`x] -:1; t}\n", "t", 1),
+        ("g:{[a;b] b:2; b _:1; a}\n", "b", 2),
+        ("g:{[a;b] b:2; b -:1; a}\n", "b", 2),
+    ] {
+        let e = apply_nth(source, selected, nth).unwrap_err();
+        assert!(e.contains("assigned"), "{source:?} / {selected:?}: {e}");
+    }
     let nine = "g:{[a;b;c;d;e;f;h;i] k:1; a+b+c+d+e+f+h+i+k}\n";
     let e = apply(nine, "a+b+c+d+e+f+h+i+k").unwrap_err();
     assert!(e.contains("at most 8"), "{e}");

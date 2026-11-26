@@ -232,7 +232,7 @@ pub fn extract(
         return Err("the selection ends inside a list of numbers".into());
     }
     // An adverb on it, or an assignment to it.
-    if matches!(after, Some('\'' | '/' | '\\' | ':')) {
+    if matches!(after, Some('\'' | '/' | '\\')) || assigns(next) {
         return Err("the selection is modified or assigned by what follows it".into());
     }
     let (scopes, _) = scopes(code, raw);
@@ -528,6 +528,15 @@ fn term_end(code: &str, raw: &str, comments: &str, start: usize, end: usize) -> 
     Some(i)
 }
 
+/// Whether `next`, what follows a selection past its blanks, assigns to it:
+/// a `:`, or an operator and a `:`. `t[`x] :5`, `t[`x],:1` and `v +:1` all
+/// assign, and a call there is no target KDB-X takes: 'type (#2792).
+fn assigns(next: &str) -> bool {
+    let b = next.as_bytes();
+    b.first() == Some(&b':')
+        || (b.get(1) == Some(&b':') && b"+-*%&|^=<>~!#_$?@.,".contains(&b[0]))
+}
+
 /// Whether what follows `end` is `[...]:`, which assigns at an index of the
 /// selection.
 fn indexed_assignment(code: &str, end: usize) -> bool {
@@ -543,7 +552,7 @@ fn indexed_assignment(code: &str, end: usize) -> bool {
                 depth -= 1;
                 if depth == 0 {
                     let tail = rest[i + 1..].trim_start_matches([' ', '\t']);
-                    return tail.starts_with(':') || tail.starts_with('[');
+                    return assigns(tail) || tail.starts_with('[');
                 }
             }
             _ => {}
