@@ -2079,3 +2079,9 @@ test("the workers of .Q.L and .Q.bv, and .Q.dbg, assign globals or load a databa
   }
   assert.deepStrictEqual(writes(".Q.MAP[]"), ["calls .Q.MAP"]);
 });
+
+test(".z.ph and .h.jx value the query string they are given, as .h.val does: they are asked about (#2632)", () => {
+  assert.deepStrictEqual(writes('.z.ph("?zp:1";()!())'), ["calls .z.ph"]);
+  assert.deepStrictEqual(writes('.h.jx[0j;"zz:1"]'), ["calls .h.jx"]);
+  assert.deepStrictEqual(writes('.h.jx[0j] "zz:1"'), ["calls .h.jx"]);
+});

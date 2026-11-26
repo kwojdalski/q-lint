@@ -235,6 +235,9 @@ const WRITERS = new Set([
   // The workers of `.Q.L` and `.Q.bv`, which load a database and assign
   // globals, and the debugger's `.Q.dbg`, which assigns them (#2631).
   ".Q.MAP", ".Q.L1", ".Q.bvfp", ".Q.dbg",
+  // q's own HTTP handler and its JSON pager run the query string they are
+  // given through `.h.val`, and `.z.ph` assigns `R` (#2632).
+  ".z.ph", ".h.jx",
   // The debugger's breakpoints patch a function's code in place, which
   // `reval` does not stop (#2276).
   ".Q.bs", ".Q.bc", ".Q.bd", ".Q.bu", ".Q.bp", ".Q.Ls",
