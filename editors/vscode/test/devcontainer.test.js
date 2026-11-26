@@ -160,3 +160,21 @@ test("off: the command is hidden, refuses, and writes nothing", async (t) => {
   assert.strictEqual(previews.length, 0);
   assert.strictEqual(fs.existsSync(path.join(dir, ".devcontainer")), false);
 });
+
+// Turned off while the Write dialog was open, the files were written (#2422).
+test("turned off at the Write dialog, nothing is written (#2422)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-dcoff-"));
+  setUp(t, dir);
+  const shown = vscode.window.showInformationMessage;
+  vscode.window.showInformationMessage = async (text, ...rest) => {
+    if (typeof rest[0] === "object" && rest[0]?.modal) {
+      stub.config.user["devContainer.enable"] = false;
+      return "Write";
+    }
+    return shown(text, ...rest);
+  };
+  t.after(() => (vscode.window.showInformationMessage = shown));
+  assert.deepStrictEqual(await addDevContainer(), []);
+  assert.strictEqual(fs.existsSync(path.join(dir, ".devcontainer")), false);
+  assert.match(stub.messages.at(-1)[1], /dev container template is turned off/);
+});

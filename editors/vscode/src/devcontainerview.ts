@@ -18,10 +18,18 @@ const exists = async (uri: Uri): Promise<boolean> => {
   }
 };
 
+/// Whether the template is turned off, said when it is.
+function off(): boolean {
+  if (readDevContainer((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).enabled) {
+    return false;
+  }
+  void window.showInformationMessage("q-lint: The q dev container template is turned off. Set q-lint.devContainer.enable to true to turn it on.");
+  return true;
+}
+
 /// Run the command; the paths written, for tests and the e2e run.
 export async function addDevContainer(): Promise<string[]> {
-  if (!readDevContainer((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback)).enabled) {
-    void window.showInformationMessage("q-lint: The q dev container template is turned off. Set q-lint.devContainer.enable to true to turn it on.");
+  if (off()) {
     return [];
   }
   const folders = workspace.workspaceFolders ?? [];
@@ -71,6 +79,10 @@ export async function addDevContainer(): Promise<string[]> {
     ),
   ).catch(() => undefined);
   if (answer !== "Write") {
+    return [];
+  }
+  // Turned off while it asked: nothing is written (#2422).
+  if (off()) {
     return [];
   }
   const written: string[] = [];
