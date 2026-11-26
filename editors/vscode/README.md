@@ -1290,7 +1290,9 @@ workspace. **Save Query** - on the view's title bar, in a q editor's
 context menu, or on a Query History entry - saves the selection, or the
 statement at the cursor, or that entry's code, as written, under a name you
 give (the first line is offered); placeholders stay in it and are asked for
-each time it runs. On a saved query's row: **Run Saved Query** runs it on
+each time it runs. Saved from a file that names its TorQ gateway server
+types, it keeps that `/ @servertypes` line above its code, and its runs,
+scheduled exports and dashboard tiles go to them. On a saved query's row: **Run Saved Query** runs it on
 the active connection as a query from the editor runs (connecting first if
 there is none; the read-only guard applies, and it lands in Query History),
 **Edit Saved Query** - also a click on the row - opens it as a q document of

@@ -556,6 +556,27 @@ test("Copy Value as JSON goes to the server types its file names, as Run Query d
   assert.strictEqual(await stub.commands.get("q-lint.copyAsJson")("exec sym from trade"), '["a","b"]');
 });
 
+// Run from Saved Queries, a query saved from a `/ @servertypes hdb` file
+// went to the process's own server types, and so did its scheduled exports
+// and dashboard tiles (#3064).
+test("a saved query goes to the server types its own `/ @servertypes` line names, run or run apart (#3064)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.runFilledIn("/ @servertypes hdb\nexec sym from trade", "history");
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['.gw.syncexec["exec sym from trade";enlist `hdb]', "ok"]);
+  assert.match(lines.join("\n"), /`c`d`e/);
+  await live.runFilledIn("exec sym from trade", "live");
+  assert.strictEqual(live.history()[0].code, '.gw.syncexec["exec sym from trade";enlist `rdb]');
+  // A scheduled export and a dashboard tile run it apart.
+  const apart = async (code, options) => (await live.runApart(live.processes()[0], code, undefined, options)).text.join("\n");
+  assert.match(await apart("/ @servertypes hdb\ncount trade"), /^,?3$/);
+  assert.match(await apart("count trade"), /^,?2$/);
+  assert.match(await apart("/ @servertypes none\nrole"), /^`gateway$/);
+  // Server types asked for outright still win.
+  assert.match(await apart("/ @servertypes hdb\ncount trade", { serverTypes: ["rdb"] }), /^,?2$/);
+});
+
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);

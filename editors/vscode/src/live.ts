@@ -3463,14 +3463,15 @@ export class Live {
   }
 
   /// Run `code` as a query from the editor is run, its placeholders asked
-  /// for first: a saved query (#912).
+  /// for first: a saved query (#912). On a TorQ gateway it goes to the
+  /// server types a `/ @servertypes` line of its own names (#3064).
   /// `saved`: the saved query's name, whose look its result keeps (#1015).
   async runFilledIn(code: string, saved?: string): Promise<void> {
     const filled = await this.filledIn(code);
     if (filled !== undefined) {
       this.modes.expectSaved(saved, filled);
       try {
-        await this.run(filled);
+        await this.run(filled, undefined, fileServerTypes(code));
       } finally {
         this.modes.expectSaved(undefined);
       }
@@ -3521,8 +3522,10 @@ export class Live {
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
       const unlimited = this.controls.unlimited || options.whole === true;
       const { consoleSize, gridLimit } = limits(settings, unlimited);
-      // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230).
-      const sent = this.throughGateway(code, process, options.serverTypes);
+      // On a TorQ gateway, through `.gw.syncexec`, as `run` sends it (#1230):
+      // to the server types asked for, else those a line of the code names,
+      // as a saved query's does (#3064).
+      const sent = this.throughGateway(code, process, options.serverTypes ?? fileServerTypes(code));
       const cut = statements(sent);
       // A gateway call defers its reply, so it goes as plain strings (#2584).
       if (connection.isDirect || this.plainGatewayCall(process, sent)) {
