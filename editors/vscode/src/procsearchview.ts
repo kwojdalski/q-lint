@@ -73,14 +73,24 @@ function searchOne(live: Live, process: Process, args: unknown[], seconds: numbe
     return Promise.reject(new Error(cancelled));
   }
   let giveUp: (why: string) => void = () => undefined;
-  // Cancelled while it connects, too.
-  const ended = new Promise<never>((_, reject) => (giveUp = (why) => reject(new Error(why))));
+  // Cancelled while it connects, too: then the connection is closed once
+  // it opens, before its connect script runs, and nothing is sent (#2554).
+  let over = false;
+  const ended = new Promise<never>((_, reject) => (giveUp = (why) => ((over = true), reject(new Error(why)))));
   const timer = seconds > 0 ? setTimeout(() => giveUp(`did not answer within ${seconds} s (${source})`), seconds * 1000) : undefined;
   const listening = token.onCancellationRequested(() => giveUp(cancelled));
-  const searched = live.callSeparate(process, (connection) => {
-    void ended.catch(() => connection.abort());
-    return Promise.race([connection.call(SEARCH, ...args), ended]);
-  });
+  const searched = live.callSeparate(
+    process,
+    (connection) => {
+      if (over) {
+        connection.abort();
+        return ended;
+      }
+      void ended.catch(() => connection.abort());
+      return Promise.race([connection.call(SEARCH, ...args), ended]);
+    },
+    () => over,
+  );
   void searched.catch(() => undefined);
   return Promise.race([searched, ended]).finally(() => {
     clearTimeout(timer);

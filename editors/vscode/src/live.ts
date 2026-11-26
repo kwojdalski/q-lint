@@ -2370,8 +2370,14 @@ export class Live {
   /// timeout: a stream's subscription holds it open. A call that should end
   /// goes through `callSeparate`.
   /// Its connect script runs first, as on every connect (#1509).
-  async openSeparate(process: Process): Promise<QConnection> {
+  /// `abandoned`: whether the caller has given up while it dialled; then it
+  /// is closed before its connect script runs, and this throws (#2554).
+  async openSeparate(process: Process, abandoned?: () => boolean): Promise<QConnection> {
     const connection = await this.dial(process, await this.targetFor(process));
+    if (abandoned?.()) {
+      connection.abort();
+      throw new Error(`given up before ${process.label} connected`);
+    }
     try {
       await this.runConnectScript(connection, process, undefined, false, true);
     } catch (error) {
@@ -2400,8 +2406,8 @@ export class Live {
   /// `q-lint.query.processTimeout.enable` is on, the process's own timeout
   /// (#1036) holds as it does in `run` and `runApart`: when it passes, the
   /// connection is dropped, the user told, and this throws the timeout.
-  async callSeparate<T>(process: Process, use: (connection: QConnection) => Promise<T>): Promise<T> {
-    const connection = await this.openSeparate(process);
+  async callSeparate<T>(process: Process, use: (connection: QConnection) => Promise<T>, abandoned?: () => boolean): Promise<T> {
+    const connection = await this.openSeparate(process, abandoned);
     const enabled = this.setting(readAdmin).processTimeout;
     const timeout = ownTimeout(process, enabled);
     let timedOut = false;
