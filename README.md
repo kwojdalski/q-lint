@@ -276,9 +276,11 @@ A file depends on another when:
   `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
   tried, the module's search path not being in the source, and `` use`.b ``
   in a module beside it. A module is a file that assigns `export` at its top
-  level, and its names are where KDB-X puts them, `.m.name` (`.m.a.0b` for
-  `` use`a.b ``), never at the root: a root `helper` reads nothing a module
-  defines, `.m.mymod.helper` reads mymod's.
+  level and that some `use` reaches, and its names are where KDB-X puts
+  them, `.m.name` (`.m.a.0b` for `` use`a.b ``), never at the root: a root
+  `helper` reads nothing a module defines, `.m.mymod.helper` reads mymod's.
+  A file no `use` reaches is a script whatever it assigns, its names at the
+  root, where `q file.q` and `\l file.q` put them.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's

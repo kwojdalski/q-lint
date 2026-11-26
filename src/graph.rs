@@ -344,46 +344,10 @@ fn contexts(
     contexts
 }
 
-/// The context KDB-X runs the module at `file` in when it is found under
-/// `root` by its path there: `.m.mymod` for `mymod/init.q` or `mymod.q`,
-/// `.m.pkg.0sub` for `pkg/sub/init.q`, as `` use`pkg.sub `` names it. A
-/// file outside `root` is taken to be found by its own name. `None` for a
-/// path no module name spells.
-fn module_namespace(file: &Path, root: &Path) -> Option<String> {
-    let mut parts: Vec<&str> = match file.strip_prefix(root) {
-        Ok(relative) => relative
-            .components()
-            .map(|c| c.as_os_str().to_str())
-            .collect::<Option<_>>()?,
-        Err(_) => {
-            let own = file.file_name()?.to_str()?;
-            match file.parent().and_then(Path::file_name) {
-                Some(dir) if own.starts_with("init.") => vec![dir.to_str()?, own],
-                _ => vec![own],
-            }
-        }
-    };
-    let last = parts.pop()?;
-    let stem = last
-        .strip_suffix(".q")
-        .or_else(|| last.strip_suffix(".k"))?;
-    if stem != "init" || parts.is_empty() {
-        parts.push(stem);
-    }
-    let word = |p: &&str| {
-        p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    if parts.is_empty() || !parts.iter().all(word) {
-        return None;
-    }
-    let rest: String = parts[1..].iter().map(|p| format!(".0{p}")).collect();
-    Some(format!(".m.{}{rest}", parts[0]))
-}
-
 /// The KDB-X modules of a tree, read as KDB-X 5's `.Q.m` loads them.
 struct Modules {
-    /// Whether each file is a module (`References::module`).
+    /// Whether each file is a module: one that assigns `export`
+    /// (`References::module`) and that some `use` reaches.
     is_module: Vec<bool>,
     /// The files each file's `` use`name `` reaches, each with the module
     /// name it was reached by.
@@ -401,9 +365,10 @@ struct Modules {
 /// leaves `key `.m.pkg` as ``` ``0sub ```. `` use`.b ``, in a module, is
 /// relative to it: beside an `init.q`, under a flat `a.q` (KDB-X tries
 /// `a.q/b.q`), one directory up for each dot more, and runs in the using
-/// module's context with `.0b` added. A module no `use` reaches is taken
-/// to be found by its path under the directory a `\l` in it is tried
-/// against first (`module_namespace`).
+/// module's context with `.0b` added. A file no `use` reaches is a script,
+/// whatever it assigns: KDB-X 5 running `q a.q` or `\l a.q` over an
+/// `export:{...}` beside `util:{x+1}` leaves `util` at the root and
+/// `key `.m` empty (#2668).
 fn modules(reads: &[&References], tree: &Tree) -> Modules {
     let is_module: Vec<bool> = reads.iter().map(|r| r.module).collect();
     let mut uses: Vec<Vec<(usize, String)>> = vec![vec![]; reads.len()];
@@ -440,14 +405,10 @@ fn modules(reads: &[&References], tree: &Tree) -> Modules {
             }
         }
     }
-    let reached: BTreeSet<usize> = uses.iter().flatten().map(|&(d, _)| d).collect();
     let mut namespaces: Vec<BTreeSet<String>> = vec![BTreeSet::new(); reads.len()];
     let mut pending: Vec<(usize, String)> = vec![];
-    for (i, file) in tree.files.iter().enumerate() {
-        if is_module[i] && !reached.contains(&i) {
-            pending.extend(module_namespace(file, start_dir(tree.roots, file)).map(|ns| (i, ns)));
-        }
-        for (d, name) in &uses[i] {
+    for used in &uses {
+        for (d, name) in used {
             if !name.starts_with('.') {
                 let mut parts = name.split('.');
                 let first = parts.next().unwrap_or_default();
@@ -475,6 +436,7 @@ fn modules(reads: &[&References], tree: &Tree) -> Modules {
             pending.push((*target, format!("{}{rest}", base.join("."))));
         }
     }
+    let is_module = namespaces.iter().map(|ns| !ns.is_empty()).collect();
     Modules {
         is_module,
         uses,

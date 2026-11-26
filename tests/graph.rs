@@ -1045,6 +1045,7 @@ fn a_modules_names_live_in_its_own_context() {
     let g = graph(
         &[
             ("mymod/init.q", module),
+            ("user.q", "m:use`mymod\n"),
             ("other.q", "r:helper 3\n"),
             ("qualified.q", "s:.m.mymod.helper 4\n"),
         ],
@@ -1052,6 +1053,23 @@ fn a_modules_names_live_in_its_own_context() {
     );
     assert!(deps(&g, "other.q").is_empty());
     assert_eq!(deps(&g, "qualified.q"), ["init.q"]);
+}
+
+#[test]
+fn a_script_no_use_reaches_is_no_module_whatever_it_assigns() {
+    // KDB-X 5: `\l a.q` then `util 1` is 2, and `key `.m` is `()`. A global
+    // named `export` makes a module only of a file some `use` loads (#2668).
+    let script = "export:{[t;f] (`$\":\",f) 0: csv 0: t}\nutil:{x+1}\n";
+    let g = graph(
+        &[
+            ("a.q", script),
+            ("b.q", "r:util 1\n"),
+            ("c.q", "s:.m.a.util 1\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["a.q"]);
+    assert!(deps(&g, "c.q").is_empty());
 }
 
 #[test]

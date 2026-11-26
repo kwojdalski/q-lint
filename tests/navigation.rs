@@ -1123,7 +1123,8 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
     // and root `helper` is 'helper (#2320).
     let dir = tempfile::tempdir().unwrap();
     let module = "helper:{x*2}\nf:{helper x+1}\ng:{[a;b] a+b}\nexport:([f;g])\n";
-    let mut server = Server::start(dir.path(), &[("mymod/init.q", module)]);
+    let files = [("mymod/init.q", module), ("user.q", "m:use`mymod\n")];
+    let mut server = Server::start(dir.path(), &files);
     let text = "r:helper 3\ns:.m.mymod.helper 4\n";
     let uri = server.open(dir.path(), "other.q", text);
     let reply = server.ask(
@@ -1170,6 +1171,30 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
         .collect();
     assert!(names.contains(&".m.mymod.f"), "{names:?}");
     assert!(!names.contains(&"f"), "{names:?}");
+}
+
+#[test]
+fn a_script_that_assigns_export_keeps_its_names_at_the_root() {
+    // KDB-X 5: `\l a.q` then `util 1` is 2, and `key `.m` is `()`. Only a
+    // `use` makes a module of a file that assigns `export` (#2668).
+    let dir = tempfile::tempdir().unwrap();
+    let script = "/ csv helpers\nexport:{[t;f] (`$\":\",f) 0: csv 0: t}\nutil:{x+1}\n";
+    let mut server = Server::start(dir.path(), &[("a.q", script)]);
+    let text = "r:util 1\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "util", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("a.q", 2, 0, 4)]);
+    let reply = server.ask("textDocument/hover", &uri, text, "util", 0, json!({}));
+    let hover = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(hover.starts_with("util[x]"), "{hover}");
+    let reply = server.request("workspace/symbol", json!({"query": "util"}));
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert_eq!(names, ["util"]);
 }
 
 #[test]
