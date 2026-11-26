@@ -17,10 +17,11 @@ import {
   workspace,
   type ExtensionContext,
   type OutputChannel,
+  type TextDocument,
   type TextEditor,
   type TextEditorDecorationType,
 } from "vscode";
-import { definitions } from "./definitions";
+import { definitions, modulePathOf, type Definition } from "./definitions";
 import { unquotedName } from "./funcsource";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
@@ -32,13 +33,19 @@ const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfig
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/// What `document` defines, a KDB-X module's functions named where the
+/// process holds them (#2917).
+function defined(document: TextDocument): Definition[] {
+  return definitions(document.getText(), modulePathOf(document.uri.fsPath, workspace.asRelativePath?.(document.uri, false)));
+}
+
 /// The name of the function whose definition holds the cursor.
 function nameAtCursor(editor: TextEditor | undefined): string | undefined {
   if (editor === undefined || editor.document.languageId !== "q") {
     return undefined;
   }
   const line = editor.selection.active.line;
-  return definitions(editor.document.getText()).find((d) => d.line <= line && line <= d.endLine)?.name;
+  return defined(editor.document).find((d) => d.line <= line && line <= d.endLine)?.name;
 }
 
 export function registerLogpoints(
@@ -62,7 +69,7 @@ export function registerLogpoints(
     const lines =
       names === undefined || editor.document.languageId !== "q"
         ? []
-        : definitions(editor.document.getText())
+        : defined(editor.document)
             .filter((d) => names.has(d.name))
             .map((d) => d.line);
     marked = lines;

@@ -10,6 +10,13 @@ const { statements } = require("../out/statements.js");
 
 const SRC = ["/ lib", "\\d .fx", "mid:{[bid;ask]", "  (bid+ask)%2}", "\\d .", "sq:{x*x}", "now:{[] .z.p}", "test_x:{[] 1b}", ""].join("\n");
 
+test("the function at the cursor in a KDB-X module is named in the module's context (#2917)", () => {
+  const module = "f:{[a] a+1}\nexport:([f])\n";
+  assert.deepStrictEqual(functionAt(module, 0, "mymod/init.q"), { name: ".m.mymod.f", params: ["a"] });
+  assert.deepStrictEqual(functionAt(module, 0, "pkg\\sub\\init.q"), { name: ".m.pkg.0sub.f", params: ["a"] });
+  assert.deepStrictEqual(functionAt("f:{[a] a+1}\n", 0, "mymod/init.q"), { name: "f", params: ["a"] });
+});
+
 test("the function at the cursor, with its parameters; a test is not one", () => {
   assert.deepStrictEqual(functionAt(SRC, 3), { name: ".fx.mid", params: ["bid", "ask"] });
   assert.deepStrictEqual(functionAt(SRC, 5), { name: "sq", params: ["x"] });
