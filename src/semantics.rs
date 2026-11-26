@@ -3101,10 +3101,11 @@ pub fn check(
     }
     // Each lambda's multiple assignments, `(a;b):1 2`, by the lambda they
     // bind locals of: the names they bind and the span of their target, to
-    // be read as assignments and not as reads (#2705).
+    // be read as assignments and not as reads (#2705). One in the signature,
+    // `{[(a;b):`j] a+b}`, binds parameters and stands before the body.
     let mut patterns: Vec<Vec<(usize, usize, Vec<&str>)>> = vec![vec![]; scopes.len()];
     for (at, close, double) in pattern_targets(code) {
-        if let Some(si) = scope_at(&scopes, at).filter(|_| !double) {
+        if let Some(si) = scope_at(&scopes, at).filter(|&si| !double && at >= scopes[si].body) {
             let names = crate::pattern_names(&code[at..=close])
                 .into_iter()
                 .filter(|n| !n.contains('.'))
