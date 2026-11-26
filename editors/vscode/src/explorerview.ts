@@ -50,6 +50,7 @@ import {
   type Node,
 } from "./explorer";
 import { nameAt } from "./funcsource";
+import { markdownText } from "./history";
 import { wordStart } from "./idioms";
 import { borrowWhenFree } from "./infoview";
 import { readInsight } from "./insightconfig";
@@ -350,7 +351,7 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     // Listed by a direct process and not read: nothing more is known, so
     // no rows or columns are stated (#2490).
     if (info === undefined && entry.unread === true) {
-      return new Hover(new MarkdownString(`**${word}** on ${kept.process}: table, not read - its rows and columns are read only by q-lint's lambda, which direct evaluation does not send.`));
+      return new Hover(new MarkdownString(`**${markdownText(word)}** on ${markdownText(kept.process)}: table, not read - its rows and columns are read only by q-lint's lambda, which direct evaluation does not send.`));
     }
     // Busy: what the explorer already knows, its rows and columns.
     return new Hover(

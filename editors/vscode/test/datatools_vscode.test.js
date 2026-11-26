@@ -315,6 +315,17 @@ test("the CSV load wizard shows the guessed types, takes a change, writes the st
   assert.deepStrictEqual(off.live.ran, []);
 });
 
+test("the CSV load wizard shows a column name or sample holding $(word) as written, not as an icon (#2658)", async () => {
+  setUp();
+  const priced = path.join(tmp, "prices.csv");
+  fs.writeFileSync(priced, "item,Price $(USD),Qty\nwidget,$(sync~spin) 3.50,10\n");
+  let shown;
+  stub.picks.push((options) => ((shown = options.items.find((i) => i.at === 1)), undefined));
+  await run(DATA_FILES.wizard, vscode.Uri.file(priced));
+  assert.strictEqual(shown.label, "Price \\$(USD)");
+  assert.strictEqual(shown.detail, "e.g. \\$(sync~spin) 3.50");
+});
+
 test("the CSV load wizard runs on the process it asked about, even when another became active meanwhile (#1293)", async () => {
   const { live } = setUp();
   stub.picks.push("$(check) Done", (options) => (assert.match(options.message ?? options, /on rdb\?/), (live.process = { label: "other", host: "localhost", port: 5001, tags: [] }), "Run"));

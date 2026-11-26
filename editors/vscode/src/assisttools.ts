@@ -34,6 +34,7 @@ import { lintArgs, readLint, schemaOf, tablesOf, type LintFinding } from "./assi
 import { launchable } from "./batch";
 import { ASSIST_SETTINGS, assistOff, readAssist, type AssistFeature } from "./assistconfig";
 import { GATHER, LIMITS, readExplorer, readGathered } from "./explorer";
+import { markdownText } from "./history";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { TABLE_INFO, readTableInfo } from "./tableinfo";
@@ -109,7 +110,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
       invocationMessage: `Reading the schema of ${name} on ${active}`,
       confirmationMessages: {
         title: `Read a table's schema on ${active}`,
-        message: new MarkdownString(`Read the columns, types and row count of the table \`${name}\` on **${active}**? Only a table the process lists is read.`),
+        message: new MarkdownString(`Read the columns, types and row count of the table \`${name}\` on **${markdownText(active)}**? Only a table the process lists is read.`),
       },
     };
   }
