@@ -683,6 +683,9 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+    // The null in lower case is the same null (#2719).
+    ("QP002", "r:0nz", "r:0np", false),
+    ("QP002", "r:-0wz", "r:-0wp", false),
     (
         "QP002",
         "s:\"15h$\";y:15h$2020.01.01",

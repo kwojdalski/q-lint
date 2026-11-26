@@ -2549,7 +2549,7 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
                 (re!(r"\b15h(\s*\$)"), "12h$1"),
-                (re!(r"(^|[^\w.])(-?0[NW])z\b"), "$1${2}p"),
+                (re!(r"(^|[^\w.])(-?0[NnWw])z\b"), "$1${2}p"),
                 (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
             ];
             let (m, regex, to) = swaps
@@ -10741,7 +10741,9 @@ fn lint_rules(
                     [
                         re!(r"`datetime\s*\$"),
                         re!(r"\b15h\s*\$"),
-                        re!(r"(?:^|[^\w.])-?0[NW]z\b"),
+                        // In either case: q 5 reads `0nz` and `0wz` as `0Nz`
+                        // and `0Wz` (#2719).
+                        re!(r"(?:^|[^\w.])-?0[NnWw]z\b"),
                         re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
                         // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
                         // and `.my.z.z` is one dotted name of the file's (#510).
@@ -10750,21 +10752,31 @@ fn lint_rules(
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
                 )
+                // Digits and a `z` alone: q 5 reads `20240101z` as that
+                // date's datetime, nine digits or more as seconds from 1970,
+                // and so a fraction ten characters long or more,
+                // `20240101.5z` and `1.2345678z` - each -15h. A shorter one
+                // it refuses, which is QE010's (#2719).
+                .chain(re!(r"\b\d+(?:\.\d*)?z\b").find_iter(literals).find(|m| {
+                    in_code(m)
+                        && !line[..m.start()].ends_with('.')
+                        && m.len() >= 9 + usize::from(m.as_str().contains('.'))
+                }))
                 // The null's pattern takes in the byte before it.
-                .map(|m| match m.as_str().find("0N").or(m.as_str().find("0W")) {
-                    Some(at) if m.as_str().ends_with('z') => {
-                        m.start() + at - usize::from(m.as_str()[..at].ends_with('-'))
-                    }
-                    // The `"z"` cast on its `$`: the string is not code, and
-                    // a fix only starts in code.
-                    _ if m.as_str().starts_with('"') => m.end() - 1,
-                    // The clock's pattern takes in the byte before it too;
-                    // a date's `z`, `2023.01.01z`, is no clock (#501).
-                    _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
-                        m.end() - 4
-                    }
-                    _ => m.start(),
-                })
+                .map(
+                    |m| match re!(r"0[NnWw]z$").find(m.as_str()).map(|n| n.start()) {
+                        Some(at) => m.start() + at - usize::from(m.as_str()[..at].ends_with('-')),
+                        // The `"z"` cast on its `$`: the string is not code, and
+                        // a fix only starts in code.
+                        _ if m.as_str().starts_with('"') => m.end() - 1,
+                        // The clock's pattern takes in the byte before it too;
+                        // a date's `z`, `2023.01.01z`, is no clock (#501).
+                        _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
+                            m.end() - 4
+                        }
+                        _ => m.start(),
+                    },
+                )
                 .min()
             {
                 add(offset + at, "QP002", "Legacy datetime value or cast".into());

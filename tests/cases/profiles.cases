@@ -437,3 +437,23 @@ d:"zj"$(1.5;2)
 === clean profile: uqf | a timestamp, and a string merely holding a z (#501)
 a:2023.01.01D
 b:"buzz"
+
+=== QP002 profile: uqf | the null and the infinity in lower case (q 5: type 0nz and type 0wz are -15h) (#2719)
+a:0nz
+
+=== QP002 profile: uqf | and negative infinity (#2719)
+b:-0wz
+
+=== QP002 profile: uqf | eight digits and a z are that date's datetime (q 5: type 20240101z is -15h) (#2719)
+c:20240101z
+
+=== QP002 profile: uqf | and so with a fraction, seconds from 1970 (q 5: type 20240101.5z and type 1.2345678z are -15h) (#2719)
+d:20240101.5z
+e:1.2345678z
+
+=== clean profile: uqf | the same digits with no z, in a symbol, in a name or in a string are no datetime (#2719)
+a:12345678
+b:1234567.5
+c:`20240101z
+x20240101z:1
+e:"20240101z"
