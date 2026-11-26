@@ -416,6 +416,30 @@ test("the documenter reads nested namespaces' functions, and the tables of every
   assert.deepStrictEqual(doc.tables.map((x) => [x.name, x.rows]), [[".ns.t", 2], [".a.b.u", 3]]);
 });
 
+// Under .Q.view, .Q.pv and .Q.cn hold only the viewed partitions: the
+// figures are said to be the view's, never given as the database (#2532).
+test("the HDB browser, the documenter and the table hover say a .Q.view limits their figures (#2532)", { skip }, async (t) => {
+  const { HDB: BROWSE, readHdb, hdbTree } = require("../out/hdb.js");
+  const { TABLE_INFO, readTableInfo, tableMarkdown } = require("../out/tableinfo.js");
+  const { connection } = await connect(t, HDB() + ".Q.view 2026.01.07\n");
+  const h = readHdb(await connection.call(BROWSE, 1000));
+  assert.deepStrictEqual([h.partitionCount, h.allPartitions], [1, 3]);
+  const tree = JSON.stringify(hdbTree(h, "hdb"));
+  assert.match(tree, /1 of 3 partitions \(\.Q\.view\)/);
+  assert.match(tree, /partitioned · 6 rows in view/);
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual([doc.partitions, doc.allPartitions], [1, 3]);
+  assert.match(docMarkdown(doc, "hdb", "now"), /1 of 3 partitions in view \(\.Q\.view\)/);
+  const info = readTableInfo(await connection.call(TABLE_INFO, "trade", 30));
+  assert.match(tableMarkdown("trade", "hdb", info), /6 rows in view, 4 columns, 1 of 3 partitions \(\.Q\.view\)/);
+  // Without a view, nothing is said of one.
+  await connection.evaluate(".Q.view[]");
+  const all = readHdb(await connection.call(BROWSE, 1000));
+  assert.deepStrictEqual([all.partitionCount, all.allPartitions], [3, 3]);
+  assert.doesNotMatch(JSON.stringify(hdbTree(all, "hdb")), /view/);
+  assert.match(tableMarkdown("trade", "hdb", readTableInfo(await connection.call(TABLE_INFO, "trade", 30))), /18 rows, 4 columns, 3 partitions/);
+});
+
 // A table whose enumeration domain is gone cannot be described: meta of it
 // signals. It costs that table's entry, as in the schema diagram (#1868).
 test("the documenter says which table it could not read, and documents the rest (#1868)", { skip }, async (t) => {

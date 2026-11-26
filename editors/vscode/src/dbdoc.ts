@@ -40,9 +40,9 @@ export const DOCUMENT = [
   " bad:{[t;e] `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;\"\";0n;();();();();();$[10h=type e;e;string e])};",
   // `\f` of a namespace that is no context signals: it has no functions (#1867).
   " fs:m sublist(system\"f\"),raze{@[{` sv'x,/:system\"f \",string x};x;`$()]}each ns;",
-  " `pf`parts`tables`fnames`fparams`ftexts!(",
+  " `pf`parts`allparts`tables`fnames`fparams`ftexts!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
-  "  \"f\"$@[{count .Q.pv};::;0];",
+  "  \"f\"$@[{count .Q.pv};::;0];\"f\"$@[{count@[get;`.Q.PV;{.Q.pv}]};::;0];",
   "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
   "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs;",
   `  {@[{f:get x;$[100h=type f;${SLOT_TEXT} f;""]};x;""]}each fs)}`,
@@ -64,6 +64,8 @@ export interface DocTable {
 export interface DbDoc {
   field: string;
   partitions: number;
+  /// Partitions on disk (`.Q.PV`): more than `partitions` under a `.Q.view` (#2532).
+  allPartitions?: number;
   tables: DocTable[];
   functions: { name: string; params: string[] }[];
 }
@@ -103,6 +105,7 @@ export function readDoc(raw: unknown): DbDoc {
   return {
     field: strings(r.pf).join(""),
     partitions: number(r.parts) ?? 0,
+    allPartitions: Math.max(number(r.allparts) ?? 0, number(r.parts) ?? 0),
     tables,
     functions: fnames.map((name, i) => ({
       name,
@@ -162,11 +165,18 @@ const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
 const html = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const rowsText = (n: number | null) => (n === null ? "not counted" : n.toLocaleString("en-US"));
 
+/// The partitions, and under a `.Q.view` that the figures are the view's:
+/// `.Q.pv` and `.Q.cn` hold only the viewed partitions (#2532).
+const partitionsText = (doc: DbDoc): string =>
+  (doc.allPartitions ?? doc.partitions) > doc.partitions
+    ? `${doc.partitions.toLocaleString("en-US")} of ${(doc.allPartitions ?? 0).toLocaleString("en-US")} partitions in view (.Q.view): a partitioned table's rows are those of the viewed partitions`
+    : `${doc.partitions.toLocaleString("en-US")} partitions`;
+
 /// The document as Markdown. `docs`: each function's qDoc, by name.
 export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<string, string> = new Map()): string {
   const out = [`# ${md(process)}`, "", `Documented by q-lint on ${md(at)}.`, ""];
   if (doc.field !== "") {
-    out.push(`A partitioned database by ${md(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.`, "");
+    out.push(`A partitioned database by ${md(doc.field)}, ${partitionsText(doc)}.`, "");
   }
   out.push("## Tables", "");
   if (doc.tables.length === 0) out.push("No tables.", "");
@@ -203,7 +213,7 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
     `<p>Documented by q-lint on ${html(at)}.</p>`,
   ];
   if (doc.field !== "") {
-    out.push(`<p>A partitioned database by ${html(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.</p>`);
+    out.push(`<p>A partitioned database by ${html(doc.field)}, ${html(partitionsText(doc))}.</p>`);
   }
   out.push("<h2>Tables</h2>");
   if (doc.tables.length === 0) out.push("<p>No tables.</p>");
