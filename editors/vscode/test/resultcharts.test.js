@@ -229,3 +229,27 @@ test("a map's legend of many categories wraps to rows inside the saved image (#3
   entries.forEach((e) => assert.ok(e.x + e.label.length * 6.5 <= 800, e.label + " ends at " + (e.x + e.label.length * 6.5)));
   assert.strictEqual(new Set(entries.map((e) => e.y)).size, 2);
 });
+
+test("a book is drawn as depth by itself only where its rows are one book; rows of no side are counted (#3124, #3144)", () => {
+  const book = grid([["level", 7, ["1", "2"]], ["bidPx", 9, ["99", "98"]], ["bidSize", 7, ["5", "10"]], ["askPx", 9, ["101", "102"]], ["askSize", 7, ["4", "6"]]]);
+  assert.strictEqual(M.depthByItself(book), true);
+  // Quotes over time: a row a time, not a level.
+  const quotes = [["time", 16, ["1", "2", "3"]], ["bid", 9, ["1.1", "1.2", "1.3"]], ["ask", 9, ["1.2", "1.3", "1.4"]], ["bsize", 7, ["1", "2", "3"]], ["asize", 7, ["3", "2", "1"]]];
+  assert.ok(M.depthColumns(grid(quotes)), "a book by its names, so Depth is offered");
+  assert.strictEqual(M.depthByItself(grid(quotes)), false);
+  assert.strictEqual(M.depthByItself(grid(quotes.slice(1))), false, "crossed: bids up to 1.3, asks from 1.2");
+  assert.strictEqual(M.depthByItself(grid([["x", 9, ["1"]]])), false);
+  // A side that is neither buy nor sell.
+  const sided = (sides) => grid([["side", 11, sides], ["price", 9, ["99", "98", "101", "102"]], ["size", 7, ["10", "20", "30", "40"]]]);
+  assert.strictEqual(M.depthByItself(sided(["B", "B", "S", "S"])), true);
+  for (const sides of [["1b", "1b", "0b", "0b"], ["long", "long", "short", "short"]]) {
+    const g = sided(sides);
+    assert.strictEqual(M.depthByItself(g), false, sides[0]);
+    assert.strictEqual(M.depthData(g, all(g)).note, "The order book is empty: 4 rows have a side that is neither buy nor sell (buy is b, bid or buy; sell is a, s, ask, sell or offer).");
+  }
+  const mixed = sided(["B", "long", "S", "S"]);
+  const d = M.depthData(mixed, all(mixed));
+  assert.deepStrictEqual([d.unsided, d.note, d.datasets.map((s) => s.levels)], [1, undefined, [1, 2]]);
+  assert.strictEqual(M.unsidedText(1), "1 row has a side that is neither buy nor sell");
+  assert.strictEqual(M.depthData(book, all(book)).unsided, 0);
+});

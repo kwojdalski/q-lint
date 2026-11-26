@@ -1957,6 +1957,10 @@
         summary.cut = true;
         chartView.append(el("p", "note", "The process cut a list of this book at its console width (\\c): only the levels before the cut are drawn."));
       }
+      if (data.unsided) {
+        summary.unsided = data.unsided;
+        chartView.append(el("p", "note", MORE.unsidedText(data.unsided) + ": left out of the book."));
+      }
     } else if (state.kind === "map") {
       data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);
       summary = C.summary("map", data);
@@ -2323,9 +2327,13 @@
           state.mapSize = -1;
           state.mapColour = -1;
           state.zoom = null;
-          // An order book is drawn as its depth (#1016) when its columns fit.
-          if ((!m.features || m.features.depthChart !== false) && MORE.depthColumns(m.grid)) {
+          // An order book is drawn as its depth (#1016) when its columns fit
+          // and its rows are one book, not a history (#3124) - which the
+          // depth of the book before it is not carried on to either.
+          if ((!m.features || m.features.depthChart !== false) && MORE.depthByItself(m.grid)) {
             setKind("depth");
+          } else if (state.kind === "depth") {
+            state.kind = state.usual || "line";
           }
         }
         state.view = m.view;

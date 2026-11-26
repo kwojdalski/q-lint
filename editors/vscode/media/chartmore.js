@@ -64,6 +64,8 @@
   /// The book over `rows`: {bids, asks}, each [price, size] pairs with
   /// neither null and a size above zero, and the row read when the levels
   /// are lists (the first shown). Null when the grid holds no book.
+  /// `unsided` counts the rows whose side is neither buy nor sell (`1b`,
+  /// `long`): they are in no level, which is said, not kept quiet (#3144).
   function depthBook(grid, rows) {
     const cols = depthColumns(grid);
     if (!cols) {
@@ -109,12 +111,45 @@
       ap.forEach(function (p, i) { add(asks, p, as[i]); });
       return Object.assign({ mode: "lists", row: r, bids: bids, asks: asks }, cut ? { cut: true } : {});
     }
+    let unsided = 0;
     rows.forEach(function (r) {
       // A symbol shows as buy or `buy, a string as "buy" (one character ,"b").
       const side = grid.cells[cols.side][r].replace(/^`/, "").replace(/^,?"(.*)"$/, "$1");
-      add(BUY.test(side) ? bids : SELL.test(side) ? asks : [], v(cols.price, r), v(cols.size, r));
+      const into = BUY.test(side) ? bids : SELL.test(side) ? asks : null;
+      if (into) {
+        add(into, v(cols.price, r), v(cols.size, r));
+      } else {
+        unsided++;
+      }
     });
-    return { mode: "sides", bids: bids, asks: asks };
+    return { mode: "sides", bids: bids, asks: asks, unsided: unsided };
+  }
+
+  /// "12 rows have a side that is neither buy nor sell".
+  function unsidedText(n) {
+    return n.toLocaleString("en-US") + (n === 1 ? " row has" : " rows have") + " a side that is neither buy nor sell";
+  }
+
+  /// Whether a result is drawn as a depth chart by itself: its columns are
+  /// a book's (depthColumns) and its rows read as one book. Not a history -
+  /// quotes or trades, a row a time under a first column of times - whose
+  /// rows piled into one book gave a mid and a spread of -0.1 from the
+  /// whole of it (#3124); nor rows that cross, bids at or above asks, as a
+  /// history's do; nor a book with no level, as where no row's side is buy
+  /// or sell (#3144). Depth stays a kind to choose for each of them.
+  function depthByItself(grid) {
+    const cols = depthColumns(grid);
+    if (!cols || (cols.mode !== "lists" && grid.columns[0].temporal)) {
+      return false;
+    }
+    const rows = [];
+    for (let r = 0; r < grid.cells[0].length; r++) {
+      rows.push(r);
+    }
+    const book = depthBook(grid, rows);
+    const bid = book.bids.reduce(function (m, l) { return Math.max(m, l[0]); }, -Infinity);
+    const ask = book.asks.reduce(function (m, l) { return Math.min(m, l[0]); }, Infinity);
+    return book.bids.length + book.asks.length > 0 && bid < ask;
   }
 
   /// Sizes at one price summed, each side from its best price out, with
@@ -132,7 +167,7 @@
   }
 
   /// What a depth chart of `rows` draws: {type, depth, datasets, mid,
-  /// spread, note?}. The bid side is a step falling to the mid, the ask side
+  /// spread, unsided, note?}. The bid side is a step falling to the mid, the ask side
   /// one rising from it, each point {x: price, y: the size at that price
   /// and beyond}, in rising price, and `levels` the prices it has.
   function depthData(grid, rows) {
@@ -143,7 +178,7 @@
     const bids = cumulative(book.bids, true);
     const asks = cumulative(book.asks, false);
     if (bids.length === 0 && asks.length === 0) {
-      return { type: "line", depth: true, datasets: [], note: "The order book is empty: no level has a price and a size above zero." };
+      return { type: "line", depth: true, datasets: [], note: book.unsided ? "The order book is empty: " + unsidedText(book.unsided) + " (buy is b, bid or buy; sell is a, s, ask, sell or offer)." : "The order book is empty: no level has a price and a size above zero." };
     }
     const best = { bid: bids.length ? bids[0][0] : null, ask: asks.length ? asks[0][0] : null };
     const mid = best.bid !== null && best.ask !== null ? (best.bid + best.ask) / 2 : null;
@@ -161,6 +196,7 @@
       mode: book.mode,
       row: book.row,
       cut: book.cut === true,
+      unsided: book.unsided || 0,
       mid: mid,
       spread: best.bid !== null && best.ask !== null ? best.ask - best.bid : null,
       datasets: [
@@ -779,6 +815,8 @@
   const helpers = {
     depthColumns: depthColumns,
     depthBook: depthBook,
+    depthByItself: depthByItself,
+    unsidedText: unsidedText,
     depthData: depthData,
     depthTitle: depthTitle,
     depthConfig: depthConfig,

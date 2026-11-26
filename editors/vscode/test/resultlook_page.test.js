@@ -215,6 +215,43 @@ test("the kind chosen comes back after a book drawn as its depth, or a map (#313
   assert.strictEqual(fresh.rendered().chart.kind, "line");
 });
 
+test("a quote or trade history, a crossed book and rows of no side are not drawn as depth by themselves; Depth is still offered (#3124, #3144)", () => {
+  const kinds = (page) => page.body.all((e) => e.tagName === "SELECT")[0].children.map((o) => o.value);
+  /// The result of `columns`, its first a time.
+  const timed = (id, columns) => {
+    const r = result(id, columns, { view: "chart" });
+    r.grid.columns[0].temporal = true;
+    r.grid.values[0] = r.grid.cells[0].map(Number);
+    return r;
+  };
+  const quotes = [["time", 16, ["1", "2", "3"]], ["bid", 9, ["1.1", "1.2", "1.3"]], ["ask", 9, ["1.2", "1.3", "1.4"]], ["bsize", 7, ["1", "2", "3"]], ["asize", 7, ["3", "2", "1"]]];
+  const trades = [["time", 16, ["1", "2", "3"]], ["side", 11, ["B", "S", "B"]], ["price", 9, ["1.1", "1.2", "1.3"]], ["size", 7, ["1", "2", "3"]]];
+  for (const history of [quotes, trades]) {
+    const page = loadPage(undefined);
+    page.send(timed("s.1", history));
+    assert.strictEqual(page.rendered().chart.kind, "line", history[1][0]);
+    assert.ok(kinds(page).includes("depth"));
+  }
+  // The same rows with no time before them cross: bids up to 1.3, asks from 1.2.
+  const crossed = loadPage(undefined);
+  crossed.send(result("s.1", quotes.slice(1), { view: "chart" }));
+  assert.strictEqual(crossed.rendered().chart.kind, "line");
+  // Nor is the depth of a book carried on to a history that comes after it.
+  const page = loadPage(undefined);
+  page.send(result("s.1", BOOK, { view: "chart" }));
+  assert.strictEqual(page.rendered().chart.kind, "depth");
+  page.send(timed("s.2", quotes));
+  assert.strictEqual(page.rendered().chart.kind, "line");
+  // A side that is neither buy nor sell: no book by itself; chosen, the
+  // rows left out are counted.
+  const sided = (sides) => [["side", 11, sides], ["price", 9, ["99", "98", "101", "102"]], ["size", 7, ["10", "20", "30", "40"]]];
+  page.send(result("s.3", sided(["long", "long", "short", "short"]), { view: "chart" }));
+  assert.strictEqual(page.rendered().chart.kind, "line");
+  page.send(result("s.4", sided(["B", "long", "S", "short"]).map(([n, t, c]) => [n === "size" ? "qty" : n, t, c]), { view: "chart" }));
+  assert.deepStrictEqual([page.rendered().chart.kind, page.rendered().chart.unsided], ["depth", 2]);
+  assert.ok(page.body.all((e) => e.className === "note").some((e) => e.textContent === "2 rows have a side that is neither buy nor sell: left out of the book."));
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });
