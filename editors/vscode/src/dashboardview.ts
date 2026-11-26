@@ -122,7 +122,9 @@ export class Dashboards {
 
   /// A new dashboard named `given`, or a name asked for when none is given
   /// or it cannot be one (the box then holds it); undefined on Escape.
-  private async create(given?: string): Promise<Dashboard | undefined> {
+  /// `keep` false: not saved yet, as Add to Dashboard saves it with its
+  /// first tile, or not at all when the process pick is cancelled (#2404).
+  private async create(given?: string, keep = true): Promise<Dashboard | undefined> {
     const taken = this.list().map((d) => d.name);
     const name =
       given !== undefined && dashboardNameProblem(given, taken) === undefined
@@ -130,7 +132,9 @@ export class Dashboards {
         : await window.showInputBox({ title: "Name the new dashboard", value: given, validateInput: (v) => dashboardNameProblem(v, taken) });
     if (name === undefined || dashboardNameProblem(name, taken) !== undefined) return undefined;
     const d: Dashboard = { name: name.trim(), columns: 2, tiles: [] };
-    await this.save(withDashboard(this.list(), d));
+    if (keep) {
+      await this.save(withDashboard(this.list(), d));
+    }
     return d;
   }
 
@@ -181,7 +185,7 @@ export class Dashboards {
     if (d === undefined) {
       const pick = await this.pickDashboard(`Add ${name} to which dashboard?`);
       if (pick === undefined) return "cancelled";
-      d = pick.name === undefined ? await this.create() : this.list().find((x) => x.name === pick.name);
+      d = pick.name === undefined ? await this.create(undefined, false) : this.list().find((x) => x.name === pick.name);
     }
     if (d === undefined) return "cancelled";
     const process = processLabel ?? (await this.live.pick(undefined, `Run ${name} on which process?`))?.label;
