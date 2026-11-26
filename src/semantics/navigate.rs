@@ -833,6 +833,34 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
     })
 }
 
+/// Why nothing is renamed at `offset`, where no local is written.
+///
+/// Only a global is told that the language server renames it. A blank, a
+/// number, a string, a comment and a symbol are no name at all, and a word
+/// of q's keeps its name: the same answer for each sent the reader of F2 on
+/// `count` to the server that had just answered (#2959).
+fn no_local(code: &str, raw: &str, offset: usize) -> String {
+    let word = re!(NAME)
+        .find_iter(code)
+        .take_while(|m| m.start() <= offset)
+        .find(|m| offset <= m.end() && boundary(code, m.start()));
+    let Some(word) = word.map(|m| m.as_str()) else {
+        return "there is no name here to rename".into();
+    };
+    if crate::is_reserved(word) {
+        return format!("`{word}` is a word of q's own, which keeps its name");
+    }
+    let global = mentions(code, code, raw)
+        .iter()
+        .any(|m| m.at <= offset && offset <= m.at + m.len);
+    if global {
+        return "q-lint renames a lambda's parameters and locals within one file only: a global \
+                is renamed across the workspace, by the language server"
+            .into();
+    }
+    format!("`{word}` here is neither a local nor a global, and only those are renamed")
+}
+
 /// Why the local at `offset` cannot be renamed, or the local when it can.
 ///
 /// Only a parameter or a local is renamed in one file. A global is named
@@ -840,11 +868,7 @@ pub fn name_at(code: &str, raw: &str, offset: usize) -> Option<Name> {
 /// file it indexes (`lsp::navigate`).
 fn renamable(code: &str, raw: &str, scopes: &[Scope], offset: usize) -> Result<Local, String> {
     let Some((s, name)) = local_at(code, scopes, offset) else {
-        return Err(
-            "q-lint renames a lambda's parameters and locals within one file only: a global \
-             is renamed across the workspace, by the language server"
-                .into(),
-        );
+        return Err(no_local(code, raw, offset));
     };
     let local = local(code, raw, scopes, s, name);
     if !local

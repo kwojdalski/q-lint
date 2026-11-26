@@ -512,6 +512,54 @@ fn a_global_is_not_renamed_within_one_file() {
     }
 }
 
+/// Only a global was ever sent to the language server: a blank, a number, a
+/// string, a comment, a symbol and a word of q's were too, by the server
+/// that had just been asked (#2959).
+#[test]
+fn what_is_no_name_is_refused_as_no_name_and_not_as_a_global() {
+    let source = "x:count 123\ny:\"str\" / note\nz:`sym\n\nt:([] col:1 2)\n";
+    for (context, skip, why) in [
+        ("123", 1, "there is no name here to rename"),
+        ("str", 1, "there is no name here to rename"),
+        ("note", 2, "there is no name here to rename"),
+        ("sym", 1, "there is no name here to rename"),
+        ("\n\n", 1, "there is no name here to rename"),
+        ("count", 2, "`count` is a word of q's own"),
+        ("col", 1, "`col` here is neither a local nor a global"),
+    ] {
+        let offset = at(source, context, skip);
+        let refused = rename(source, offset, "new").unwrap_err();
+        assert!(refused.starts_with(why), "{context}: {refused}");
+        assert_eq!(rename_target(source, offset), Err(refused), "{context}");
+    }
+    let empty = rename("", 0, "new").unwrap_err();
+    assert!(empty.starts_with("there is no name"), "{empty}");
+}
+
+/// The same from the server, for a rename and for the question before one.
+#[test]
+fn the_server_refuses_a_rename_of_no_name_without_naming_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "x:count 123\ny:\"str\" / note\n\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    for (context, skip) in [
+        ("count", 2),
+        ("123", 1),
+        ("str", 1),
+        ("note", 2),
+        ("\n\n", 1),
+    ] {
+        for method in ["textDocument/prepareRename", "textDocument/rename"] {
+            let new = json!({"newName": "new"});
+            let reply = server.ask(method, &uri, text, context, skip, new);
+            assert_eq!(reply["error"]["code"], -32803, "{context}: {reply}");
+            let why = reply["error"]["message"].as_str().unwrap();
+            assert!(!why.contains("language server"), "{context}: {why}");
+        }
+    }
+}
+
 #[test]
 fn an_implicit_parameter_is_not_renamed() {
     let why = refusal("f:{x+1}\n", "x+1", 0, "v");
