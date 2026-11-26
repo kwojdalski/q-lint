@@ -723,6 +723,20 @@ impl Server {
     /// A server over the workspace `dir`, holding `files`, with what the
     /// client declares and the options it sends.
     fn over(dir: &Path, files: &[(&str, &str)], client: Value, options: Value) -> (Self, Value) {
+        let folders = json!([{"uri": file_uri(dir), "name": "ws"}]);
+        Self::under(dir, dir, files, client, options, folders)
+    }
+
+    /// `over`, run in `cwd`, with the workspace folders `folders` - `[]`
+    /// for none, as an editor without a root opens one file.
+    fn under(
+        dir: &Path,
+        cwd: &Path,
+        files: &[(&str, &str)],
+        client: Value,
+        options: Value,
+        folders: Value,
+    ) -> (Self, Value) {
         for (name, text) in files {
             if let Some(parent) = dir.join(name).parent() {
                 std::fs::create_dir_all(parent).unwrap();
@@ -730,7 +744,7 @@ impl Server {
             std::fs::write(dir.join(name), text).unwrap();
         }
         let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
-            .current_dir(dir)
+            .current_dir(cwd)
             .env("XDG_CONFIG_HOME", dir.join("no-such-config-home"))
             .args(["--lsp"])
             .stdin(Stdio::piped())
@@ -749,7 +763,7 @@ impl Server {
         let reply = server.request(
             "initialize",
             json!({"capabilities": client, "initializationOptions": options,
-                   "workspaceFolders": [{"uri": file_uri(dir), "name": "ws"}]}),
+                   "workspaceFolders": folders}),
         );
         server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
         (server, reply)
@@ -1093,6 +1107,95 @@ fn a_bare_name_four_scripts_define_goes_first_to_its_own_then_to_what_it_loads()
             ("runner.q".into(), 1)
         ]
     );
+}
+
+#[test]
+fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
+    // With no folder, or for a load out of every folder, the link went to
+    // the file and nothing it defines was known: Go to Definition gave `[]`
+    // and signature help nothing (#2964). The files the open documents load
+    // are read, and what those load in turn.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().canonicalize().unwrap();
+    let files = [
+        ("single/lib.q", "f:{[a;b] a+b}\n"),
+        ("ws/main.q", ""),
+        ("outside/o.q", "\\l deeper.q\nz:{[p;q] p}\n"),
+        ("outside/deeper.q", "deep:{[d] d}\n"),
+        ("elsewhere/.keep", ""),
+    ];
+    let text = "\\l lib.q\nf[1;2]\n";
+    let (mut server, _) = Server::under(
+        &dir,
+        &dir.join("elsewhere"),
+        &files,
+        client(),
+        Value::Null,
+        json!([]),
+    );
+    let uri = server.open(&dir.join("single"), "main.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "f[1", 0, json!({}));
+    assert_eq!(
+        ordered(&reply["result"], &dir),
+        [("single/lib.q".to_string(), 0)],
+        "{reply}"
+    );
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "f[1",
+        2,
+        json!({}),
+    );
+    assert_eq!(
+        reply["result"]["signatures"][0]["label"], "f[a;b]",
+        "{reply}"
+    );
+    drop(server);
+
+    // Inside a folder, by a relative and by an absolute path, and through
+    // a load of the file loaded.
+    // Spelled as the temporary directory is, not by its real path, which on
+    // Windows starts `\\?\`.
+    let outside = tmp
+        .path()
+        .join("outside/o.q")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    for load in ["../outside/o.q".to_string(), outside] {
+        let text = format!("\\l {load}\nz[1;2]\ndeep[1]\n");
+        let ws = dir.join("ws");
+        let folders = json!([{"uri": file_uri(&ws), "name": "ws"}]);
+        let (mut server, _) = Server::under(&dir, &ws, &[], client(), Value::Null, folders);
+        let uri = server.open(&ws, "main.q", &text);
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            &text,
+            "z[1",
+            2,
+            json!({}),
+        );
+        assert_eq!(
+            reply["result"]["signatures"][0]["label"], "z[p;q]",
+            "{load}: {reply}"
+        );
+        let reply = server.ask(
+            "textDocument/definition",
+            &uri,
+            &text,
+            "deep[",
+            0,
+            json!({}),
+        );
+        assert_eq!(
+            ordered(&reply["result"], &dir),
+            [("outside/deeper.q".to_string(), 0)],
+            "{load}: {reply}"
+        );
+    }
 }
 
 #[test]
