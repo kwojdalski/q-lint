@@ -1070,6 +1070,11 @@ pub fn tokens(
         if crate::system_command(&raw[line..]) {
             continue;
         }
+        // Nor is a timed line's own `\t`, `\ts` or `\t:n`, though what
+        // follows it is q: its `t` was coloured as the function `t` (#2777).
+        if m.start() < line + crate::timed_prefix(&raw[line..]) {
+            continue;
+        }
         // The assignment itself is the grammar's to colour, as a definition.
         if code[m.end()..]
             .trim_start_matches([' ', '\t'])
