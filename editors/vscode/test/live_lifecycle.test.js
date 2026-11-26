@@ -685,3 +685,27 @@ test("Load more takes its turn with background reads, and a query sent meanwhile
   assert.deepStrictEqual(stub.messages, []);
   assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["1+1", "ok"]]);
 });
+
+// A watched query's run was a query like any other: a cell, a test or a
+// query from the editor sent while one was out was refused with "a query is
+// still running", of a query the user never ran - a Run All stopped midway
+// through, every interval. It waits for the run, as for a background read.
+test("a query sent while a watched query's run is out waits for that run (#3029)", async (t) => {
+  const answer = { ok: true, type: -7, text: ["2"] };
+  let answerWatch;
+  const a = await fakeQ((message) => (JSON.stringify(message).includes("watchme") ? new Promise((resolve) => (answerWatch = () => resolve(answer))) : answer));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.watch.enable": true });
+  await live.connectTo("a");
+  const watching = stub.commands.get("q-lint.watchQuery")("watchme", 1);
+  await until(() => answerWatch !== undefined);
+  stub.messages = [];
+  const cell = live.runOnActive("1+1", (connection) => connection.query(["1+1"], [25, 80]));
+  await sleep(50);
+  assert.ok(!a.sent.some((message) => JSON.stringify(message).includes("1+1")), "the cell is not sent while the run is out");
+  answerWatch();
+  assert.strictEqual((await cell)?.process, "a");
+  assert.deepStrictEqual(stub.messages, []);
+  await watching;
+  await stub.commands.get("q-lint.stopWatchingQuery")();
+});

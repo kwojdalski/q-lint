@@ -706,6 +706,10 @@ export class Live {
   /// waits for it (`borrow`). `borrower` says whose it is, for Abort (#1709).
   private borrowed: Promise<unknown> | undefined;
   private borrower = "";
+  /// A run of q-lint's own that is out or about to be - a watched query's:
+  /// nobody sent it now, so a query sent meanwhile waits for it as it waits
+  /// for a background read, and is not refused for it (#3029).
+  private yielding: Promise<unknown> | undefined;
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
@@ -3195,8 +3199,9 @@ export class Live {
   /// none; undefined when none was connected or a query is still running.
   /// `seconds` (0: none) bound the wait for a connect under way or a
   /// background read, and Abort ends it (#2126), as `signal` does for its
-  /// caller's wait alone (#2560); `waited` is how long it was.
-  private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+  /// caller's wait alone (#2560); `waited` is how long it was. `own`: the
+  /// call is the run others wait for (`yielding`), not one waiting for it.
+  private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal, own = false): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
     const waiter = { started: 0, stop: new AbortController() };
     const stop = (): void => waiter.stop.abort();
     signal?.addEventListener("abort", stop, { once: true });
@@ -3234,7 +3239,7 @@ export class Live {
       return settled;
     };
     try {
-      const ready = await this.readyAfter(wait);
+      const ready = await this.readyAfter(wait, own);
       return ready === undefined ? undefined : { ...ready, waited: waiter.started === 0 ? 0 : Date.now() - waiter.started };
     } finally {
       disarm();
@@ -3245,7 +3250,7 @@ export class Live {
     }
   }
 
-  private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<{ connection: QConnection; process: Process } | undefined> {
+  private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>, own: boolean): Promise<{ connection: QConnection; process: Process } | undefined> {
     // A reconnect still under way (after an abort, or an automatic one
     // between its tries, #2132) is waited for, not replaced by asking which
     // process to connect to.
@@ -3259,10 +3264,11 @@ export class Live {
       return undefined;
     }
     const before = this.connection;
-    // Each read out in turn: another may have taken the connection as the
-    // one waited for ended (#3017).
-    while (this.borrowed !== undefined && this.connection === before) {
-      if (!(await wait(this.borrowed))) {
+    // Each read out in turn, and a run of q-lint's own: another may have
+    // taken the connection as the one waited for ended (#3017).
+    const out = (): Promise<unknown> | undefined => this.borrowed ?? (own ? undefined : this.yielding);
+    for (let other = out(); other !== undefined && this.connection === before; other = out()) {
+      if (!(await wait(other))) {
         return undefined;
       }
     }
@@ -3727,10 +3733,16 @@ export class Live {
     const first = watched.runs === 0;
     watched.runs++;
     watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
+    const run = this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
+    const yielding = run.then(() => {}, () => {});
+    this.yielding = yielding;
     try {
-      await this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
+      await run;
     } finally {
       watched.running = false;
+      if (this.yielding === yielding) {
+        this.yielding = undefined;
+      }
     }
   }
 
@@ -3764,7 +3776,7 @@ export class Live {
     this.origin = undefined;
     const asked = this.active ?? this.connectingAs;
     const askedOn = this.setting(readAdmin).processTimeout;
-    const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn));
+    const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn), undefined, as !== undefined);
     if (first === undefined) {
       return;
     }
