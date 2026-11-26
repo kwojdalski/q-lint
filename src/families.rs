@@ -1529,7 +1529,78 @@ fn past_blanks_inline(text: &str, at: usize) -> usize {
 /// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
 /// 'type whether or not X is set. `all null` or `any null` in front reduces
 /// it to an atom, and is left alone.
+///
+/// So is `null e` as the condition of `if`, `while` or `$[...]` where `e` is
+/// a lambda's local that `getenv` alone assigns - `e:getenv`X; if[null e;
+/// ...]`, the usual way to read a variable once, and the same 'type in q 5
+/// (#2744). Only as a condition and only of the whole of it: `where null e`
+/// has a use, and `null e 0` is an atom.
 fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let message = "getenv gives a string, so null tests each character and gives a vector - \
+                   empty when the variable is unset - which if and $[...] refuse with 'type: \
+                   `\"\"~getenv x` or `0=count getenv x` tests an unset variable";
+    let mut held = std::collections::HashSet::new();
+    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)[ \t]*:[ \t]*getenv\b[ \t]*[^ \t;\])}\r\n]")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        let Some(brace) = crate::enclosing_brace(code, name.start()) else {
+            continue;
+        };
+        if !boundary(code, name.start()) || !held.insert((brace, name.as_str())) {
+            continue;
+        }
+        let end = crate::matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        // Occurrences of the name in this lambda and not in one inside it.
+        let own = |at: usize| {
+            boundary(code, at)
+                && !code[at + name.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                && crate::enclosing_brace(code, at) == Some(brace)
+        };
+        let mentions: Vec<usize> = code[brace..end]
+            .match_indices(name.as_str())
+            .map(|(i, _)| brace + i)
+            .filter(|&at| own(at))
+            .collect();
+        // Anything else assigned to it and it is no longer known a string.
+        let always = mentions.iter().all(|&at| {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            match rest.strip_prefix(':') {
+                Some(value) => value.trim_start_matches([' ', '\t']).starts_with("getenv"),
+                None => !re!(r"^(?:\[[^\]]*\][ \t]*)?[-+*%&|^,#_!$?@.~=<>]?:").is_match(rest),
+            }
+        });
+        if !always {
+            continue;
+        }
+        for &at in mentions.iter().filter(|&&at| at > name.start()) {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            let Some(null) = code[..at]
+                .trim_end_matches([' ', '\t'])
+                .strip_suffix("null")
+                .filter(|before| boundary(code, before.len()))
+            else {
+                continue;
+            };
+            let before = null.trim_end_matches([' ', '\t']);
+            let before = before
+                .strip_suffix("not")
+                .filter(|b| boundary(code, b.len()))
+                .map_or(before, |b| b.trim_end_matches([' ', '\t']));
+            let condition =
+                re!(r"(?:(?:^|[^A-Za-z0-9_.])(?:if|while)|(?:^|[^A-Za-z0-9_.`\x22)\]])\$)\[$")
+                    .is_match(before);
+            if condition && rest.starts_with([';', ']']) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    null.len(),
+                    "QT036",
+                    message.into(),
+                ));
+            }
+        }
+    }
     for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
         let before = code[..m.start()].trim_end_matches([' ', '\t']);
         let reduced = ["all", "any"]
@@ -1543,10 +1614,7 @@ fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             source,
             m.start(),
             "QT036",
-            "getenv gives a string, so null tests each character and gives a vector - empty \
-             when the variable is unset - which if and $[...] refuse with 'type: \
-             `\"\"~getenv x` or `0=count getenv x` tests an unset variable"
-                .into(),
+            message.into(),
         ));
     }
 }
