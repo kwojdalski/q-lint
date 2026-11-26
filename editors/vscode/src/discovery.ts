@@ -17,10 +17,12 @@ export interface ServerState {
   processes: Process[];
   /// What `parseProcesses` said about the entries it skipped.
   problems: string[];
-  /// Why the last fetch failed; its processes are then the empty list.
+  /// Why the last fetch failed; its processes are then the ones it listed
+  /// before, if it had (#3025).
   error?: string;
   loading: boolean;
-  /// When the last fetch finished, as `Date.now()`.
+  /// When the last fetch that listed them finished, as `Date.now()`: of one
+  /// that failed, when nothing was listed before.
   fetchedAt?: number;
   /// Set by Remove Processes: the periodic refresh leaves the server alone
   /// until it is reloaded.
@@ -319,7 +321,9 @@ export function children(saved: Process[], discovered: Discovered[], row?: Row, 
 function serverChildren(server: DiscoveryServer, state: ServerState): Row[] {
   const note = (level: "error" | "warning" | "info", text: string): Row => ({ kind: "note", level, text });
   if (state.error !== undefined) {
-    return [note("error", `Could not load: ${state.error}.`)];
+    // The processes it listed before the failure, kept (#3025).
+    const kept = [...state.processes].sort((a, b) => a.label.localeCompare(b.label)).map((process): Row => ({ kind: "discovered", server: server.label, process }));
+    return [note("error", `Could not load: ${state.error}.${kept.length > 0 ? " Its processes are as it last listed them." : ""}`), ...kept];
   }
   if (state.removed) {
     return [note("info", "Processes removed. Reload to list them again.")];
@@ -351,7 +355,8 @@ export function serverDescription(state: ServerState): string {
     return "loading";
   }
   if (state.error !== undefined) {
-    return "failed";
+    const kept = state.processes.length;
+    return kept === 0 ? "failed" : `failed, ${kept} process${kept === 1 ? "" : "es"} as last listed`;
   }
   if (state.removed || state.fetchedAt === undefined) {
     return "";

@@ -613,7 +613,9 @@ answer of 5 MB or less, read as UTF-8 or the charset it names. It follows
 up to 20 redirects, and sends the auth header only to the server's own
 origin. Why one failed - no answer, a status, the wrong
 content type, too large, not JSON - shows under the server's row, as do the
-entries it skipped and why; nothing pops up.
+entries it skipped and why; nothing pops up. A server that fails after it
+has listed keeps the processes it last listed, under the failure, until a
+fetch answers: one refresh that fails is no word that they are gone.
 
 A discovered process may share a label with a saved one, or with one another
 server lists. Its row shows its own label, but once connected it is
