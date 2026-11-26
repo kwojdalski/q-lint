@@ -2020,7 +2020,7 @@ export class Live {
         }
         chosen = code.trim() === "" ? undefined : { kind: "code", code };
       } else if (picked.choice === "file") {
-        const folder = workspace.workspaceFolders?.[0]?.uri;
+        const folder = workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri;
         const files = await window.showOpenDialog({
           title: `Connect script of ${process.label}: q file`,
           canSelectMany: false,
@@ -2028,6 +2028,15 @@ export class Live {
           ...(folder !== undefined ? { defaultUri: folder } : {}),
         });
         if (files === undefined || files.length === 0) {
+          return;
+        }
+        // Kept by its path, which is read from the disk at each connect: a
+        // file of a virtual folder (vscode-vfs) would be read at a local
+        // path that is not it (#2515).
+        if (files[0].scheme !== "file") {
+          void window.showErrorMessage(
+            plainMessage(`q-lint: ${files[0].toString()} is not a file on disk, which a connect script is read from at every connect; its connect script was not set. Pick a file on disk, or set the script as q code.`),
+          );
           return;
         }
         // Kept whole: a saved process is every window's, and a path
@@ -2093,7 +2102,9 @@ export class Live {
         failed(`${script.file} is relative to the workspace folder, which is not trusted: it was not run. Name the file by its full path.`);
         return;
       }
-      const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.[0]?.uri.fsPath);
+      // A relative one is the first folder on disk's, never a virtual
+      // folder's path read from the local disk (#2515).
+      const file = scriptPath(script.file, os.homedir(), workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath);
       if (file === undefined) {
         failed(`${script.file} is relative, and there is no workspace folder to read it from.`);
         return;

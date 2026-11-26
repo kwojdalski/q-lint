@@ -302,6 +302,37 @@ test("a connect script file is kept by its full path, and a relative one is not 
   assert.match(stub.messages.find((m) => /connect script of p failed/.test(m[1]))[1], /not trusted: it was not run/);
 });
 
+// A vscode-vfs pick was kept by its fsPath, /acme/desk/init.q, and read
+// from the local disk at every connect; a relative one was read against
+// the virtual folder's path (#2515).
+test("a connect script picked in a virtual folder is refused, and a relative one is read from the first folder on disk", async (t) => {
+  const vscode = require("vscode");
+  const { fakeQ } = require("./fakeq.js");
+  const q = await fakeQ(null);
+  t.after(() => q.close());
+  const { live, run } = await setUp(t, [proc("a"), { label: "p", host: "127.0.0.1", port: q.port, tags: [], initFile: "init.q" }]);
+  t.after(() => stub.commands.get("q-lint.disconnectProcess")?.());
+  const saved = { folders: vscode.workspace.workspaceFolders, dialog: vscode.window.showOpenDialog, fs: vscode.workspace.fs };
+  t.after(() => {
+    vscode.workspace.workspaceFolders = saved.folders;
+    vscode.window.showOpenDialog = saved.dialog;
+    vscode.workspace.fs = saved.fs;
+  });
+  const virtual = (p) => ({ scheme: "vscode-vfs", authority: "github", path: p, fsPath: p, toString: () => `vscode-vfs://github${p}` });
+  vscode.workspace.workspaceFolders = [{ uri: virtual("/acme/desk"), name: "desk", index: 0 }, { uri: vscode.Uri.file("/w/local"), name: "local", index: 1 }];
+  let from;
+  vscode.window.showOpenDialog = async (o) => ((from = o.defaultUri), [virtual("/acme/desk/init.q")]);
+  stub.picks.push("q File");
+  await run("a");
+  assert.strictEqual(from.fsPath, "/w/local", "the dialog starts in the folder on disk");
+  assert.strictEqual(scriptOf(live.processes()[0]), undefined);
+  assert.match(stub.messages.at(-1)[1], /vscode-vfs:\/\/github\/acme\/desk\/init\.q is not a file on disk.*not set/);
+  const reads = [];
+  vscode.workspace.fs = { readFile: async (uri) => (reads.push(uri.fsPath), Buffer.from("x:1")) };
+  assert.strictEqual(await live.connectTo("p"), true);
+  assert.deepStrictEqual(reads, [require("node:path").resolve("/w/local", "init.q")]);
+});
+
 // Diff Function, Find in Processes, table info and streams opened their own
 // connection with no connect script, so they queried a session it never
 // prepared: another namespace, a login not made (#1509).
