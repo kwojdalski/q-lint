@@ -192,6 +192,37 @@ test("the column manager parses string and symbol columns it casts to numbers (#
   assert.strictEqual(await connection.call('{(`$"q#") in key .Q.par[hsym`$system"cd";first .Q.pv;`trade]}', 0), false);
 });
 
+// A value the parse cannot read would be a null on disk, for good: the
+// directory is left as it was, and the answer says how many and which first.
+test("the column manager casts no symbol or string column whose values do not parse (#3056)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/db";',
+    'mk:{[r;d;id] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`p#`AAPL`AAPL`MSFT`;id:id;n:("12";"x1";"";"0N");ok:("12";" ";"";"0N"))};',
+    "mk[r;2026.01.05;`1`2`3`];",
+    "mk[r;2026.01.06;`1`2`x`];",
+    'system "cd $DIR/db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const cast = async (column, type) => run(connection, columnScript("trade", { op: "cast", column, type }, "hdb"));
+  // Tickers are no longs: neither partition is written, and the column is as it was, its p# too.
+  const sym = await cast("sym", "j");
+  assert.match(sym, /^changed 0 of 2 directories; left as they were: /);
+  assert.strictEqual((sym.match(/trade: 3 values q reads as no "j", the first AAPL/g) ?? []).length, 2);
+  assert.match(await cast("n", "i"), /^changed 0 of 2 directories; .*trade: 1 value q reads as no "i", the first x1/);
+  assert.deepStrictEqual(await connection.call("{exec t from meta trade}", 0), "dssCC");
+  assert.deepStrictEqual(await connection.call("{string(select sym from trade)`sym}", 0), ["AAPL", "AAPL", "MSFT", "", "AAPL", "AAPL", "MSFT", ""]);
+  assert.strictEqual(await connection.call('{attr get` sv .Q.par[hsym`$system"cd";first .Q.pv;`trade],`sym}', 0), "p");
+  assert.deepStrictEqual(await connection.call("{(select n from trade where date=first date)`n}", 0), ["12", "x1", "", "0N"]);
+  // A partition whose values all parse is cast; the other is named.
+  assert.match(await cast("id", "j"), /^changed 1 of 2 directories; left as they were: \S*2026\.01\.06\/trade: 1 value q reads as no "j", the first x$/);
+  assert.deepStrictEqual(await connection.call('{"f"$get` sv .Q.par[hsym`$system"cd";first .Q.pv;`trade],`id}', 0), [1, 2, 3, null]);
+  // A null, a blank and q's own null are nulls after as before.
+  assert.match(await cast("ok", "j"), /^changed 2 of 2 directories$/);
+  assert.deepStrictEqual(await connection.call('{"f"$(select ok from trade where date=first date)`ok}', 0), [12, null, null, null]);
+});
+
 // A table or column whose name is no plain name is written as `$"..." (#1569).
 test("the column manager changes a table and columns whose names have a space", { skip }, async (t) => {
   const source = [
@@ -1237,7 +1268,9 @@ test("a schema migration casts a list column to another list type, as q does, an
 });
 
 test("a schema migration casts on disk what the column manager casts, and no other (#2012)", { skip }, async (t) => {
-  const cols = [...ATOMS.map((a) => `c${a}:${SAMPLE[a]}`), 'sC:("12";"2024.01.01";"x")', "lJ:(1 2;3 4;5 6)"].join("; ");
+  // The symbols and strings are nulls and blanks, which every type reads as
+  // its null: a value a type does not read is not cast at all (#3056).
+  const cols = [...ATOMS.map((a) => `c${a}:${a === "s" ? "```" : SAMPLE[a]}`), 'sC:("";" ";"0N")', "lJ:(1 2;3 4;5 6)"].join("; ");
   const { connection } = await connect(t, [
     'r:hsym`$"$DIR/hdb";',
     `{[r;n] .Q.dd[r;2026.01.05,n,\`] set .Q.en[r] ([] k:1 2 3; ${cols})}[r] each \`$"mg",/:"${ATOMS.join("")}";`,

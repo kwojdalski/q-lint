@@ -22,7 +22,10 @@
 //
 // A symbol default is enumerated against the root's `sym` file, which it
 // extends; a cast to `s` enumerates the same way. A string or symbol column
-// cast to a number or time is parsed (`"J"$`), not cast char by char (#1135).
+// cast to a number or time is parsed (`"J"$`), not cast char by char (#1135);
+// a directory where the parse makes a null of a value that was none - a
+// ticker read as a long - is left as it was, and the answer says how many
+// values and the first (#3056).
 // Setting an attribute, or casting, reads the whole column of each partition and writes it back: the
 // script's header says so. It is written as it was: compressed with the
 // parameters `-21!` read off it, or plain - whatever the process's `.z.zd`
@@ -197,7 +200,7 @@ export const HELPERS = [
   '.qlint.cm.mvcmd:{[w;a;b] p:$[w;{"\\"",ssr[x;"/";"\\\\"],"\\""};{"\'",ssr[x;"\'";"\'\\\\\'\'"],"\'"}]; $[w;"move ";"mv "],p[1_string a]," ",p 1_string b}',
   '.qlint.cm.mv:{[d;a;b] f:` sv d,a; if[not ()~key f; system .qlint.cm.mvcmd["w"=first string .z.o;f;` sv d,b]]}',
   ".qlint.cm.ren:{[o;n;d] cs:.qlint.cm.cols d; if[not o in cs;:`$\"no \",string o]; if[n in cs;:`$\"has \",string n]; .qlint.cm.mv[d]'[.qlint.cm.nested o;.qlint.cm.nested n]; (` sv d,`.d) set @[cs;cs?o;:;n]; `ok}",
-  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; if[not .qlint.cm.put[f;a#$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];n&s;(upper t)$v;n&y;(upper t)$string v;t$v]];:`$"written without the compression it had"]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
+  '.qlint.cm.cast:{[c;t;d] if[not c in .qlint.cm.cols d;:`$"no ",string c]; f:` sv d,c; v:get f; a:attr v; s:(0h=type v)|77h<=type v; y:(11h=abs type v)|type[v] within 20 76h; n:not t in "cs"; p:n&s|y; x:$[p&y;string v;v]; w:$["s"=t;.qlint.cm.enum $[s;`$v;`$string v];p;(upper t)$x;t$v]; if[p; b:where null w; b:b where not{$[10h=abs type x;(all x in " \\t")|((),x) like "0[Nn]*";1b]} each x b; if[count b;:`$string[count b]," value",$[1=count b;"";"s"]," q reads as no \\"",t,"\\", the first ",20 sublist(),x first b]]; if[not .qlint.cm.put[f;a#w];:`$"written without the compression it had"]; if[s&not "c"=t; {if[not ()~key x;hdel x]} each ` sv\' d,/:1_.qlint.cm.nested c]; `ok}',
   ".qlint.cm.attr:{[c;a;d] if[not c in .qlint.cm.cols d;:`$\"no \",string c]; f:` sv d,c; v:get f; if[(not null a)&(0h=type v)|77h<=type v;:`$\"nested, which q writes with no attribute\"]; if[not .qlint.cm.put[f;a#v];:`$\"written without the compression it had\"]; $[a~attr get f;`ok;`$\"written, but q kept no \",string[a],\"#\"]}",
   ".qlint.cm.order:{[o;d] cs:.qlint.cm.cols d; if[not (asc cs)~asc o;:`$\"other columns\"]; (` sv d,`.d) set o; `ok}",
   `.qlint.cm.pdirs:${PARTITION_DIRS}`,
