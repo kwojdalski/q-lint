@@ -125,37 +125,46 @@ const symbols = (names: string[]): string => {
 
 /// The joins `left` and `right` allow, the likeliest first.
 export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
-  // q joins no partitioned table on the left - lj and ij signal 'splay, aj
-  // 'date - so the left is one partition of it, the last, which the why
-  // says to change to the one wanted (#2539).
-  const field = left.where === "partitioned" ? left.columns[0] : undefined;
-  const l = field === undefined ? operand(left.expression) : `(select from ${operand(left.expression)} where ${field}=last .Q.pv)`;
-  const leftNote = field === undefined ? "" : ` ${left.expression.trim()} is partitioned, which q joins only one partition of at a time: this takes its last ${field}; change last .Q.pv to the ${field} wanted.`;
-  const r = operand(right.expression);
+  // q joins no table where it lies on disk, on either side. A partitioned
+  // one - lj and ij signal 'splay or 'date, aj 'date or 'splay - is written
+  // as one partition of it, the last, which the why says to change to the
+  // one wanted (#2539, #3045); a splayed one ('splay, or 'type under xkey)
+  // as a select of it, which maps it (#3044).
+  const read = (s: Shape): { table: string; note: string; field?: string } => {
+    const name = s.expression.trim();
+    if (s.where === "partitioned") {
+      const field = s.columns[0];
+      return { table: `(select from ${operand(name)} where ${field}=last .Q.pv)`, note: ` ${name} is partitioned, which q joins only one partition of at a time: this takes its last ${field}; change last .Q.pv to the ${field} wanted.`, field };
+    }
+    return s.where === "splayed" ? { table: `(select from ${operand(name)})`, note: ` ${name} is splayed, which q joins only once it is selected from: select from ${name} maps it.` } : { table: operand(name), note: "" };
+  };
+  const { table: l, note: leftNote } = read(left);
+  const { table: r, note: rightNote, field: rightField } = read(right);
   const type = (s: Shape, c: string) => s.types[s.columns.indexOf(c)] ?? " ";
   const attr = (s: Shape, c: string) => s.attributes[s.columns.indexOf(c)] ?? "";
   const common = left.columns.filter((c) => right.columns.includes(c));
   const out: Suggestion[] = [];
-  const onDisk = (s: Shape): string =>
-    (s.where === "partitioned" ? ` ${s.expression.trim()} is partitioned: select one date first (select from ${s.expression.trim()} where date=d), or every partition is read.` : "") + leftNote;
+  const onDisk = rightNote === leftNote ? leftNote : rightNote + leftNote;
 
   // lj and ij: on the right table's keys, or on the columns it shares.
   if (right.keys.length > 0 && right.keys.every((k) => left.columns.includes(k))) {
-    out.push({ join: "lj", expression: `${l} lj ${r}`, why: `Every row of ${left.expression.trim()}, with ${right.expression.trim()}'s columns where its keys ${right.keys.join(", ")} match; nulls where none does.${onDisk(right)}` });
-    out.push({ join: "ij", expression: `${l} ij ${r}`, why: `Only the rows of ${left.expression.trim()} whose ${right.keys.join(", ")} ${right.keys.length === 1 ? "is" : "are"} in ${right.expression.trim()}.${onDisk(right)}` });
+    out.push({ join: "lj", expression: `${l} lj ${r}`, why: `Every row of ${left.expression.trim()}, with ${right.expression.trim()}'s columns where its keys ${right.keys.join(", ")} match; nulls where none does.${onDisk}` });
+    out.push({ join: "ij", expression: `${l} ij ${r}`, why: `Only the rows of ${left.expression.trim()} whose ${right.keys.join(", ")} ${right.keys.length === 1 ? "is" : "are"} in ${right.expression.trim()}.${onDisk}` });
   } else if (right.keys.length === 0) {
     const keys = common.filter((c) => !TEMPORAL.has(type(right, c)) && !NUMERIC.has(type(right, c)) && type(right, c) !== "f");
     // A shared column left out of the keys would be overwritten in every
-    // row by the right table's: only its own columns are joined (#2408).
-    // With none of its own there is nothing to join, and q refuses a keyed
-    // table of keys alone with 'type (#3048).
-    const own = right.columns.filter((c) => !common.includes(c));
+    // row by the right table's: only its own columns are joined (#2408) -
+    // and not the field it is partitioned by, the same in every row of the
+    // one partition read (#3045). With none of its own there is nothing to
+    // join, and q refuses a keyed table of keys alone with 'type (#3048).
+    const own = right.columns.filter((c) => !common.includes(c) && c !== rightField);
     if (keys.length > 0 && own.length > 0) {
-      const dropped = common.filter((c) => !keys.includes(c));
+      const dropped = [...common.filter((c) => !keys.includes(c)), ...(rightField !== undefined && !common.includes(rightField) ? [rightField] : [])];
       const keyed = `${symbols(keys)} xkey ${dropped.length > 0 ? `${symbols([...keys, ...own])}#${r}` : r}`;
-      const kept = dropped.length > 0 ? ` Only its own columns, ${own.join(", ")}, are joined: a join on these keys would replace ${left.expression.trim()}'s ${dropped.join(", ")} with ${right.expression.trim()}'s.` : "";
-      out.push({ join: "lj", expression: `${l} lj ${keyed}`, why: `${right.expression.trim()} has no keys, so it is keyed on the columns both share, ${keys.join(", ")}; where a key repeats, lj takes the first row with it.${kept}${onDisk(right)}` });
-      out.push({ join: "ij", expression: `${l} ij ${keyed}`, why: `Only the rows of ${left.expression.trim()} with a match on ${keys.join(", ")}.${kept}${onDisk(right)}` });
+      const shared = common.filter((c) => !keys.includes(c));
+      const kept = shared.length > 0 ? ` Only its own columns, ${own.join(", ")}, are joined: a join on these keys would replace ${left.expression.trim()}'s ${shared.join(", ")} with ${right.expression.trim()}'s.` : "";
+      out.push({ join: "lj", expression: `${l} lj ${keyed}`, why: `${right.expression.trim()} has no keys, so it is keyed on the columns both share, ${keys.join(", ")}; where a key repeats, lj takes the first row with it.${kept}${onDisk}` });
+      out.push({ join: "ij", expression: `${l} ij ${keyed}`, why: `Only the rows of ${left.expression.trim()} with a match on ${keys.join(", ")}.${kept}${onDisk}` });
     }
   }
 
@@ -178,7 +187,7 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
     out.push({
       join: "aj",
       expression: `aj[${cs};${l};${sorted}]`,
-      why: `Each row of ${left.expression.trim()} with the last row of ${right.expression.trim()} at or before its ${time}${by.length > 0 ? `, for the same ${by.join(", ")}` : ""}.${sortWhy}${onDisk(right)}`,
+      why: `Each row of ${left.expression.trim()} with the last row of ${right.expression.trim()} at or before its ${time}${by.length > 0 ? `, for the same ${by.join(", ")}` : ""}.${sortWhy}${onDisk}`,
     });
     const second = SECOND[type(left, time)];
     const value = right.columns.find((c) => !common.includes(c) && NUMERIC.has(type(right, c)));
@@ -196,7 +205,7 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
         join: "wj",
         // The max and min would both be named for the column: renamed, so they can be told apart (#1573).
         expression: value === undefined ? window : `((cols ${wl}),${symbols([`${value}_max`, `${value}_min`])}) xcol ${window}`,
-        why: `For each row of ${left.expression.trim()}, ${value === undefined ? "the count of" : `the max and min ${value} of`} the rows of ${right.expression.trim()} in the second up to its ${time}; change the window and the aggregates to suit.${left.keys.length > 0 ? ` wj takes no keyed table, so ${left.expression.trim()} is unkeyed (0!) and the answer has no key.` : ""}${sortWhy}${onDisk(right)}`,
+        why: `For each row of ${left.expression.trim()}, ${value === undefined ? "the count of" : `the max and min ${value} of`} the rows of ${right.expression.trim()} in the second up to its ${time}; change the window and the aggregates to suit.${left.keys.length > 0 ? ` wj takes no keyed table, so ${left.expression.trim()} is unkeyed (0!) and the answer has no key.` : ""}${sortWhy}${onDisk}`,
       });
     }
   }
@@ -213,8 +222,8 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
       expression: `${l} uj ${r}`,
       why:
         left.keys.length > 0
-          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.${mixed}${leftNote}`
-          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.${mixed}${leftNote}`,
+          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.${mixed}${onDisk}`
+          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.${mixed}${onDisk}`,
     });
   }
   return out;

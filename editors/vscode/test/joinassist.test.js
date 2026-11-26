@@ -77,9 +77,9 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
     const aj = suggestJoins(trade, shape("quote", ["sym", "time", "bid"], "stf", [], [attribute, "", ""])).find((x) => x.join === "aj");
     assert.match(aj.why, new RegExp(`\`${attribute}# on sym does not order time: this takes quote to be in time order within each sym already, as a tickerplant's table is; if it is not, use \`sym\`time xasc quote`), attribute);
   }
-  // A partitioned right table is told to pick a date.
+  // A partitioned right table is one partition of it, taken as ordered.
   const hdb = shape("quote", ["date", "sym", "time", "bid"], "dstf", [], ["", "p", "", ""], "partitioned");
-  assert.match(suggestJoins(trade, hdb).find((x) => x.join === "aj").why, /partitioned: select one date first/);
+  assert.strictEqual(suggestJoins(trade, hdb).find((x) => x.join === "aj").expression, "aj[`sym`time;trade;(select from quote where date=last .Q.pv)]");
   // Timestamps get a window in nanoseconds.
   const tp = shape("t", ["sym", "time", "px"], "spf");
   const qp = shape("q", ["sym", "time", "bid"], "spf");
@@ -138,6 +138,54 @@ test("uj says which shared columns differ in type, and so come out mixed (#3049)
   // Keyed alike, the same.
   const keyed = (name, types) => shape(name, ["sym", "qty"], types, ["sym"]);
   assert.match(suggestJoins(keyed("k1", "sj"), keyed("k2", "sh")).find((x) => x.join === "uj").why, /where the keys match\. qty is j in k1 and h in k2: uj makes it a mixed column/);
+});
+
+// q joins no table where it lies on disk, on either side: a splayed one
+// signalled 'splay, or 'type under xkey (#3044); a partitioned right one
+// 'date or 'splay, though its note said every partition would be read (#3045).
+test("a splayed table is selected from, and a partitioned right table is one partition of it (#3044, #3045)", () => {
+  const sref = shape("sref", ["sym", "time", "lvl", "nm"], "stfs", [], ["", "", "", ""], "splayed");
+  const left = Object.fromEntries(suggestJoins(sref, quote).map((x) => [x.join, x]));
+  assert.deepStrictEqual(Object.values(left).map((x) => x.expression), [
+    "(select from sref) lj `sym xkey `sym`bid#quote",
+    "(select from sref) ij `sym xkey `sym`bid#quote",
+    "aj[`sym`time;(select from sref);`sym`time xasc quote]",
+    "((cols (select from sref)),`bid_max`bid_min) xcol wj[-1000 0+\\:(select from sref)`time;`sym`time;(select from sref);(`sym`time xasc quote;(max;`bid);(min;`bid))]",
+    "(select from sref) uj quote",
+  ]);
+  for (const s of Object.values(left)) {
+    assert.match(s.why, / sref is splayed, which q joins only once it is selected from: select from sref maps it\.$/, s.join);
+  }
+  assert.deepStrictEqual(suggestJoins(sref, ref).map((x) => x.expression), ["(select from sref) lj ref", "(select from sref) ij ref"]);
+  const right = Object.fromEntries(suggestJoins(trade, sref).map((x) => [x.join, x]));
+  assert.deepStrictEqual(Object.values(right).map((x) => x.expression), [
+    "trade lj `sym xkey `sym`lvl`nm#(select from sref)",
+    "trade ij `sym xkey `sym`lvl`nm#(select from sref)",
+    "aj[`sym`time;trade;`sym`time xasc (select from sref)]",
+    "((cols trade),`lvl_max`lvl_min) xcol wj[-1000 0+\\:trade`time;`sym`time;trade;(`sym`time xasc (select from sref);(max;`lvl);(min;`lvl))]",
+    "trade uj (select from sref)",
+  ]);
+  assert.match(right.uj.why, / sref is splayed, which q joins only once/);
+
+  // The field it is partitioned by is none of its own columns to join.
+  const hdb = shape("quote", ["date", "sym", "time", "bid", "ex"], "dstfs", [], ["", "p", "", "", ""], "partitioned");
+  const parted = suggestJoins(trade, hdb);
+  assert.deepStrictEqual(parted.map((x) => x.expression), [
+    "trade lj `sym xkey `sym`bid`ex#(select from quote where date=last .Q.pv)",
+    "trade ij `sym xkey `sym`bid`ex#(select from quote where date=last .Q.pv)",
+    "aj[`sym`time;trade;(select from quote where date=last .Q.pv)]",
+    "((cols trade),`bid_max`bid_min) xcol wj[-1000 0+\\:trade`time;`sym`time;trade;((select from quote where date=last .Q.pv);(max;`bid);(min;`bid))]",
+  ]);
+  for (const s of parted) {
+    assert.match(s.why, / quote is partitioned, which q joins only one partition of at a time: this takes its last date; change last \.Q\.pv to the date wanted\.$/, s.join);
+    assert.doesNotMatch(s.why, /every partition is read/, s.join);
+  }
+  // With no shared column left out of the keys, the field still is.
+  assert.strictEqual(suggestJoins(shape("t", ["sym", "q"], "sj"), hdb)[0].expression, "t lj `sym xkey `sym`time`bid`ex#(select from quote where date=last .Q.pv)");
+  // Both on disk: each says so, a table joined with itself once.
+  const both = suggestJoins(hdb, sref).find((x) => x.join === "aj");
+  assert.match(both.why, / sref is splayed, which q joins only once it is selected from: select from sref maps it\. quote is partitioned, which/);
+  assert.strictEqual(suggestJoins(hdb, hdb).find((x) => x.join === "uj").why.match(/quote is partitioned, which/g).length, 1);
 });
 
 test("the switch is declared on, and the command only where it can run", () => {
