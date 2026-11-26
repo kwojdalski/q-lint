@@ -232,6 +232,9 @@ const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
   ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
+  // The workers of `.Q.L` and `.Q.bv`, which load a database and assign
+  // globals, and the debugger's `.Q.dbg`, which assigns them (#2631).
+  ".Q.MAP", ".Q.L1", ".Q.bvfp", ".Q.dbg",
   // The debugger's breakpoints patch a function's code in place, which
   // `reval` does not stop (#2276).
   ".Q.bs", ".Q.bc", ".Q.bd", ".Q.bu", ".Q.bp", ".Q.Ls",

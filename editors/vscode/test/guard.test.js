@@ -2072,3 +2072,10 @@ test("\\v, \\f, \\a and \\b given a namespace list its names: a read (#2645)", (
   }
   assert.deepStrictEqual(writes("\\v x"), ["runs the system command \\v"]);
 });
+
+test("the workers of .Q.L and .Q.bv, and .Q.dbg, assign globals or load a database: they are writers (#2631)", () => {
+  for (const name of [".Q.MAP", ".Q.L1", ".Q.bvfp", ".Q.dbg"]) {
+    assert.deepStrictEqual(writes(`${name}[x]`), [`calls ${name}`], name);
+  }
+  assert.deepStrictEqual(writes(".Q.MAP[]"), ["calls .Q.MAP"]);
+});
