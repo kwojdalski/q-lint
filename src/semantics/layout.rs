@@ -142,10 +142,54 @@ fn leads(plain: &str) -> Vec<usize> {
         .collect()
 }
 
-/// The column of byte `at`: the characters before it on its line.
+/// The column of byte `at`: the cells before it on its line.
 fn column(source: &str, at: usize) -> usize {
+    margin(source, at).len()
+}
+
+/// What indents a line to byte `at`'s column: the text before `at` on its
+/// line with each tab kept and anything else a blank for each cell it is
+/// shown in, so it is one byte a cell. A tab is as wide as the editor
+/// says, which nothing here knows, and a line under it lines up only if
+/// it starts with the same tab (#2803).
+fn margin(source: &str, at: usize) -> String {
     let start = source[..at].rfind('\n').map_or(0, |n| n + 1);
-    source[start..at].chars().count()
+    let mut out = String::new();
+    for c in source[start..at].chars() {
+        match c {
+            '\t' => out.push('\t'),
+            c => out.push_str(if wide(c) { "  " } else { " " }),
+        }
+    }
+    out
+}
+
+/// Whether a terminal or an editor shows `c` two cells wide: the East
+/// Asian wide and fullwidth blocks, and the emoji past the basic plane.
+fn wide(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F300..=0x1F64F
+            | 0x1F680..=0x1F6FF
+            | 0x1F900..=0x1F9FF
+            | 0x20000..=0x3FFFD
+    )
+}
+
+/// The cells `text` is shown in.
+fn cells(text: &str) -> usize {
+    text.chars().map(|c| if wide(c) { 2 } else { 1 }).sum()
 }
 
 /// Whether the comma at `at` separates two items: not one an adverb
@@ -301,7 +345,7 @@ fn parse(plain: &str, comments: &str, source: &str, at: usize) -> Option<Query> 
 fn one_line(q: &Query, source: &str) -> usize {
     let mut n = column(source, q.start) + q.lead.len();
     let items = |items: &[String]| -> usize {
-        items.iter().map(|i| i.chars().count()).sum::<usize>() + 2 * items.len().saturating_sub(1)
+        items.iter().map(|i| cells(i)).sum::<usize>() + 2 * items.len().saturating_sub(1)
     };
     if !q.head.is_empty() {
         n += usize::from(q.lead_gap) + items(&q.head);
@@ -310,7 +354,7 @@ fn one_line(q: &Query, source: &str) -> usize {
         n += 1 + word.len() + 1 + items(part);
     }
     let rest = source[q.end..].split('\n').next().unwrap_or("");
-    n + rest.trim_end().chars().count()
+    n + cells(rest.trim_end())
 }
 
 /// The query laid out: the lead line as it starts, then each clause word
@@ -318,17 +362,26 @@ fn one_line(q: &Query, source: &str) -> usize {
 /// items one per line in its content column when they do not fit in
 /// `width` on one.
 fn render(q: &Query, source: &str, width: usize) -> String {
-    let lead_col = column(source, q.start);
+    let margin = margin(source, q.start);
+    let lead_col = margin.len();
     let edge = lead_col + q.lead.len();
     // A clause word longer than the lead (`where` under `exec`) at column
-    // 0 would end the statement: everything moves right instead.
+    // 0 would end the statement: everything moves right instead. Nor does
+    // a clause word start left of a tab in the margin, whose width is the
+    // editor's.
+    let floor = margin.rfind('\t').map_or(1, |tab| tab + 1);
     let least = q
         .clauses
         .iter()
         .map(|(w, _)| edge as isize - w.len() as isize)
         .min()
-        .unwrap_or(1);
-    let shift = (1 - least).max(0) as usize;
+        .unwrap_or(floor as isize);
+    let shift = (floor as isize - least).max(0) as usize;
+    // The indent to column `col`: the margin as far as it goes, then blanks.
+    let indent = |col: usize| -> String {
+        let kept = col.min(lead_col);
+        format!("{}{}", &margin[..kept], " ".repeat(col - kept))
+    };
     // A file written with CRLF gets CRLF.
     let nl = if source.contains("\r\n") {
         "\r\n"
@@ -341,27 +394,27 @@ fn render(q: &Query, source: &str, width: usize) -> String {
         if q.lead_gap {
             out.push(' ');
         }
-        out.push_str(&items_text(&q.head, head_col, width, nl));
+        out.push_str(&items_text(&q.head, &indent(head_col), width, nl));
     }
     for (word, part) in &q.clauses {
-        let indent = edge + shift - word.len();
         out.push_str(nl);
-        out.push_str(&" ".repeat(indent));
+        out.push_str(&indent(edge + shift - word.len()));
         out.push_str(word);
         if !part.is_empty() && !(part.len() == 1 && part[0].is_empty()) {
             out.push(' ');
-            out.push_str(&items_text(part, edge + shift + 1, width, nl));
+            out.push_str(&items_text(part, &indent(edge + shift + 1), width, nl));
         }
     }
     out
 }
 
-/// A part's items from column `col`: on one line joined by `, ` if that
-/// fits in `width`, else one per line, each after the first at `col`.
-fn items_text(items: &[String], col: usize, width: usize, nl: &str) -> String {
+/// A part's items from the column `indent` reaches: on one line joined by
+/// `, ` if that fits in `width`, else one per line, each after the first
+/// indented by it.
+fn items_text(items: &[String], indent: &str, width: usize, nl: &str) -> String {
     let joined = items.join(", ");
-    if items.len() < 2 || col + joined.chars().count() <= width {
+    if items.len() < 2 || indent.len() + cells(&joined) <= width {
         return joined;
     }
-    items.join(&format!(",{nl}{}", " ".repeat(col)))
+    items.join(&format!(",{nl}{indent}"))
 }

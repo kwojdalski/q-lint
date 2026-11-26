@@ -132,6 +132,43 @@ const LAID_OUT: &[(&str, usize, &str)] = &[
         20,
         "r:{x}\n  select n:count i\n      by sym\n    from trade\n   where px>1\n",
     ),
+    // Under a tab, each line starts with the same tab: how wide it is
+    // shown is the editor's, and blanks in its place were 3 where the
+    // tab is 4 or 8 (#2803).
+    (
+        "f:{[s]\n\tselect n:count i, px:avg px by sym from trade where sym in s}\nr:f`a`b\n",
+        40,
+        "f:{[s]\n\tselect n:count i, px:avg px\n\t    by sym\n\t  from trade\n\t where sym in s}\nr:f`a`b\n",
+    ),
+    (
+        "f:{[s]\n\tr:select n:count i,px:avg px from trade where sym in s,px>1,sz<400,not null px;\n\tr}\nr:f`a`b\n",
+        30,
+        "f:{[s]\n\tr:select n:count i, px:avg px\n\t    from trade\n\t   where sym in s,\n\t         px>1,\n\t         sz<400,\n\t         not null px;\n\tr}\nr:f`a`b\n",
+    ),
+    // No clause word starts left of the tab: `where` under `exec` moves
+    // every clause word right, as at column 0.
+    (
+        "f:{[s]\n\texec px from trade where sym in s, sz>100, px>0}\nr:f`a`b\n",
+        20,
+        "f:{[s]\n\texec px\n\t from trade\n\twhere sym in s,\n\t      sz>100,\n\t      px>0}\nr:f`a`b\n",
+    ),
+    // A character shown two cells wide is two columns, and one past the
+    // basic plane is not counted by its bytes or its UTF-16 units.
+    (
+        "r:(\"\u{1F600}\u{1F600}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{1F600}\u{1F600}\";select n:count i, px:avg px\n              by sym\n            from trade\n           where px>1, sz<400)\n",
+    ),
+    (
+        "r:(\"\u{65E5}\u{672C}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{65E5}\u{672C}\";select n:count i, px:avg px\n              by sym\n            from trade\n           where px>1, sz<400)\n",
+    ),
+    (
+        "r:(\"\u{e9}\";select n:count i, px:avg px by sym from trade where px>1, sz<400)\n",
+        40,
+        "r:(\"\u{e9}\";select n:count i, px:avg px\n           by sym\n         from trade\n        where px>1, sz<400)\n",
+    ),
 ];
 
 /// Queries left alone at any width.
