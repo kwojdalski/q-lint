@@ -951,8 +951,22 @@ fn severity_of<'a>(settings: &'a Settings, code: &str) -> Option<&'a str> {
 const OPPOSITE: [&str; 1] = ["QP008"];
 const UNDOES: [&str; 2] = ["QP005", "QP007"];
 
-fn names(selector: &str, code: &str) -> bool {
-    selector == "ALL" || code.starts_with(selector)
+/// Whether `selector` names `code`: `ALL`, the code itself, or a prefix of
+/// it. A prefix that is the letters of a family names that family alone:
+/// `QL` is the leftovers, QL001 to QL003, and not qls's QLS001, which a
+/// plain prefix took with them (#2740). One that is no family's own - `Q`,
+/// `QT03` - still names every code that starts with it.
+pub(crate) fn names(selector: &str, code: &str) -> bool {
+    static FAMILIES: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| {
+        RULES
+            .iter()
+            .map(|r| r.code.trim_end_matches(|c: char| c.is_ascii_digit()))
+            .collect()
+    });
+    selector == "ALL"
+        || code.strip_prefix(selector).is_some_and(|rest| {
+            !rest.starts_with(|c: char| c.is_ascii_alphabetic()) || !FAMILIES.contains(selector)
+        })
 }
 
 fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
@@ -1634,7 +1648,7 @@ fn lexical(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, version_matches};
+    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, names, version_matches};
     use q_lint_rs::{
         Target,
         options::{Kind, OPTIONS},
@@ -1654,6 +1668,16 @@ mod tests {
 
     fn set(words: &[&str]) -> BTreeSet<String> {
         words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// A severity is given by the same selectors a selection is, so
+    /// `QL = "hint"` no longer demotes qls's QLS001 (#2740).
+    #[test]
+    fn a_family_selector_stops_at_the_end_of_its_letters() {
+        assert!(names("QL", "QL001") && !names("QL", "QLS001"));
+        assert!(names("QLS", "QLS001") && names("QLS001", "QLS001"));
+        assert!(names("Q", "QLS001") && names("ALL", "QLS001"));
+        assert!(names("QT03", "QT036") && !names("QT03", "QT001"));
     }
 
     /// The editor's schema for `.qlinter.toml` (#1178) names exactly the keys

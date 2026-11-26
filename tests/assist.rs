@@ -211,6 +211,11 @@ const TYPED: &[(&str, i16)] = &[
     ("`:a/b.q", -11),
     ("`a:b/c", -11),
     ("`a`:b/c", 11),
+    // An underscore or a digit starts a symbol, but not the underscore
+    // after the first backtick (#2889).
+    ("`a`_b", 11),
+    ("`a_", -11),
+    ("`1a", -11),
     ("2024.01.01", -14),
     ("2024.02.29", -14),
     ("2024.01.01 2024.01.02", 14),
@@ -229,6 +234,7 @@ const TYPED: &[(&str, i16)] = &[
     ("{x}", 100),
     ("{[a;b] a+b}", 100),
     ("()", 0),
+    ("( )", 0),
 ];
 
 /// Text that is no literal, or one this does not read - nothing is shown.
@@ -255,6 +261,9 @@ const UNTYPED: &[&str] = &[
     "`a/",
     "`.a/b",
     "`a`b/",
+    // `_a is ` _ a, a drop from the null symbol: 'a in KDB-X (#2889).
+    "`_a",
+    "`_a`b",
     "`a`b!1 2",
     "\"ab\" ,\"c\"",
     "\"\\q\"",

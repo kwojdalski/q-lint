@@ -50,7 +50,7 @@ pub const OPTIONS: &[RuleOption] = &[
         kind: Kind::Pattern,
         help: "A case-insensitive regular expression the last part of a name must match \
                for QX002 to read its string as a credential (default \
-               (?:password|passwd|pwd|secret|token|api_?key|credentials?)$)",
+               (?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$)",
     },
 ];
 

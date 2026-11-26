@@ -637,6 +637,86 @@ fn a_typed_local_is_judged_as_its_literal_would_be() {
     );
 }
 
+/// What each finding of a run over `text` says, for the type lints, whose
+/// message quotes the source and names the error.
+fn type_lint_details(text: &str) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.q"), text).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--select", "QT033,QT034,QT035", "a.q"])
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    findings
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|f| f["detail"].as_str().unwrap().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The operand QT035 quotes is the whole of it, past the `;`, `)` or `]`
+/// of a bracket it opens itself, and never part of one (#2879).
+#[test]
+fn a_type_lint_quotes_the_whole_right_operand() {
+    let quoted = |text: &str| -> Vec<String> {
+        type_lint_details(text)
+            .iter()
+            .map(|d| d.split('`').nth(1).unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(quoted("f:{[g] s:`a; s+g[1;2]}\n"), ["s+g[1;2]"]);
+    assert_eq!(quoted("f:{s:`a; s*count(1;2)}\n"), ["s*count(1;2)"]);
+    assert_eq!(quoted("f:{s:`a; (s+{x;1};2)}\n"), ["s+{x;1}"]);
+    assert_eq!(quoted("f:{s:`a; (s+1;2)}\n"), ["s+1"]);
+    // One that runs on over the next line is quoted up to its operator.
+    assert_eq!(quoted("f:{s:`a; s+(1;\n  2)}\n"), ["s+"]);
+}
+
+/// q checks lengths before types, so two lists of different lengths are
+/// 'length, and the message names that error (#2890; KDB-X: `` `a`b=1 2 3 ``,
+/// `` `a`b="" ``, `` 1 2 3=`a`b `` and `` `a`b+1 2 3 `` are 'length,
+/// `` `a`b=1 2 ``, `` `a`b=1 `` and `` `a=1 2 3 `` 'type).
+#[test]
+fn a_type_lint_names_the_length_error_for_lists_of_different_lengths() {
+    let error = |text: &str| -> Vec<String> {
+        type_lint_details(text)
+            .iter()
+            .map(|d| {
+                d.split(' ')
+                    .find(|w| w.starts_with('\''))
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    };
+    for text in [
+        "f:{s:`a`b; s=1 2 3}\n",
+        "f:{s:`a`b; s=\"\"}\n",
+        "f:{s:`a`b; 1 2 3=s}\n",
+        "f:{s:`a`b; s=101b}\n",
+        "f:{n:1 2 3; v:`a`b; n=v}\n",
+        "f:{s:`a`b; s+1 2 3}\n",
+    ] {
+        assert_eq!(error(text), ["'length:"], "{text}");
+    }
+    for text in [
+        "f:{s:`a`b; s=1 2}\n",
+        "f:{s:`a`b; s=1}\n",
+        "f:{s:`a; s=1 2 3}\n",
+        "f:{s:`a`b; s=0x0102}\n",
+        // Two lengths assigned: which one it has here is not settled.
+        "f:{s:`a`b; s:`c`d`e; s=1 2 3}\n",
+        "f:{s:`a`b; s+1 2}\n",
+    ] {
+        assert_eq!(error(text), ["'type:"], "{text}");
+    }
+}
+
 #[test]
 fn the_type_lints_are_what_q_does() {
     // Each line the rules report, run: every one is 'type (or, for the join,
@@ -830,4 +910,120 @@ fn every_pattern_kdbx_reads_is_one_for_an_older_target() {
         ],
         "{err}"
     );
+}
+
+/// What a QK003 finding says the parameter list does is what its first
+/// such slot does (#2734): a pattern is neither typed nor filtered. Each
+/// runs on KDB-X (q 5): `{[(a;b)] a+b}[1 2]` is 3, `{[k!v] k}` gives the
+/// keys, `{[x:neg] x}[1]` is -1 and `{[1;b] b}[3;2]` is 'match.
+#[test]
+fn a_parameter_list_of_4_1_is_named_for_what_its_slot_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text = "f:{[(a;b)] a+b}\ng:{[k!v] k}\nh:{[x:`j] x}\ni:{[x:neg] x}\nj:{[1;b] b}\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(d)
+        .args(["--isolated", "--select", "QK", "--target-version", "4.0"])
+        .args(["--format", "json", "a.q"])
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let said: Vec<&str> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["detail"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "`{[(a;b)]` takes a pattern for a parameter, which q runs from 4.1 on",
+            "`{[k!v]` takes a pattern for a parameter, which q runs from 4.1 on",
+            "`{[x:`j]` types a parameter, which q runs from 4.1 on",
+            "`{[x:neg]` filters a parameter, which q runs from 4.1 on",
+            "`{[1;b]` takes a pattern for a parameter, which q runs from 4.1 on",
+        ]
+    );
+}
+
+/// A dictionary literal's `)` may stand on a later line, after a comment
+/// or a blank line, and KDB-X reads each as the dictionary (#2742) - but
+/// not at the left margin, where q starts another statement: `g` is '(.
+#[test]
+fn a_dictionary_literal_closed_on_a_later_line_is_one_for_an_older_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text =
+        "d:([a:1;\n  b:2]\n  )\ne:([a:1] / note\n )\nf:([a:1])\ng:([a:1]\n)\nh:([a:1]\n\n   )\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let args = ["--isolated", "--select", "QK", "--target-version", "4.0"];
+    let (_, found, err) = run(d, &[&args[..], &["a.q"]].concat());
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    assert_eq!(
+        qk(&found),
+        vec![
+            pair("QK001", 1),
+            pair("QK001", 4),
+            pair("QK001", 6),
+            pair("QK001", 9)
+        ],
+        "{err}"
+    );
+}
+
+/// `.Q` indexed by the name reaches the removed function as the dotted
+/// name does (#2733): on KDB-X `` .Q`Xf `` and `` .Q[`Cf] `` are null, as
+/// `` `Xf in key .Q `` is 0b. Another name of `.Q` is no such thing.
+#[test]
+fn a_removed_function_reached_by_indexing_its_namespace_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text = "a:.Q`Xf\nb:.Q[`Cf]\nc:.Q `Xf\nd:.Q[ `Cf ]\ne:.Q`Xfoo\nf:.Q`res\ng:.Q[`Cf.x]\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let want: Vec<_> = (1..=4).map(|l| ("QK005".to_string(), l)).collect();
+    for target in ["4.1", "kdbx"] {
+        let (_, found, err) = run(d, &["--isolated", "--target-version", target, "a.q"]);
+        assert_eq!(qk(&found), want, "{target}: {err}");
+    }
+    let (_, found, err) = run(d, &["--isolated", "--target-version", "4.0", "a.q"]);
+    assert_eq!(qk(&found), vec![], "{err}");
+}
+
+/// For an older q `use` is the file's own name only where q reads it so
+/// (#2731): a parameter or a local is one lambda's, and a column that a
+/// table literal or a query names binds nothing, so the load on a later
+/// line is still KDB-X's - while a global, set with `::` in a lambda, is
+/// the file's everywhere. A column a query reads is no builtin either: an
+/// older q runs `select use from t`, which KDB-X refuses with 'rank (#2732).
+#[test]
+fn a_builtin_only_kdbx_has_is_the_files_own_name_where_q_reads_it_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let lines = [
+        "t:([] use:1 2)",
+        "r:select use:1 from t",
+        "f:{[use] use+1}",
+        "g:{use:x; use}",
+        "h:{[a;use] {use+1}}",
+        "m:use`mymod",
+        "k:{use[`x]}",
+        "s:exec use from t where use>0",
+        "u:select use from t",
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    fs::write(d.join("local.q"), text).unwrap();
+    fs::write(d.join("global.q"), "f:{use::x}\nm:use`mymod\n").unwrap();
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    for target in ["3.6", "4.0", "4.1"] {
+        let args = ["--isolated", "--select", "QK", "--target-version", target];
+        let (_, found, err) = run(d, &[&args[..], &["local.q"]].concat());
+        assert_eq!(
+            qk(&found),
+            vec![pair("QK006", 5), pair("QK006", 6), pair("QK006", 7)],
+            "{target}: {err}"
+        );
+        let (_, found, err) = run(d, &[&args[..], &["global.q"]].concat());
+        assert_eq!(qk(&found), vec![], "{target}: {err}");
+    }
 }

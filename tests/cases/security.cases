@@ -26,8 +26,25 @@ password:"hunter2"
 === QX002 | under a namespace, any of the usual spellings
 .cfg.apiKey:"abc123"
 
+=== QX002 | a key by any of its usual names, not only an API key (#2737)
+secretKey:"wJalrXUtnFEMI"
+accessKey:"AKIAIOSFODNN7"
+private_key:"MIIEvQIBADANBg"
+.aws.clientKey:"abc123"
+
+=== clean | a key that is no credential: a table's, a dictionary's, a sort's (#2737)
+primaryKey:"sym"
+sortKey:"time"
+tableKey:"id"
+
 === clean | a prompt is a message, not a secret
 passwordPrompt:"Enter password"
+
+=== QX002 | a name that merely holds the letters of such a word names a credential still, as does one with the word first (#2736)
+profileToken:"ghp_abc123def456"
+contextSecret:"s3cr3tvalue"
+protocolPassword:"hunter2"
+envPassword:"hunter2"
 
 === clean | read from the environment, where it belongs
 password:getenv`PASS
@@ -47,6 +64,31 @@ endToken:" ; "
 === QX002 | the whole value, before a comment or inside a lambda
 apiKey:"abc123" / rotate yearly
 f:{secret:"s3cr3t"; secret}
+
+=== QX002 | a handle that carries its password, as a symbol or as the string hopen takes too (#2738; q 5 reads `:proddb:5010:svc:hunter2 as one symbol)
+h:{hopen `:proddb:5010:svc:hunter2}
+g:{hopen ":prod-db:5010:svc:hunter2"}
+k:{hopen (`:tcps://prod.db:5010:svc:hunter2;500)}
+l:{hopen `:unix://5010:svc:hunter2}
+
+=== clean | a handle with no password, an empty one, or one joined on at run time (#2738)
+a:{hopen `:proddb:5010}
+b:{hopen `:proddb:5010:svc}
+c:{hopen `:proddb:5010:svc:}
+d:{[user;pass] hopen `$":proddb:5010:",user,":",pass}
+e:"dial :h:5010:u:p here"
+
+=== QX002 | .z.pw checking the password it is given against a literal (#2738)
+.z.pw:{[u;p] p~"hunter2"}
+
+=== QX002 | by its implicit name, with the literal on the left (#2738)
+.z.pw:{$[x=`admin;"hunter2"~y;0b]}
+
+=== QX002 | or matched against a pattern that spells it (#2738)
+.z.pw:{[user;pass] (user in `a`b) and pass like "hunt*"}
+
+=== clean | .z.pw comparing the user, or the password with what it read or hashed (#2738)
+.z.pw:{[u;p] $[u~"admin";p~getenv`PW;(md5 p)~0x00]}
 
 === QX001 | get evaluates a string as value does (q 5)
 f:{get "select from t where a=",x}
@@ -94,6 +136,24 @@ password:"abc"
 
 === QX001 | the joined query in parentheses is the same query (#502)
 f:{value ("select from t where s=`",x)}
+
+=== QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
+f:{[s] q:"select from t where sym=`",s; value q}
+g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}
+
+=== QX001 | raze or sv of a list joins its items, and ssr fills a template (#2735)
+f:{[s] value raze ("select from t where sym=`";s)}
+g:{[s] value " " sv ("select from t where sym=";s)}
+h:{[s] value ssr["select from t where sym=X";"X";s]}
+k:{[s] q:raze ("select from t where sym=`";s); value q}
+
+=== clean | a local that holds a constant, another lambda's local of the name, a global, and constants razed or filled in (#2735)
+f:{[s] q:"select from t"; (s;value q)}
+g:{[s] q:"select from t where sym=`",s; (q;{[q] value q}"1+1")}
+h:{[s] q::"select from t where sym=`",s; value s}
+k:{value raze ("select from t";" where a=1")}
+l:{value ssr["select from t where sym=X";"X";"`a"]}
+m:{[s] msg:"select a file ",s; show msg; value s}
 
 === clean | a parenthesised constant query (#502)
 f:{value ("select from t")}

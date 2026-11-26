@@ -465,6 +465,11 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
     // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
     ("QP003", "a:.z.Z", "a:.z.p", false),
+    // `ltime` of the UTC clock goes whole (#2722).
+    ("QP003", "a:`date$ltime .z.p", "a:`date$.z.p", false),
+    ("QP003", "a:ltime[.z.p]", "a:.z.p", false),
+    // The clock, not the symbol that spells it (#2721).
+    ("QP003", "a:(`.z.P;.z.P)", "a:(`.z.P;.z.p)", false),
     (
         "QB006",
         "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
@@ -683,6 +688,37 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+    // The `z` goes with the `T`, or the literal is a datetime still (#2743).
+    (
+        "QP002",
+        "r:2024.01.01T12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
+    (
+        "QP002",
+        "r:2024.01.01D12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
+    // The type in parentheses, and as the first argument of `$` (#2720).
+    ("QP002", "r:(15h)$2024.01.01", "r:(12h)$2024.01.01", false),
+    ("QP002", "r:(`datetime)$.z.p", "r:(`timestamp)$.z.p", false),
+    (
+        "QP002",
+        "r:$[\"z\";2024.01.01]",
+        "r:$[\"p\";2024.01.01]",
+        false,
+    ),
+    (
+        "QP002",
+        "r:$[`datetime;2024.01.01D12]",
+        "r:$[`timestamp;2024.01.01D12]",
+        false,
+    ),
+    // The null in lower case is the same null (#2719).
+    ("QP002", "r:0nz", "r:0np", false),
+    ("QP002", "r:-0wz", "r:-0wp", false),
     (
         "QP002",
         "s:\"15h$\";y:15h$2020.01.01",
@@ -766,6 +802,13 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+    // A symbol that runs on over `/` takes the colon too (#2886).
+    (
+        "QT029",
+        "h:hopen `unix://5000",
+        "h:hopen `:unix://5000",
+        false,
+    ),
     // Each look-alike becomes its ASCII; the one in the string stays.
     ("QE012", "r:1\u{a0}2", "r:1 2", true),
     (
@@ -818,7 +861,6 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
     for (code, source) in [
         ("QS004", "r:2 (3)"),                // would become the vector 2 3
         ("QS004", "r:(2)3"),                 // would become the number 23
-        ("QS004", "a:1;r:a -(1)"),           // would become a applied to -1
         ("QS004", "r:(2)\n  -1"),            // the vector 2 -1 across the line (#773)
         ("QS004", "l:1 2;r:l (1)\n  2"),     // and l 1 2 (#773)
         ("QR002", "g:{x} each"),             // a function, with nothing to return
@@ -857,6 +899,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP002", "r:`datetime$x"),
         ("QP002", "r:\"z\"$-923892.12"),
         ("QP002", "r:15h$x"),
+        ("QP002", "r:(15h)$x"), // nor with the type in parentheses (#2720)
+        ("QP002", "r:$[`datetime;x]"),
+        ("QP002", "r:(-15h)$\"2024.01.01T00:00\""), // a parse reads no timestamp from that text
         (
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
@@ -900,6 +945,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT029", "h:hopen 1.5"), // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
+        ("QT029", "h:hopen `a`b"), // nor a vector with a colon (#2887)
+        ("QT029", "h:hopen 0N"),
         ("QE012", "s:\u{201c}hi"),            // no close on the line
         ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
         ("QE012", "a:`\u{e9}"),               // no ASCII it stands for

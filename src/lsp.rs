@@ -1280,7 +1280,7 @@ impl Options {
     fn severity_of(&self, code: &str) -> Option<i64> {
         self.severity
             .iter()
-            .filter(|(s, _)| s == "ALL" || code.starts_with(s.as_str()))
+            .filter(|(s, _)| crate::config::names(s, code))
             .max_by_key(|(s, _)| if s == "ALL" { 0 } else { s.len() })
             .map(|&(_, level)| level)
     }

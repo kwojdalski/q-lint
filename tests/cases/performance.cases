@@ -19,6 +19,20 @@ r:update x:1 from select from t where sym=`a, date=d
 === QV001 | a string literal before it
 r:select from t where name like "ab*", date=2024.01.05
 
+=== QV001 | a constraint in parentheses, either the late one or the one before it (#2741)
+a:select from t where (sym=`a), date=d
+b:select from t where sym=`a, (date=d)
+
+=== QV001 | the column on the right, which q does not narrow by even when first (KDB-X, 12 date partitions: 45 ms, and 89 ms moved first as written, against 6 ms)
+r:select from t where sym=`a, d=date
+s:select from t where size>500, 2024.01.05<=date
+
+=== clean | parentheses around part of a constraint are not around it, and a local named as the column is what the right may be
+r:select from t where (sym=`a)or(size>500), date=d
+s:select from t where sym=`a, (date=d)or(size>500)
+f:{[date] select from t where sym=`a, tradeDate=date}
+g:{month:2024.01m; select from t where sym=`a, tradeMonth=month}
+
 === clean | the partition column first
 r:select from t where date=2024.01.05, sym=`a
 s:select from t where date within (d0;d1), size>500

@@ -39,6 +39,86 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
     Some((start, argument_end(code, comments, source, start)?))
 }
 
+/// Whether `start..end` builds a query: joins a string that names a qSQL
+/// statement with something that is not a string literal.
+fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) -> bool {
+    // Parentheses around the whole argument only group it: `value
+    // ("select ...",x)` runs the same query (#502).
+    loop {
+        let s = start + (code[start..end].len() - code[start..end].trim_start().len());
+        let e = start + code[start..end].trim_end().len();
+        if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
+            break;
+        }
+        (start, end) = (s + 1, e - 1);
+    }
+    let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#);
+    // A template filled by `ssr` takes its third argument into the query,
+    // and `raze` or `sv` joins the items of a list as `,` does two (#2735).
+    let whole = |open: usize, o: u8, c: u8| {
+        let last = start + code[start..end].trim_end().len();
+        (code.as_bytes().get(open) == Some(&o) && matching(code, open, o, c) == Some(last))
+            .then_some((open + 1, last - 1))
+    };
+    if let Some(m) = re!(r"^\s*ssr\s*\[").find(&code[start..end]) {
+        let Some((from, to)) = whole(start + m.end() - 1, b'[', b']') else {
+            return false;
+        };
+        let parts = slots(&code[from..to]);
+        return parts.len() == 3
+            && query.is_match(&comments[from..from + parts[0].len()])
+            && parts[2].bytes().any(|b| b.is_ascii_alphabetic());
+    }
+    let mut separator = b',';
+    if let Some(m) = re!(r#"^\s*(?:raze\b|"[^"]*"\s*sv\b)\s*\("#).find(&comments[start..end])
+        && let Some(list) = whole(start + m.end() - 1, b'(', b')')
+    {
+        (start, end) = list;
+        separator = b';';
+    }
+    let (text, masked) = (&comments[start..end], &code[start..end]);
+    // Joined at the top level of the argument, with a name in the join:
+    // the masked view has the strings blanked, so any name left in it is
+    // a value flowing into the query.
+    let mut depth = 0i32;
+    let joined = masked.bytes().any(|b| {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        b == separator && depth == 0
+    });
+    // A name outside any `$[...]`, or in one of its branches: a
+    // conditional that only chooses between string constants - KX's tick
+    // clog.q builds handler source that way - splices in no data,
+    // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
+    let mut unconditional = masked.as_bytes().to_vec();
+    let mut chosen = false;
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            unconditional[at..close].fill(b' ');
+            let parts = slots(&masked[at + 2..close - 1]);
+            let last = parts.len() - 1;
+            chosen |= parts.iter().enumerate().any(|(i, part)| {
+                (i % 2 == 1 || i == last && last > 0)
+                    && part.bytes().any(|b| b.is_ascii_alphabetic())
+            });
+        }
+    }
+    let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
+    // The query text itself has to be one of the joined pieces, not a
+    // branch of a conditional: there it is one of several constants.
+    let mut top = text.as_bytes().to_vec();
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            top[at..close].fill(b' ');
+        }
+    }
+    let top = String::from_utf8_lossy(&top);
+    query.is_match(&top) && joined && spliced
+}
+
 /// QX001. `value "select from t where sym=`",s` is how q gets injected: q has
 /// no parameterised query, so a query is built by joining strings and run by
 /// `value`, and whatever the joined value says is run with it. Verified: a
@@ -94,61 +174,45 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((mut start, mut end)) = argument(code, comments, source, m.end()) else {
+        let Some((start, end)) = argument(code, comments, source, m.end()) else {
             continue;
         };
-        // Parentheses around the whole argument only group it: `value
-        // ("select ...",x)` runs the same query (#502).
-        loop {
-            let s = start + (code[start..end].len() - code[start..end].trim_start().len());
-            let e = start + code[start..end].trim_end().len();
-            if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
-                break;
-            }
-            (start, end) = (s + 1, e - 1);
-        }
-        let (text, masked) = (&comments[start..end], &code[start..end]);
-        // Joined at the top level of the argument, with a name in the join:
-        // the masked view has the strings blanked, so any name left in it is
-        // a value flowing into the query.
-        let mut depth = 0i32;
-        let joined = masked.bytes().any(|b| {
-            match b {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                _ => {}
-            }
-            b == b',' && depth == 0
-        });
-        // A name outside any `$[...]`, or in one of its branches: a
-        // conditional that only chooses between string constants - KX's tick
-        // clog.q builds handler source that way - splices in no data,
-        // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
-        let mut unconditional = masked.as_bytes().to_vec();
-        let mut chosen = false;
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                unconditional[at..close].fill(b' ');
-                let parts = slots(&masked[at + 2..close - 1]);
-                let last = parts.len() - 1;
-                chosen |= parts.iter().enumerate().any(|(i, part)| {
-                    (i % 2 == 1 || i == last && last > 0)
-                        && part.bytes().any(|b| b.is_ascii_alphabetic())
-                });
-            }
-        }
-        let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
-        // The query text itself has to be one of the joined pieces, not a
-        // branch of a conditional: there it is one of several constants.
-        let mut top = text.as_bytes().to_vec();
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                top[at..close].fill(b' ');
-            }
-        }
-        let top = String::from_utf8_lossy(&top);
-        let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#).is_match(&top);
-        if query && joined && spliced {
+        // Built where it is run, or into a local this lambda runs on a later
+        // statement - `q:"select ...",s; value q`, the commoner way to write
+        // it (#2735). Any assignment of the local before the call counts.
+        let built = builds_query(code, comments, start, end) || {
+            let name = code[start..end].trim();
+            re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
+                && crate::enclosing_brace(code, m.start()).is_some_and(|brace| {
+                    code[brace..m.start()].match_indices(name).any(|(i, _)| {
+                        let at = brace + i;
+                        let value = code[at + name.len()..].trim_start_matches([' ', '\t']);
+                        let from = code.len() - value.len() + 1;
+                        if !boundary(code, at)
+                            || !value.starts_with(':')
+                            || value.starts_with("::")
+                            || crate::enclosing_brace(code, at) != Some(brace)
+                        {
+                            return false;
+                        }
+                        // The assigned value runs to the statement's end.
+                        let mut depth = 0i32;
+                        let stop = code[from..m.start()]
+                            .bytes()
+                            .position(|b| {
+                                match b {
+                                    b'(' | b'[' | b'{' => depth += 1,
+                                    b')' | b']' | b'}' => depth -= 1,
+                                    _ => {}
+                                }
+                                depth < 0 || b == b';' && depth == 0
+                            })
+                            .map_or(m.start(), |p| from + p);
+                        builds_query(code, comments, from, stop)
+                    })
+                })
+        };
+        if built {
             out.push(Finding::at(
                 path,
                 source,
@@ -178,11 +242,31 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
 fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let options = crate::options::current();
     let secret = options.name_pattern.as_ref().unwrap_or(re!(
-        r"(?i)(?:password|passwd|pwd|secret|token|api_?key|credentials?)$"
+        r"(?i)(?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$"
     ));
+    // What a name says after its credential word makes it a message or a
+    // place, `passwordPrompt`, `tokenUrl` - as a whole word of the name, and
+    // only after: `profileToken` holds no `file`, and `envPassword` is a
+    // password (#2736).
     let message = re!(
-        r"(?i)prompt|msg|message|label|text|field|name|hint|key[s]?name|file|path|url|env|var|col"
+        r"(?i)^(?:prompt|msg|message|label|text|field|name|hint|file|filename|path|url|env|var|col)s?$"
     );
+    let described = |rest: &str| {
+        let b = rest.as_bytes();
+        let mut from = 0;
+        for i in 1..=b.len() {
+            if i == b.len()
+                || b[i] == b'_'
+                || b[i].is_ascii_uppercase() && !b[i - 1].is_ascii_uppercase()
+            {
+                if message.is_match(rest[from..i].trim_matches('_')) {
+                    return true;
+                }
+                from = i;
+            }
+        }
+        false
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*\x22").captures_iter(comments) {
         let name = m.get(1).unwrap();
         // The assignment has to be code - the quote is blank there - and the
@@ -191,7 +275,10 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             continue;
         }
         let last = name.as_str().rsplit('.').next().unwrap_or("");
-        if !secret.is_match(last) || message.is_match(last) {
+        let Some(word) = secret.find_iter(last).last() else {
+            continue;
+        };
+        if described(&last[word.end()..]) {
             continue;
         }
         // A column, not a variable: `update password:"***" from users`
@@ -224,6 +311,91 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                     name.as_str()
                 ),
             ));
+        }
+    }
+    // A handle that carries its password, `` `:host:5010:user:password `` -
+    // a symbol, or the same text as a string, which `hopen` takes too and a
+    // host with a `-` in it needs (q 5: `` `:prod-db:5010:svc:pw `` is no
+    // symbol, and `hopen ":localhost:5010:u:p"` dials as the symbol does):
+    // after the port, a user and a password that is not empty (#2738).
+    let symbols =
+        re!(r"`:(?:(?:tcps?://)?[A-Za-z0-9._]*:|unix://)[0-9]+:[A-Za-z0-9._/]+:[A-Za-z0-9._/:]+")
+            .find_iter(code)
+            .map(|m| m.start());
+    let strings = re!(r#"":(?:(?:tcps?://)?[A-Za-z0-9._-]*:|unix://)[0-9]+:[^\s:"]+:[^\s"]+""#)
+        .find_iter(comments)
+        // The whole of one string: its text is blank in the code view.
+        .filter(|m| code[m.start() + 1..m.end() - 1].trim().is_empty())
+        .map(|m| m.start());
+    let mut handles: Vec<usize> = symbols.chain(strings).collect();
+    handles.sort_unstable();
+    for at in handles {
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QX002",
+            "This handle carries its password: a credential in source is in every copy of \
+             it; read it from the environment or a file at startup"
+                .to_string(),
+        ));
+    }
+    // `.z.pw` checking the password it is given against a string literal,
+    // `.z.pw:{[u;p] p~"hunter2"}`: its second argument, by the name the
+    // lambda gives it, on either side of `~`, `=` or `like` (#2738).
+    for m in re!(r"\.z\.pw[ \t]*::?[ \t]*\{").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let brace = m.end() - 1;
+        let sig = crate::signature(code, source, brace);
+        let given = match sig.slots.get(1) {
+            Some(slot) if sig.named => slot.trim(),
+            _ if sig.named => continue,
+            _ => "y",
+        };
+        if !crate::is_param_name(given) {
+            continue;
+        }
+        let end = matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        let is_given = |text: &str, at: usize| {
+            text[at..].starts_with(given)
+                && boundary(text, at)
+                && !text[at + given.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        };
+        for lit in re!(r#""((?:\\.|[^"\\])*)""#).captures_iter(&comments[sig.body..end]) {
+            let (start, stop) = (
+                sig.body + lit.get(0).unwrap().start(),
+                sig.body + lit.get(0).unwrap().end(),
+            );
+            let value = lit.get(1).unwrap().as_str();
+            if !value.bytes().any(|b| b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            let before = code[sig.body..start].trim_end();
+            let left = ["~", "=", "like"]
+                .iter()
+                .find_map(|op| before.strip_suffix(op))
+                .map(str::trim_end)
+                .is_some_and(|b| b.len() >= given.len() && is_given(b, b.len() - given.len()));
+            let after = code[stop..end].trim_start();
+            let right = after
+                .strip_prefix(['~', '='])
+                .map(str::trim_start)
+                .is_some_and(|a| is_given(a, 0));
+            if left || right {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    start,
+                    "QX002",
+                    "`.z.pw` checks the password against a string literal: a credential in \
+                     source is in every copy of it; read it from the environment or a file at \
+                     startup"
+                        .to_string(),
+                ));
+            }
         }
     }
 }
@@ -304,7 +476,11 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     let mut add = |at: usize, code_: &str, detail: String| {
         out.push(Finding::at(path, source, at, code_, detail));
     };
-    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
+    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x` -
+    // for a list or a table. Both sorts are stable, so a dictionary or keyed
+    // table with tied values gets their keys the other way round: q 5 gives
+    // 0b for `(reverse asc d)~desc d` with d:`a`b`c!1 1 2, and the message
+    // says so (#2739).
     for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
         if boundary(code, whole.start())
@@ -315,7 +491,11 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
             add(
                 whole.start(),
                 "QR001",
-                format!("`reverse {}` is `{other}`, in one pass", &m[1]),
+                format!(
+                    "`reverse {}` is `{other}`, in one pass; on a dictionary or keyed table \
+                     the two differ in the order of keys whose values tie",
+                    &m[1]
+                ),
             );
         }
     }
@@ -1413,13 +1593,77 @@ fn past_blanks_inline(text: &str, at: usize) -> usize {
 /// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
 /// 'type whether or not X is set. `all null` or `any null` in front reduces
 /// it to an atom, and is left alone.
+///
+/// Only where the vector is the condition, which is where q refuses it:
+/// KDB-X runs `r:null getenv`X`, `sum null getenv`X` and
+/// `$[1b;null getenv`X;2]`, and `all[null getenv`X]`, `all (null getenv`X)`
+/// and `all@null getenv`X` as it runs `all null getenv`X` (#2896, #2897).
+/// `null@getenv`X` is the same `null`, and 'type in `if` too (#2898).
+///
+/// `null e` as such a condition is reported too where `e` is a lambda's
+/// local that `getenv` alone assigns - `e:getenv`X; if[null e;...]`, the
+/// usual way to read a variable once, and the same 'type in q 5 (#2744).
+/// Only of the whole of it: `null e 0` is an atom.
 fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
-    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
-        let before = code[..m.start()].trim_end_matches([' ', '\t']);
-        let reduced = ["all", "any"]
-            .iter()
-            .any(|w| before.ends_with(w) && boundary(code, before.len() - w.len()));
-        if !boundary(code, m.start()) || reduced {
+    let message = "getenv gives a string, so null tests each character and gives a vector - \
+                   empty when the variable is unset - which if and $[...] refuse with 'type: \
+                   `\"\"~getenv x` or `0=count getenv x` tests an unset variable";
+    let mut held = std::collections::HashSet::new();
+    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)[ \t]*:[ \t]*getenv\b[ \t]*[^ \t;\])}\r\n]")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        let Some(brace) = crate::enclosing_brace(code, name.start()) else {
+            continue;
+        };
+        if !boundary(code, name.start()) || !held.insert((brace, name.as_str())) {
+            continue;
+        }
+        let end = crate::matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        // Occurrences of the name in this lambda and not in one inside it.
+        let own = |at: usize| {
+            boundary(code, at)
+                && !code[at + name.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                && crate::enclosing_brace(code, at) == Some(brace)
+        };
+        let mentions: Vec<usize> = code[brace..end]
+            .match_indices(name.as_str())
+            .map(|(i, _)| brace + i)
+            .filter(|&at| own(at))
+            .collect();
+        // Anything else assigned to it and it is no longer known a string.
+        let always = mentions.iter().all(|&at| {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            match rest.strip_prefix(':') {
+                Some(value) => value.trim_start_matches([' ', '\t']).starts_with("getenv"),
+                None => !re!(r"^(?:\[[^\]]*\][ \t]*)?[-+*%&|^,#_!$?@.~=<>]?:").is_match(rest),
+            }
+        });
+        if !always {
+            continue;
+        }
+        for &at in mentions.iter().filter(|&&at| at > name.start()) {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            let Some(null) = code[..at]
+                .trim_end_matches([' ', '\t'])
+                .strip_suffix("null")
+                .filter(|before| boundary(code, before.len()))
+            else {
+                continue;
+            };
+            if condition(code, null.len()) && rest.starts_with([';', ']']) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    null.len(),
+                    "QT036",
+                    message.into(),
+                ));
+            }
+        }
+    }
+    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(@][ \t]*)getenv\b").find_iter(code) {
+        if !boundary(code, m.start()) || !condition(code, m.start()) {
             continue;
         }
         out.push(Finding::at(
@@ -1427,12 +1671,60 @@ fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             source,
             m.start(),
             "QT036",
-            "getenv gives a string, so null tests each character and gives a vector - empty \
-             when the variable is unset - which if and $[...] refuse with 'type: \
-             `\"\"~getenv x` or `0=count getenv x` tests an unset variable"
-                .into(),
+            message.into(),
         ));
     }
+}
+
+/// Whether the expression that starts at `at` is, still a vector, what an
+/// `if`, a `while`, a `do` or a `$[...]` tests: it leads a condition slot,
+/// with nothing in front but a parenthesis, `not`, or an operand joined by
+/// `and`, `or`, `&` or `|`, none of which reduces a vector (KDB-X:
+/// `if[not null getenv`X;...]` and `if[1b and null getenv`X;...]` are
+/// 'type). Any other word in front may reduce it, as `all` and `count` do.
+fn condition(code: &str, at: usize) -> bool {
+    let bytes = code.as_bytes();
+    let (mut depth, mut slot, mut later, mut i) = (0usize, None, 0usize, at);
+    // Back to the bracket around `at`, counting the slots before it.
+    let open = loop {
+        if i == 0 {
+            return false;
+        }
+        i -= 1;
+        match bytes[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            // An item of a list, or a statement of a lambda.
+            b'(' if slot.is_some() => return false,
+            b'{' => return false,
+            b'[' => break i,
+            b';' if depth == 0 => {
+                slot.get_or_insert(i + 1);
+                later += 1;
+            }
+            _ => {}
+        }
+    };
+    let front = &code[slot.unwrap_or(open + 1)..at];
+    if !re!(
+        r"^(?:\s|\(|not\b|(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*)[ \t]*(?:[&|]|\b(?:and|or)\b))*$"
+    )
+    .is_match(front)
+    {
+        return false;
+    }
+    let word = code[..open].trim_end_matches([' ', '\t']);
+    if ["if", "while", "do"]
+        .iter()
+        .any(|w| word.ends_with(w) && boundary(code, word.len() - w.len()))
+    {
+        return later == 0;
+    }
+    // `$[c;a;c2;b;d]` tests every other slot, and never the last.
+    word.ends_with('$')
+        && later % 2 == 0
+        && matching(code, open, b'[', b']')
+            .is_some_and(|close| later + 1 < slots(&code[open + 1..close - 1]).len())
 }
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
@@ -1484,6 +1776,16 @@ fn performance(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// Never for `update` or `delete`: q refuses both on a partitioned table
 /// (`'par` in KDB-X), so the table they filter is in memory and the order
 /// costs nothing the rule claims.
+///
+/// A constraint is read through one pair of parentheses around the whole of
+/// it, `(date=d)`, which q reads as it does the bare one. One with the
+/// column on the right, `d=date`, is reported too and says so: q narrows the
+/// partitions only for a constraint that starts with the column, so moved
+/// first as it is written it is slower still - over 12 date partitions of
+/// 300k rows, 50 runs each: `where date=d, sym=s` 6 ms, `where sym=s,
+/// d=date` 45 ms, `where d=date, sym=s` 89 ms (#2741). Not where the file
+/// has a local or a parameter of the column's name, which is then what the
+/// right of the comparison may be.
 fn partition_filter_late(
     path: &str,
     source: &str,
@@ -1494,6 +1796,8 @@ fn partition_filter_late(
     let mut strings = InString::new(code);
     // `select ... from select ... where` finds the inner where from both.
     let mut reported = std::collections::HashSet::new();
+    // Which of `PARTITION_COLUMNS` the file also has as a local, if asked.
+    let locals = std::cell::OnceCell::new();
     let mut froms = vec![];
     for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
         if !crate::boundary(code, q.start())
@@ -1533,12 +1837,51 @@ fn partition_filter_late(
             None => phrase,
         };
         let constraints = items(phrase);
-        fn tests_partition(c: &str) -> Option<&str> {
-            re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)")
-                .captures(c)
-                .map(|m| m.get(1).unwrap().as_str())
-        }
-        let Some((late, column)) = constraints
+        // Each without the parentheses around the whole of it, if it has them.
+        let bare: Vec<&str> = constraints
+            .iter()
+            .map(|c| {
+                let t = c.trim();
+                let closes_last = t.starts_with('(')
+                    && t.ends_with(')')
+                    && t.bytes()
+                        .scan(0i32, |depth, b| {
+                            *depth += i32::from(b == b'(') - i32::from(b == b')');
+                            Some(*depth)
+                        })
+                        .position(|depth| depth == 0)
+                        == Some(t.len() - 1);
+                if closes_last { &t[1..t.len() - 1] } else { c }
+            })
+            .collect();
+        // The column a constraint tests, and whether from the right.
+        let tests_partition = |c: &str| -> Option<(&'static str, bool)> {
+            let column = |name: &str| PARTITION_COLUMNS.iter().position(|p| *p == name);
+            if let Some(m) =
+                re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)").captures(c)
+            {
+                return Some((PARTITION_COLUMNS[column(&m[1])?], false));
+            }
+            let i = column(
+                &re!(concat!(
+                    r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?[0-9][0-9A-Za-z.:]*)\s*",
+                    r"(?:=|<>|<=|>=|<|>)\s*(date|month|year|int)\s*$"
+                ))
+                .captures(c)?[1],
+            )?;
+            let local = locals.get_or_init(|| {
+                PARTITION_COLUMNS.map(|p| {
+                    re!(r"\b(date|month|year|int)\s*:|\{\s*\[([^\]]*)\]")
+                        .captures_iter(code)
+                        .any(|m| match m.get(2) {
+                            Some(slots) => slots.as_str().split(';').any(|s| s.trim() == p),
+                            None => &m[1] == p,
+                        })
+                })
+            });
+            (!local[i]).then_some((PARTITION_COLUMNS[i], true))
+        };
+        let Some((late, (column, flipped))) = bare
             .iter()
             .enumerate()
             .skip(1)
@@ -1547,7 +1890,7 @@ fn partition_filter_late(
             continue;
         };
         let offset = |c: &str| c.as_ptr() as usize - code.as_ptr() as usize;
-        let plain = constraints[..late].iter().all(|c| {
+        let plain = bare[..late].iter().all(|c| {
             let at = offset(c);
             let kept = &comments[at..at + c.len()];
             !PARTITION_COLUMNS.iter().any(|p| {
@@ -1560,6 +1903,11 @@ fn partition_filter_late(
             continue;
         }
         let first = constraints[0].trim();
+        let advice = if flipped {
+            format!("write the constraint with `{column}` on the left and put it first")
+        } else {
+            format!("put the `{column}` constraint first")
+        };
         out.push(Finding::at(
             path,
             source,
@@ -1567,8 +1915,7 @@ fn partition_filter_late(
             "QV001",
             format!(
                 "`{column}` is constrained after `{first}`: on a table partitioned by {column} \
-                 q applies `{first}` in every partition before it narrows them - put the \
-                 `{column}` constraint first"
+                 q applies `{first}` in every partition before it narrows them - {advice}"
             ),
         ));
     }
