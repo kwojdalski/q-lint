@@ -106,6 +106,25 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
     assert!(err.contains("not a qlinter baseline"), "{err}");
 }
 
+/// A baseline a Windows editor saved starts with a BOM, as a configuration
+/// may: it is read past, not refused as no JSON on every run (#2758).
+#[test]
+fn a_baseline_saved_with_a_bom_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "a.q"]);
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    fs::write(d.join("base.json"), format!("\u{feff}{written}")).unwrap();
+    let (status, found, err) = run(d, &["--isolated", "--baseline", "base.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    assert!(
+        err.contains("2 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+}
+
 const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\nm:use`mymod\n";
 
 /// `--write-baseline` writes a file, and a file the run reads is never it:

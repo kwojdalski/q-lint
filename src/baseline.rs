@@ -96,8 +96,11 @@ impl Baseline {
     pub fn read(file: &Path) -> Result<Baseline, String> {
         let shown = file.display();
         let text = fs::read_to_string(file).map_err(|e| format!("baseline {shown}: {e}"))?;
+        // A BOM is what a Windows editor saves a file with, and no JSON:
+        // passed over, as a configuration's is (#2758).
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
         let data: Value =
-            serde_json::from_str(&text).map_err(|e| format!("baseline {shown}: {e}"))?;
+            serde_json::from_str(text).map_err(|e| format!("baseline {shown}: {e}"))?;
         if data["qlinter-baseline"] != 1 {
             return Err(format!(
                 "baseline {shown}: not a qlinter baseline (no \"qlinter-baseline\": 1)"
