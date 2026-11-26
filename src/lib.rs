@@ -3268,10 +3268,36 @@ fn refused_atom_condition(raw: &str) -> bool {
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
 
+/// Whether a conditional's test applies something without brackets, which
+/// may answer differently the second time: a name of the file's own given
+/// an argument by juxtaposition - `tog 0`, `h"ready"`, `f -1` - or anything
+/// applied with `@` or a spaced `.` (#2682). A q builtin given an argument,
+/// `null x`, is the same each time, and so is a name before an operator
+/// word, `x in y`. Read from `comments`, where a string is still text.
+fn applies(test: &str) -> bool {
+    if test.contains('@') || re!(r"\s\.\s").is_match(test) {
+        return true;
+    }
+    re!(r#"(?:^|[^`A-Za-z0-9_.])(\.?[A-Za-z][A-Za-z0-9_.]*)([ \t]*)(-?[0-9.]|["`(]|[A-Za-z][A-Za-z0-9_]*)"#)
+        .captures_iter(test)
+        .any(|c| {
+            let (name, gap, next) = (&c[1], &c[2], &c[3]);
+            if is_reserved(name) || (gap.is_empty() && !next.starts_with(['"', '`', '('])) {
+                return false;
+            }
+            !(next.starts_with(|n: char| n.is_ascii_alphabetic()) && is_reserved(next))
+        })
+}
+
 /// A conditional's test as QB025 compares it: `comments`' text, its strings
 /// kept as written and each run of blanks outside them made one space, so
 /// `x>1` and `x>1 ` are one test and `s~"a  b"` and `s~"a b"` are two. A
 /// string is where `code` is blank and `comments` is not, from a quote.
+/// A run of blanks beside an operator glyph or a bracket goes entirely, so
+/// `x>1` and `x > 1` are one test too (#2683) - except before a `-` that
+/// starts a number, where it makes an application: `x -1` is not `x-1`.
+/// `_`, `.`, `'`, `/` and `\` keep theirs, since a blank changes what they
+/// are: `a _ b` is a drop and `a_b` a name.
 fn same_test(comments: &str, code: &str) -> String {
     let (text, mask) = (comments.as_bytes(), code.as_bytes());
     let mut out = Vec::with_capacity(text.len());
@@ -3286,10 +3312,22 @@ fn same_test(comments: &str, code: &str) -> String {
             out.extend_from_slice(&text[i..j]);
             (i, blank) = (j, false);
         } else if text[i].is_ascii_whitespace() {
-            if !blank {
+            let mut j = i;
+            while j < text.len() && text[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let glyph = |c: u8| b"=<>~!#$%&*+,-:;?@^|()[]{}".contains(&c);
+            let before = out.last().copied();
+            let after = text.get(j).copied();
+            let negative = after == Some(b'-')
+                && text
+                    .get(j + 1)
+                    .is_some_and(|c| c.is_ascii_digit() || *c == b'.');
+            let drop = !negative && (before.is_none_or(glyph) || after.is_none_or(glyph));
+            if !drop && !blank {
                 out.push(b' ');
             }
-            (i, blank) = (i + 1, true);
+            (i, blank) = (j, true);
         } else {
             out.push(text[i]);
             (i, blank) = (i + 1, false);
@@ -7105,6 +7143,7 @@ fn lint_rules(
                 // time: `$[0b;1;0b;2]` is QA007's, and placeholder.
                 if !re!(r"(?:^|[^`A-Za-z0-9_.])[A-Za-z]").is_match(test)
                     || test.contains([':', '[', '{', '?', '\''])
+                    || applies(&v.comments[at..end])
                     || re!(r"\.z\.|\b(?:rand|value|get|read0|read1|system|hopen|hclose|eval|reval|getenv|neg)\b")
                         .is_match(test)
                 {

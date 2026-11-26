@@ -1223,6 +1223,22 @@ b:{$[x>1;`a;x<0;`b;x>1;`c;`d]}
 c:{$[x ~ "a  b";1;x ~ "a  b";2;3]}
 d:{$[null x;0;null  x;1;2]}
 
+=== QB025 | a repeated test that differs only by blanks around an operator (q 5: $[x>1;`a;x > 1;`b;`c] is never `b, #2683)
+a:{$[x>1;`a;x > 1;`b;`c]}
+b:{$[x in y;`a;x in  y;`b;`c]}
+c:{$[(x>1)&y;`a;( x > 1 ) & y;`b;`c]}
+
+=== clean | blanks that change the test keep it apart: an application of a negative number, a drop (#2683)
+a:{$[x-1;`a;x -1;`b;`c]}
+b:{$[x_y;`a;x _ y;`b;`c]}
+
+=== clean | a test that applies a name by juxtaposition, @ or . may answer differently the second time (q 5: with tog:{s::not s;s}, $[tog 0;`a;tog 0;`b;`c] is `b, #2682)
+a:{$[tog 0;`a;tog 0;`b;`c]}
+b:{$[2>nxt@0;`a;2>nxt@0;`b;`c]}
+c:{$[h"ready";`a;h"ready";`b;`c]}
+d:{$[f . 1 2;`a;f . 1 2;`b;`c]}
+e:{$[f -1;`a;f -1;`b;`c]}
+
 === clean | different tests, a test that could change between evaluations, or the else (#1166)
 a:{$[x>1;`a;x>2;`b;`c]}
 b:{$[0<n+:1;`a;0<n+:1;`b;`c]}
