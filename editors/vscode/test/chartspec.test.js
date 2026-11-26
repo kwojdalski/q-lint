@@ -170,7 +170,9 @@ test("candles keep the columns named open, high, low or close when not all four 
   const none = g("time", "size", "open", "high", "low");
   assert.strictEqual(C.ohlcColumns(none), null);
   assert.strictEqual(C.chartData(none, [0], "candlestick", [], 20).note, "A candle chart needs open, high, low and close columns: no column here is the close.");
-  assert.match(C.chartData(g("time", "high", "x"), [0], "candlestick", [], 20).note, /no column here is the open or close\.$/);
+  assert.match(C.chartData(g("time", "high", "x", "close"), [0], "candlestick", [], 20).note, /no column here is the open\.$/);
+  // One word of the four places nothing: the first four, as with none.
+  assert.strictEqual(names(g("time", "bid_open", "bid_high", "bid_low", "bid_close", "open")), "bid_open,bid_high,bid_low,bid_close");
   // As before: all four by name or letter, in any order; no name, the first four.
   assert.strictEqual(names(g("time", "size", "c", "l", "h", "o")), "o,h,l,c");
   assert.strictEqual(names(g("time", "a", "b", "c", "d", "e")), "a,b,c,d");

@@ -55,7 +55,8 @@
   /// place among them - before the first named for the values before it,
   /// after the one before it otherwise. With no column there the note says
   /// which is missing: the first four columns would draw a size as the open
-  /// (#3125).
+  /// (#3125). One word alone places nothing (`bid_open, bid_high, bid_low,
+  /// bid_close, open`): the first four, as with none.
   ///
   /// The first column is one of the four only where the names are all
   /// found and one is its own - `select open, high, low, close from bars`:
@@ -81,7 +82,7 @@
     }
     const named = find(false, can);
     const first = named.findIndex(function (c) { return c >= 0; });
-    if (first < 0) {
+    if (named.filter(function (c) { return c >= 0; }).length < 2) {
       return can.length >= 4 ? { columns: can.slice(0, 4) } : { note: NO_CANDLES };
     }
     const free = can.filter(function (c) { return named.indexOf(c) < 0; });
