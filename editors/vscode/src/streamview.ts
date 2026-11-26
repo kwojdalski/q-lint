@@ -12,7 +12,8 @@ import { isProduction } from "./agent";
 import { guardedBy, readGuard } from "./guard";
 import type { Live, ProcessArg } from "./live";
 import { decode } from "./qdecode";
-import type { QConnection } from "./qclient";
+import { directRefusal, type QConnection } from "./qclient";
+import { directMode } from "./querycontrols";
 import { RowWindow, STREAM_COMMANDS, SUBSCRIBE, TABLES, readStream, readUpdate } from "./stream";
 import { iconsEscaped, plainMessage } from "./history";
 import { shownError } from "./tunnel";
@@ -84,6 +85,13 @@ export class TableStreams {
     }
     const process = await this.live.pick(row, "Stream a table from which tickerplant?");
     if (process === undefined) {
+      return;
+    }
+    // Subscribing sends q-lint's lambda: on a direct process, refused before
+    // anything is asked or a connection opened (#2484).
+    const direct = directMode(process, workspace.getConfiguration("q-lint").get<unknown>("query.unwrapped", false) === true);
+    if (direct !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: Stream Table: ${directRefusal(direct)}`));
       return;
     }
     // `.u.sub` adds q-lint to the tickerplant's subscribers: asked first on
