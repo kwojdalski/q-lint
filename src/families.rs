@@ -426,6 +426,28 @@ fn iterated(code: &str, at: usize) -> bool {
         .is_match(rest)
 }
 
+/// Whether the `each` or `@'` that ends at `at` takes the function on its
+/// left and a list on its right. Not before a bracket: q reads `abs each[x]`
+/// as `abs` applied to `each[x]`, a projection of `each` - q 5 gives 'type
+/// for `abs each[-1 2]` and `abs@'[-1 2]`, and a projection for `{x}
+/// each[1 2]` (#2929). Nor under an iterator of its own: `abs each':[x]`,
+/// `null each/[x]` and `not each\[01b]` iterate `each`, 'type in q 5, and
+/// without the word they are `abs':`, `null/` and `not\` (#2930).
+fn each_of_left(code: &str, at: usize) -> bool {
+    !code[at..].starts_with(['\'', '/', '\\', ':'])
+        && !code[crate::past_blanks(code, at)..].starts_with('[')
+}
+
+/// Whether the bracket that opens at `open` is `each`'s two arguments, both
+/// given: `each[f;x]` is `f each x`, `each[f;]` a projection, and a third
+/// is 'rank.
+fn each_in_brackets(code: &str, open: usize) -> bool {
+    matching(code, open, b'[', b']').is_some_and(|close| {
+        let args = slots(&code[open + 1..close - 1]);
+        args.len() == 2 && !args[1].trim().is_empty()
+    })
+}
+
 /// Whether the word that ends at `at` is applied to the rest of its
 /// statement, so a rewrite of the word keeps its operand: something follows
 /// it, and an application in brackets is not continued by an infix - q 5
@@ -501,28 +523,36 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     }
     // QR002: an identity lambda under each gives back what it was given.
     // The `each` has to be in the same statement: `id:{x}` and then a
-    // column-0 `'[neg;abs]` is no each at all (#727).
-    for m in re!(concat!(
-        r"\{\s*x\s*\}",
-        blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
-    ))
-    .find_iter(code)
-    {
+    // column-0 `'[neg;abs]` is no each at all (#727). `{x}@'y` is each over
+    // apply, the same each (#2928).
+    for m in re!(concat!(r"\{\s*x\s*\}", blank!(), r"*(each\b|@?')")).captures_iter(code) {
         // And applied: `({x}';1)` holds the derived function itself, a
         // general list on KDB-X, not any argument (#1299).
-        let mut end = m.end();
-        if !m.as_str().ends_with("each") && !m.as_str().ends_with('\'') {
-            end -= code[..end].chars().next_back().map_or(0, char::len_utf8);
-        }
-        if crate::operand_ends(code, comments, end) || code[end..].trim_start().starts_with("::") {
+        let end = m.get(0).unwrap().end();
+        if (&m[1] == "'" && code[end..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, end))
+            || crate::operand_ends(code, comments, end)
+            || code[end..].trim_start().starts_with("::")
+        {
             continue;
         }
         add(
-            m.start(),
+            m.get(0).unwrap().start(),
             "QR002",
             "`{x} each` returns its argument unchanged".into(),
         );
+    }
+    // And `each[{x};y]`, the same call in brackets (#2928).
+    for m in re!(r"\beach[ \t]*\[\s*\{\s*x\s*\}\s*;").find_iter(code) {
+        if boundary(code, m.start())
+            && each_in_brackets(code, m.start() + m.as_str().find('[').unwrap())
+        {
+            add(
+                m.start(),
+                "QR002",
+                "`{x} each` returns its argument unchanged".into(),
+            );
+        }
     }
     // QR003: sorting the distinct items keeps them distinct.
     for m in re!(concat!(
@@ -551,25 +581,67 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     // numeric literal. `{x -1}` is not one: a `-` after a space and before a
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
+    // The number may be `1e-3`, `.5` or `00:01` (#2937), and the each `@'`
+    // or `each[...;y]` (#2928).
+    const ATOMIC: &str = "Arithmetic is atomic: this applies to the whole list without `each`, \
+                          and faster";
     for m in re!(concat!(
-        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}",
+        r"\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\}",
         blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
+        r"*(each\b|@?')"
     ))
-    .find_iter(code)
+    .captures_iter(code)
     {
-        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+        let whole = m.get(0).unwrap();
+        if re!(r"^\{\s*x\s+-\.?\d").is_match(whole.as_str())
+            || (&m[1] == "'" && code[whole.end()..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, whole.end()))
+        {
             continue;
         }
-        add(
-            m.start(),
-            "QR004",
-            "Arithmetic is atomic: this applies to the whole list without `each`, and \
-             faster"
-                .into(),
-        );
+        add(whole.start(), "QR004", ATOMIC.into());
+    }
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*(\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\})\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if boundary(code, whole.start())
+            && !re!(r"^\{\s*x\s+-\.?\d").is_match(&m[1])
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), "QR004", ATOMIC.into());
+        }
     }
 }
+
+/// The words a comment labels a line of documentation with, before a colon:
+/// `/ usage: {x} 1` shows a call, and defines no `usage`.
+const DOC_LABELS: &[&str] = &[
+    "e.g",
+    "eg",
+    "example",
+    "examples",
+    "i.e",
+    "ie",
+    "note",
+    "notes",
+    "return",
+    "returns",
+    "see",
+    "signature",
+    "syntax",
+    "usage",
+];
 
 /// #11: things left in q that were never meant to ship. Both are taste rather
 /// than defects, so both are `styleq` - off in the default.
@@ -622,7 +694,14 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
                 || re!(r"^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*){2}")
                     .is_match(line[c..].trim())
         });
-        if in_comment(name.start()) && !prose {
+        // And a label of the documentation is no name being defined:
+        // `/ Example: {x+1} each 1 2 3`, `/ Returns: {[a;b] a+b}`,
+        // `/ e.g: {x}` (#2926). The words a comment labels its lines with,
+        // or any capitalised word with a blank after its colon.
+        let label = DOC_LABELS.contains(&name.as_str().to_ascii_lowercase().as_str())
+            || (re!(r"^[A-Z][a-z]+$").is_match(name.as_str())
+                && source[..brace].ends_with([' ', '\t']));
+        if in_comment(name.start()) && !prose && !label {
             out.push(Finding::at(
                 path,
                 source,
@@ -1729,6 +1808,16 @@ fn condition(code: &str, at: usize) -> bool {
 
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
 const PARTITION_COLUMNS: [&str; 4] = ["date", "month", "year", "int"];
+/// The keywords whose answer for one row depends on the rows beside it - the
+/// aggregates, the running and moving ones, the sorts, `fby` and the row
+/// number `i` - so a where constraint using one cannot move past another.
+const OVER_ROWS: &[&str] = &[
+    "all", "any", "asc", "avg", "avgs", "cor", "count", "cov", "deltas", "desc", "dev", "differ",
+    "distinct", "ema", "fby", "fills", "first", "i", "iasc", "idesc", "last", "mavg", "max",
+    "maxs", "mcount", "mdev", "med", "min", "mins", "mmax", "mmin", "msum", "next", "prd", "prds",
+    "prev", "rank", "ratios", "reverse", "rotate", "scov", "sdev", "sum", "sums", "svar", "var",
+    "wavg", "wsum", "xprev", "xrank",
+];
 
 /// The atomic monadic builtins: each applies item by item to a list, a
 /// dictionary or a table, so `f each x` gives what `f x` gives - one call
@@ -1810,6 +1899,15 @@ fn partition_filter_late(
         let Some(from) = top_level_word(rest, re!(r"\bfrom\b")) else {
             continue;
         };
+        // A table literal or a query in parentheses is a table in memory,
+        // as `update`'s is: nothing is read partition by partition (#2924).
+        let table = rest[from.end()..].trim_start();
+        if table
+            .strip_prefix('(')
+            .is_some_and(|inner| re!(r"^\s*(?:\[|(?:select|exec|update|delete)\b)").is_match(inner))
+        {
+            continue;
+        }
         froms.push(q.end() + from.end());
     }
     // Each query's phrase ends where `crate::phrase_end` says, and its where
@@ -1899,7 +1997,17 @@ fn partition_filter_late(
                     .any(|m| m.as_str() == *p)
             }) && plain_comparison(kept)
         });
-        if !plain || !reported.insert(offset(constraints[late])) {
+        // And the late one reads no more than its own row: `date=max date`
+        // after `sym=s` is the last date `s` has, and first it is the last
+        // of every row - q 5 gives one row and none for the two (#2923).
+        let row_wise = flipped || {
+            let c = bare[late];
+            let own = re!(r"^\s*[a-z]+").find(c).map_or(0, |m| m.end());
+            !re!(r"[A-Za-z][A-Za-z0-9_.]*")
+                .find_iter(&c[own..])
+                .any(|m| PARTITION_COLUMNS.contains(&m.as_str()) || OVER_ROWS.contains(&m.as_str()))
+        };
+        if !plain || !row_wise || !reported.insert(offset(constraints[late])) {
             continue;
         }
         let first = constraints[0].trim();
@@ -1973,35 +2081,53 @@ fn plain_comparison(c: &str) -> bool {
 /// see `ATOMIC_MONADS` for what was measured. `count each`, `string each`
 /// and the rest that are not atomic are not reported.
 fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut add = |at: usize, name: &str| {
+        debug_assert!(ATOMIC_MONADS.contains(&name));
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QV002",
+            format!(
+                "`{name}` is atomic: `{name} x` applies it to every item in one call, where \
+                 `each` makes one call per item"
+            ),
+        ));
+    };
+    // `abs each x`, `abs'[x]`, and each over apply, `abs@'x` (#2927).
     for m in re!(concat!(
         r"\b(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
         blank!(),
-        r"*(?:each\b|'\[)"
+        r"*(each\b|'\[|@')"
     ))
     .captures_iter(code)
     {
         let name = m.get(1).unwrap();
-        if !crate::boundary(code, name.start()) {
-            continue;
+        if crate::boundary(code, name.start())
+            && (&m[2] == "'[" || each_of_left(code, m.get(0).unwrap().end()))
+        {
+            add(name.start(), name.as_str());
         }
-        debug_assert!(ATOMIC_MONADS.contains(&name.as_str()));
-        out.push(Finding::at(
-            path,
-            source,
-            name.start(),
-            "QV002",
-            format!(
-                "`{0}` is atomic: `{0} x` applies it to every item in one call, where `each` \
-                 makes one call per item",
-                name.as_str()
-            ),
-        ));
+    }
+    // `each[abs;x]`, the same call in brackets.
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*",
+        r"(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if crate::boundary(code, whole.start())
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), &m[1]);
+        }
     }
 }
 
-/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while` copies
-/// all of `r` on every pass, so the loop takes time quadratic in its count.
-/// Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
+/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while`, or in a
+/// `while`'s condition, copies all of `r` on every pass, so the loop takes
+/// time quadratic in its count. Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
 /// 205 and 818 ms, against 2.5, 5.5 and 11 ms for `r,:til 10`, which
 /// appends in place, and for `raze f each`.
 ///
@@ -2021,13 +2147,20 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             continue;
         };
         let body = &code[open + 1..close - 1];
-        // The count or condition comes first, then the body.
+        // The count or condition comes first, then the body. A `do`'s count
+        // runs once; a `while`'s condition runs on every pass, as its body
+        // does, and `while[n>count r:r,i; ...]` copies `r` on each (#2944).
         let Some(semi) = first_at_depth_zero(body, b';') else {
             continue;
         };
-        let start = open + 1 + semi + 1;
-        // Names the body has given a value not joined from themselves.
-        let mut fresh = std::collections::HashSet::new();
+        let in_body = open + 1 + semi + 1;
+        let start = if l.as_str().starts_with("while") {
+            open + 1
+        } else {
+            in_body
+        };
+        // Each assignment, and whether it joins its name to more.
+        let mut assigned = vec![];
         let mut lambdas = LambdaDepth::new(code, start);
         for a in
             re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
@@ -2037,23 +2170,41 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             if !crate::boundary(code, at) || strings.at(at) || lambdas.inside(at) {
                 continue;
             }
-            // Directly after a `:` is a compound or nested assignment.
-            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
-            if !joins_itself(rhs, name.as_str()) {
-                fresh.insert(name.as_str());
+            // In a query's phrase `p:p,0` names a column, and its `,` starts
+            // the next one: q 5 gives `select p:p,0 by sym from t` the
+            // columns `p` and `x`, joined to nothing (#2925).
+            if crate::query_clause(code, at).is_some() {
                 continue;
             }
-            if !fresh.contains(name.as_str()) && reported.insert(at) {
+            // Directly after a `:` is a compound or nested assignment.
+            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
+            assigned.push((at, name.as_str(), joins_itself(rhs, name.as_str())));
+        }
+        // Names the loop has given a value not joined from themselves. The
+        // condition comes after the body on every pass but the first, so
+        // what the body gives a fresh value is fresh there too.
+        let mut fresh = std::collections::HashSet::new();
+        let after_body: std::collections::HashSet<&str> = assigned
+            .iter()
+            .filter(|(at, _, joins)| *at >= in_body && !joins)
+            .map(|(_, name, _)| *name)
+            .collect();
+        for (at, name, joins) in assigned {
+            if !joins {
+                fresh.insert(name);
+                continue;
+            }
+            let reset = fresh.contains(name) || (at < in_body && after_body.contains(name));
+            if !reset && reported.insert(at) {
                 out.push(Finding::at(
                     path,
                     source,
                     at,
                     "QV003",
                     format!(
-                        "Assigning `{0}` from `{0}` joined to more copies all of `{0}` on every \
-                         pass of the loop, so it takes time quadratic in its count: `{0},:` \
-                         appends in place",
-                        name.as_str()
+                        "Assigning `{name}` from `{name}` joined to more copies all of `{name}` \
+                         on every pass of the loop, so it takes time quadratic in its count: \
+                         `{name},:` appends in place"
                     ),
                 ));
             }

@@ -40,6 +40,28 @@ s:select from t where date within (d0;d1), size>500
 === clean | an aggregate before it: moving date first changes the rows avg sees
 r:select from t where price>avg price, date=2024.01.05
 
+=== clean | the late constraint aggregates too: first, `max date` is over every row, not the rows the sym kept (KDB-X: one row against none, #2923)
+r:select from t where sym=`b, date=max date
+s:select from t where sym=`b, date=last date
+u:select from t where sym=`b, date in -2#date
+v:select from t where sym=`b, date=(max;date) fby sym
+w:select from t where size>500, date>prev settle
+
+=== QV001 | a late constraint that reads no row but its own
+r:select from t where sym=`a, date=.z.d-1
+s:select from t where sym=`a, date in .z.d-til 5
+u:select from t where sym=`a, date within (sd;ed)
+
+=== clean | a table literal or a query in parentheses is in memory, as update's table is (#2924)
+a:select from ([] sym:`a`b; date:2020.01.01 2020.01.02) where sym=`a, date=2020.01.01
+b:select from (select from t where date=2020.01.01) where sym=`a, date=2020.01.01
+c:exec from ([]date:1#.z.d;sym:1#`a) where sym=`a, date=.z.d
+d:select from ( [k:1 2] sym:`a`b; date:2#.z.d) where sym=`a, date=.z.d
+e:select from (update x:1 from t) where sym=`a, date=.z.d
+
+=== QV001 | a name in parentheses is still a table that may be partitioned
+r:select from (t) where sym=`a, date=d
+
 === clean | no partition column at all, or only one constraint
 r:select from t where sym=`a, size>500
 s:select from t where date=2024.01.05
@@ -58,6 +80,25 @@ u:not'[b]
 === QV002 | inside a lambda and a select
 f:{[x] neg each x}
 r:select n:null each p from t
+
+=== QV002 | each over apply, and each in brackets (KDB-X: abs@'x and each[abs;x] are abs x, #2927)
+r:abs@'x
+s:each[abs;x]
+u:each [neg;x]
+
+=== clean | each before a bracket is applied to it first: abs each[-1 2] and abs@'[-1 2] are 'type on KDB-X, and a fix gave abs[-1 2] (#2929)
+r:abs each[-1 2]
+s:abs each [-1 2]
+u:abs@'[-1 2]
+v:each[abs;]
+
+=== clean | an iterator on each is each's own: 'type on KDB-X, where the fix left abs':, null/ and not\ (#2930)
+a:abs each':[x]
+b:null each/[x]
+c:not each\[01b]
+d:neg each'[(1 2;3 4)]
+e:abs each/: x
+f:abs@':x
 
 === clean | each over what is not atomic
 r:count each x
@@ -78,6 +119,22 @@ f:{r:(); do[n; r:r,til 10]; r}
 
 === QV003 | raze of itself in a while loop
 f:{r:(); i:0; while[i<n; r:raze(r;g i); i+:1]; r}
+
+=== QV003 | in a while's condition, which runs on every pass as the body does (KDB-X: 20k and 40k passes 36 and 106 ms; with ,: 5 ms, #2944)
+h:{[n] r:(); i:0; while[n>count r:r,i; i+:1]; r}
+
+=== clean | a do's count runs once, and a condition that gives a fresh value leaves the body joining to that
+f:{[n] r:(); do[count r:r,n; r,:1]; r}
+g:{[x] while[count r:f x; r:r,1; x-:1]; r}
+
+=== clean | in a query's phrase `p:p,0` is the column `p` and then the column `0`, joined to nothing (q 5: columns p and x, #2925)
+f:{[n;t] do[n; t:select p:p,0 by sym from t]; t}
+g:{[n;t] r:(); do[n; r:exec p:p,0 from t]; r}
+h:{[n;t] do[n; t:update p:p,0 from t where s:s,1]; t}
+
+=== QV003 | a join in parentheses in a query, or to a query, is still a join
+f:{[n;t] r:(); do[n; t:select from t where p in (r:r,n)]; r}
+g:{[n;t] r:(); do[n; r:r,select from t]; r}
 
 === clean | appending in place, and raze each
 f:{r:(); do[n; r,:til 10]; r}

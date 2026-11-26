@@ -14,6 +14,28 @@ a:rotate[1;]
 b:within[;1 2]
 c:sum[1;]
 d:sum[;1]
+e:abs[;1]
+f:last[1;]
+
+=== QA010 profile: general | nor for a primitive KDB-X will not project past its rank ('nyi for each where it is written, #2948)
+a:count[1;]
+b:first[;1]
+c:neg[1;]
+d:not[1;]
+e:null[1;]
+f:reverse[1;]
+g:key[1;]
+h:value[1;]
+i:flip[1;]
+j:string[1;]
+k:distinct[1;]
+l:where[1;]
+m:type[1;]
+n:floor[1;]
+o:reciprocal[1;]
+p:group[1;]
+q1:ltime[1;]
+r:count[;]
 
 === QT008 | runtime type
 til[1.5]
@@ -919,6 +941,31 @@ a:where 1 0N
 b:where 1 0Ni
 c:where 1 -0W
 
+=== QD002 profile: general | a general list of integer atoms is the vector they make, and a dictionary is counted by its values (KDB-X: each is 'limit, #2941)
+a:where (1;-2)
+b:where ((1;-2))
+c:where (1i;-2i)
+d:where (0N;1)
+e:where `a`b!1 -1
+g:where[`a`b!1 -1]
+h:where 1 2!(1;-2)
+i:where (`a`b)!1 -1i
+j:where `a`b ! 0N 1
+
+=== clean profile: general | counts none of which is negative, and what q refuses for another reason (KDB-X: a and b run; c, d and e are 'type)
+t:([] a:1 2)
+a:where (1;2)
+b:where `a`b!1 2
+c:where (1i;-2)
+d:where (1;-2h)
+e:where `a`b!1 -1h
+i:select from t where a in key `a`b!1 -1
+j:where "a!b"~/:("a!b";"c")
+
+=== QT001 profile: general | a dictionary with more keys than counts is 'length, and QT001's (KDB-X)
+g:where `a`b!-1
+h:where `a`b`c!1 -1
+
 === QT009 profile: general | a float vector holding an infinity is no count to where (q 5: 'type, #2242)
 a:where 0w 1
 b:where 0N 1h
@@ -994,6 +1041,51 @@ a:.j.j[1;2]
 
 === QA010 profile: general | an elided slot too many for a function q defines as a lambda (q 5: 'rank where it is made, #2246)
 a:xasc[`a;1;]
+
+=== QA010 profile: general | a keyword by its name in .q is the same function (KDB-X: 'rank for each, #2942)
+a:.q.ssr["a";"a";"b";"c"]
+b:.q.sublist[1;2;3]
+c:.q.count[1;2]
+d:.q.til[1;]
+e:.q.xbar[1;1;1]
+
+=== clean profile: general | what each takes there, a projection of a primitive, and one the file defines itself (KDB-X: .q.count[1;] is #:[1;])
+a:.q.ssr["a";"a";"b"]
+b:.q.count[1;]
+.q.pad:{[a;b;c] a}
+c:.q.pad[1;2;3]
+.q.sublist:{[a;b;c] a}
+d:.q.sublist[1;2;3]
+
+=== QA010 profile: general | too many through a projection, parentheses, a dot apply or each (KDB-X: 'rank for each, #2933)
+a:ssr["a";"a"]["b";"c"]
+b:sublist[1]["ab";2]
+c:(ssr)["a";"a";"b";"c"]
+d:ssr . ("a";"a";"b";"c")
+e:ssr'["a";"a";"b";"c"]
+f:.[ssr;("a";"a";"b";"c")]
+g:count . 1 2
+h:count'[1;2]
+i:(sum)[1;2]
+j:.Q.dd[1][2;3]
+k:.[ssr;("a";"a";"b";"c");{x}]
+l:neg .(1;2)
+m:(til)[1;]
+
+=== clean profile: general | within what each takes, a projection, and an over that takes two of a unary function (KDB-X: count/[1;2] is 1, (sum)[1;] and count'[1;] are projections, enlist . (1;2;3) is 1 2 3)
+a:ssr["a";"a"]["b"]
+b:(ssr)["a";"a";"b"]
+c:ssr . ("a";"a";"b")
+d:ssr'["a";"a";"b"]
+e:.[ssr;("a";"a";"b")]
+f:count/[1;2]
+g:(sum)[1;]
+h:count'[1;]
+i:enlist . (1;2;3)
+j:xbar[5][1 2]
+k:rotate[1][1 2 3][0]
+l:.[ssr;("a";"a";"b";"c");]
+m:ssr . args
 
 === clean profile: general | what each takes, and an elided slot too many for a primitive, a projection q makes (#2246)
 a:.Q.dd[`a;`b]

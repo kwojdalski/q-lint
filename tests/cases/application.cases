@@ -4,6 +4,19 @@ f:{[a;b;c;d;e;f;g;h;i] a}
 === clean | exactly eight is legal
 f:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 
+=== clean | a parameter in brackets is one parameter, so two arguments fill the two (KDB-X: {[a;[k]] (a;k)}[1;2] is 1 2, #2946)
+r:{[a;[k]] (a;k)}[1;2]
+g:{[a;[k]] (a;k)}
+s:g[1;2]
+
+=== QA002 QA012 | and a third is one too many (KDB-X: 'rank, #2946)
+r:{[a;[k]] (a;k)}[1;2;3]
+g:{[a;[k]] (a;k)}
+s:g[1;2;3]
+
+=== QA001 | and it counts towards the eight (KDB-X: 'params, #2946)
+r:{[a;b;c;d;e;f;g;h;[k]] a,b,c,d,e,f,g,h,k}
+
 === QA002 | more arguments than the literal lambda takes
 {[a;b]a+b}[1;2;3]
 
@@ -15,6 +28,12 @@ f:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 
 === QA004 | applying a niladic function to the empty list
 f:{[] 1};f . ()
+
+=== clean | a dot that ends a number is no apply: `3 4.` is a float vector, indexed with the empty list (KDB-X: 3 4. () is (), #2935)
+b:3 4. ()
+
+=== QA004 | but apart from it, it is (KDB-X: 3 4 . () is 'type)
+b:3 4 . ()
 
 === QA004 | and in brackets, where the trap's handler swallows the 'type (q 5: .[g;()] is 'type, .[g;();{x}] calls the handler)
 f:{[] 1}
@@ -40,7 +59,7 @@ c:each[{x+y};1 2]
 d:{x+y}@'1 2
 
 === clean | while a rank-1 lambda under them, or @ without each, is a call (#632)
-a:each[{x};1 2]
+a:each[{x,0};1 2]
 b:{[a] a}@'1 2
 c:{[a;b] a+b}@1 2
 
@@ -266,6 +285,19 @@ g:{[a;b;c] a+b+c}
 r:f[1][2;3]
 s:{[a;b] a+b}[;1][2;3]
 u:g[1;;3][2;4]
+
+=== QA012 QA002 profile: general | a string fills its slot as anything does (KDB-X: each is 'rank, #2933)
+f:{[a;b] a,b}
+g:{[a;b;c] a,b,c}
+r:f["a"]["b";"c"]
+s:{[a;b] a,b}["a"]["b";"c"]
+u:g["a";;"c"]["b";"d"]
+
+=== clean profile: general | and leaves the rest open (KDB-X: "ab" and "abc")
+f:{[a;b] a,b}
+g:{[a;b;c] a,b,c}
+r:f["a"]["b"]
+s:g["a"]["b";"c"]
 
 === clean profile: general | while one that fits it, or elides a slot, runs or projects (q 5: 3, 6, 6 and a projection) (#628)
 f:{[a;b] a+b}
@@ -564,6 +596,77 @@ h:{[f] @[f;1;{x}]}
 f:{x+1}
 a:f . 1
 
+=== clean | a column-0 statement under a lambda's definition is not that lambda's each (KDB-X: each line runs, and f and k stay the lambdas, #2947)
+f:{[a;b] a+b}
+each[count;(1 2;3 4)]
+g:{[a;b] a+b}
+peach[count;(1 2;3 4)]
+k:{x+y}
+@'[count;(1 2;3 4)]
+l:{x+y}
+"ab" each 1 2
+
+=== QA005 | while an indented line continues the statement (KDB-X: g is {[a;b] a+b}'[1 2], h two projections)
+g:{[a;b] a+b}
+  each 1 2
+h:{x+y}
+  @'1 2
+
+=== QA012 profile: general | `.z.s` is the lambda it is written in, and takes what that takes (KDB-X: f 1, g 1, h 1 and k[1;2] are 'rank, #2945)
+f:{[a] $[a>0; .z.s[a-1;0]; a]}
+g:{$[x>0; .z.s[x-1;0]; x]}
+h:{[a] {[x;y] $[x>0;.z.s[x-1;y;3];x]}[a;2]}
+k:{[a;b] $[a>0; .z.s[a-1][b;3]; a]}
+
+=== clean profile: general | the innermost one, and no more than it takes; a projection of it; a `.z.s` the lambda assigns is a local (KDB-X: each runs)
+f:{[a] $[a>0; .z.s[a-1]; a]}
+g:{[a] {[x;y] $[x>0;.z.s[x-1;y];x]}[a;2]}
+h:{[a;b] $[a>0; .z.s[a-1;]; a]}
+k:{[a] .z.s:{x+y}; .z.s[a;2]}
+l:{[a;b] $[a>0; .z.s[a-1][b]; a]}
+
+=== QA009 profile: general | after any operand, as in the brackets: a builtin, an operator in parentheses, data, a projection, a symbol, a string (KDB-X: each is 'type, #2936)
+v:1 2 3
+d:`a`b!1 2
+a:count . 1
+b:(+) . 1
+c:v . 0
+e:{x}[1] . 2
+g:`f . 1
+h:d . `a
+i:1 2 3 . 1
+j:"abc" . 1
+k:.Q.dd . 1
+
+=== QA009 profile: general | and an atom in parentheses is that atom (KDB-X: each is 'type)
+f:{x}
+a:f . (1)
+b:f . ((1))
+c:f . ( 1 )
+d:f . ("a")
+e:.[f;(1)]
+g:.[f;("a")]
+h:.[f;( `a )]
+
+=== clean profile: general | a list in parentheses, a string and what is no literal are arguments
+f:{x+y}
+v:1 2 3
+a:f . (enlist 1)
+b:v . (),0
+c:f . ("ab")
+d:.[f;(1 2)]
+e:.[f;(),1]
+g:v . 1#0
+
+=== QE008 profile: general | a dot after a word that takes a phrase, or after an operator, applies nothing before it: that is QE008's line alone (KDB-X: each is '.)
+t:([] a:1 2)
+a:1 2 in . 1
+b:select from . `t
+c:1 + . 1
+
+=== clean profile: general | nor does the dot that ends a number (KDB-X: 3 4. 1 is 3 4 1f)
+d:3 4. 1
+
 === clean | a boolean or byte vector is a list of arguments (q 5: f . 10b is 1i, .[f;0x0102] 3i)
 f:{x+y}
 a:f . 10b
@@ -602,6 +705,84 @@ h:.[{[a]a};(1;2)]
 f:{x+y}
 a:f . 1 2
 b:f . enlist 1
+
+=== QA012 | too many through an iterator, whose derived function takes what the lambda does (KDB-X: 'rank for each, #2940)
+f:{[a;b] a+b}
+a:f'[1 2;3 4;5 6]
+b:f/[1;2 3;4]
+c:f\[1;2 3;4]
+d:f/:[1;2 3;4]
+e:f\:[1 2;3;4]
+g:f':[1;2 3;4]
+
+=== QA002 | and to a lambda written out (KDB-X: 'rank for each, and for {x}/:[1;2 3], #2940)
+a:{[a;b] a+b}'[1 2;3 4;5 6]
+b:{x}/[1;2 3;4]
+c:{x}/:[1;2 3]
+
+=== clean | within the rank, an over that takes two of a unary lambda, and a projection of the derived function (KDB-X: {x}/[1;2 3] is 2 3 and f'[1;2;] is 104h)
+f:{[a;b] a+b}
+a:f'[1 2;3 4]
+b:f/[1;2 3]
+c:{x}/[1;2 3]
+d:{x}\[1;2 3]
+e:f'[1;2;]
+g:f/:[1;2 3]
+h:f':[1;2 3]
+i:{x+y+z}/[1;2 3;4 5]
+j:f'["a";"b"]
+k:{[f;a] f'[a;a;a]}
+
+=== QA012 | too many under a handler too, which is then all that runs (KDB-X: .[f;(1;2;3);{x}] is "rank", #2939)
+f:{[a;b] a+b}
+a:.[f;(1;2;3);{x}]
+b:.[f;1 2 3;{x}]
+
+=== QA002 | and to a lambda written out (KDB-X: "rank" for both, #2939)
+a:.[{[a;b] a+b};(1;2;3);{x}]
+b:.[{[a;b] a+b};1 2 3;{x}]
+
+=== clean | but an amend of data, and a projection of the dot waiting for its handler, are neither (KDB-X: .[f;(1;2;3);] is 104h)
+f:{[a;b] a+b}
+d:(1 2;3 4)
+a:.[d;(0;1;2);{x}]
+b:.[f;(1;2;3);]
+c:.[f;(1;2);{x}]
+
+=== QA012 | a vector in parentheses is the vector, and a byte or a clock vector one argument an item (KDB-X: 'rank for each, #2943)
+f:{[a;b] (a;b)}
+a:f . (1 2 3)
+b:f . ((1;2;3))
+c:f . 0x010203
+d:f . 12:00 13:00 14:00
+e:f . .5 .6 .7
+g:.[f;(1 2 3)]
+
+=== clean | as many as the rank the same way (KDB-X: f . (1 2) is 1 2 and f . 0x0102 is 0x0102)
+f:{[a;b] (a;b)}
+a:f . (1 2)
+b:f . 0x0102
+c:f . 12:00 13:00
+d:.[f;((1;2))]
+
+=== clean | and under a handler they are the call, not a projection (KDB-X: 3, "ab", 3, 3, 1i and 3i, #2938)
+f:{[a;b] a+b}
+a:.[{[a;b] a+b};(1 2);{x}]
+b:.[{[a;b] (a;b)};("ab");{x}]
+c:.[f;(1 2);{x}]
+d:.[f;((1;2));{x}]
+e:.[f;01b;{x}]
+g:.[f;0x0102;{x}]
+h:.[{[a;b] (a;b)};(`a`b);{x}]
+
+=== clean | nor is a name in parentheses one argument: it holds what it holds (KDB-X: x:(1;2); .[f;(x);{x}] is 1 2, #2938)
+f:{[a;b] (a;b)}
+x:(1;2)
+r:.[f;(x);{x}]
+
+=== QA003 | while an enlist in parentheses is still the one (KDB-X: .[f;(enlist 1);{x}] is {[a;b] a+b}[1])
+f:{[a;b] a+b}
+r:.[f;(enlist 1);{x}]
 
 === QA011 profile: general | a string of other than one char, or a symbol or byte vector (q 5: 'type)
 a:$["";1;2]
@@ -648,6 +829,20 @@ if[`a;1]
 while["ab";1]
 do[1.5;1]
 f:{if[101b;:1]; do[1 2;x+:1]; x}
+
+=== QA011 profile: general | a general list, enlist of an item or a comparison of vectors there, as in $[...] (KDB-X: each is 'type, #2932)
+f:{if[(1;2);x+:1];x}
+g:{if[enlist 1b;x+:1];x}
+h:{while[enlist 1b;:x];x}
+k:{while[(1;2);:x];x}
+l:{do[enlist 2;x+:1];x}
+m:{do[(1;2);x+:1];x}
+n:{[a] if[a>1 2 3;a+:1];a}
+
+=== clean profile: general | parentheses around one item are that item (KDB-X: {if[(1b);x+:1];x}0 is 1)
+f:{if[(1b);x+:1];x}
+g:{do[(2);x+:1];x}
+h:{[a] if[enlist[a]~1;a+:1];a}
 
 === clean profile: general | a name, a null long, a char, a boolean, a short or a date (q 5: each runs)
 if[x;1]
@@ -706,18 +901,38 @@ s:@[{[a;b] a+b} -.5;2;{x}]
 f:{'`boom}
 r1:@[f;1;{[e;z] e,z}]
 r2:@[f;1;{x,y}]
-r3:.[f;1 2;{[e;z] e,z}]
+r3:.[f;enlist 1;{[e;z] e,z}]
 r4:@[value;`hook;{[d;p] d,p}]
 
-=== clean | a rank-1 or niladic handler, a projected one, a named one, or an amend (#1142)
+=== clean | a rank-1 or niladic handler, one projected down to rank 1, or an amend (#1142)
 f:{'`boom}
 h:{[e;z] e,z}
 r1:@[f;1;{[e] e}]
 r2:@[f;1;{x}]
-r3:@[f;1;h]
+r3:@[f;1;h[0]]
 r4:@[f;1;{[e;z] e,z}[;0]]
 r5:@[f;1;{[] 0}]
 r6:@[1 2 3;0;{x+1}]
+r7:@[f;1;h[;0]]
+r8:@[f;1;{x,y}/]
+
+=== QA013 | a rank-2 handler named here, in parentheses, or a projection that leaves two slots open (KDB-X: @[{'x};1;h] is {[e;z] e,z}["stype"], #2931)
+f:{'`boom}
+h:{[e;z] e,z}
+r1:@[f;1;h]
+r2:@[f;1;({[e;z] e,z})]
+r3:@[f;1;{[a;e;z] a,e,z}[`a;]]
+r4:@[f;1;(h)]
+r5:.[f;enlist 1;h]
+r6:@[f;1;{[a;e;z] a,e,z}[;`a;]]
+
+=== clean | while a named handler defined twice, or a parameter of the lambda the trap is in, has no rank to read
+f:{'`boom}
+h:{[e;z] e,z}
+h:{[e] e}
+r1:@[f;1;h]
+g:{[k] k:{x}; @[f;1;k]}
+k:{[e;z] e,z}
 
 === QE011 profile: general | an infix keyword or glyph ending a line, with the iterator on the indented line that continues it (#2851; q 5: ')
 a:x cor

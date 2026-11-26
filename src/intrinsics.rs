@@ -224,6 +224,66 @@ fn literal(s: &str) -> Option<Literal> {
     None
 }
 
+/// Whether `where` reads `s` as counts with a negative one among them, where
+/// `s` is no vector literal: a general list of two integer atoms or more,
+/// all long or all int - q 5 `where (1i;-2)` and `where (1;-2h)` are 'type -
+/// or a literal dictionary of as many keys as counts, whose values are such
+/// a list or an integer vector. A null is the least of its type, as in a
+/// vector (#2242).
+fn negative_counts(s: &str) -> bool {
+    let s = s.trim();
+    if !s.contains('"')
+        && let [keys, values] = s.split('!').collect::<Vec<_>>()[..]
+    {
+        let count = literal(keys).map(|k| k.len);
+        return match literal(values) {
+            Some(v) => {
+                v.kind == Kind::Integer
+                    && v.vector
+                    && v.negative
+                    && !v.short_integer
+                    && count == Some(v.len)
+            }
+            None => count == general_counts(values) && negative_counts(values),
+        };
+    }
+    general_counts(s).is_some()
+        && items_of(s)
+            .iter()
+            .any(|item| literal(item).is_some_and(|v| v.negative || v.integer_null))
+}
+
+/// The items of the general list `s` is, inside the parentheses that wrap
+/// all of it; none when it is no such list.
+fn items_of(s: &str) -> Vec<&str> {
+    let mut s = s.trim();
+    for _ in 0..crate::MAX_NESTING {
+        if !(s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len())) {
+            return vec![];
+        }
+        s = s[1..s.len() - 1].trim();
+        let items = slots(s);
+        if items.len() > 1 {
+            return items;
+        }
+    }
+    vec![]
+}
+
+/// How many integer atoms of one width the general list `s` holds, when
+/// that is all it holds: the vector q makes of `(1;-2)` and `(1i;2i)`.
+fn general_counts(s: &str) -> Option<usize> {
+    let items = items_of(s);
+    let int = |item: &str| item.trim().ends_with('i');
+    (items.len() > 1
+        && items.iter().all(|item| {
+            int(item) == int(items[0])
+                && literal(item)
+                    .is_some_and(|v| v.kind == Kind::Integer && !v.vector && !v.short_integer)
+        }))
+    .then_some(items.len())
+}
+
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
 /// since `within` asks for low <= x <= high. A pair of numbers, infinities
@@ -425,6 +485,32 @@ fn calls<'a>(code: &'a str, comments: &'a str, raw: &'a str) -> Vec<Call<'a>> {
             projection: false,
         });
     }
+    // `where` counts a dictionary by its values and a list in parentheses
+    // as the vector its items make, and the literal above stops short of
+    // both: `` where `a`b!1 -1 `` and `where ((1;-2))` (#2941). The argument
+    // is the rest of the expression, which `negative_counts` reads; the `!`
+    // is one in `code`, where a string has none.
+    for name in re!(r"\bwhere\b").find_iter(code) {
+        if !boundary(code, name.start()) || crate::query_clause(code, name.start()) == Some("from")
+        {
+            continue;
+        }
+        let Some(end) = argument_end(code, comments, raw, name.end()) else {
+            continue;
+        };
+        let arg = &comments[name.end()..end];
+        if arg.trim_start().starts_with('[')
+            || !(code[name.end()..end].contains('!') || arg.trim_start().starts_with("(("))
+        {
+            continue;
+        }
+        out.push(Call {
+            at: name.start(),
+            name: &code[name.range()],
+            args: vec![arg],
+            projection: false,
+        });
+    }
     // Applied with `@`: `til@2.5` and `@[til;2.5]` are the call `til 2.5`,
     // and 'type alike (q 5). Two slots only - `@[til;2.5;{x}]` is a protected
     // call whose handler catches the error. A dyadic builtin under `@` is a
@@ -565,6 +651,33 @@ const LAMBDAS: &[&str] = &[
     "ssr", "aj", "aj0", "ajf", "ajf0", "ej", "wj", "wj1",
 ];
 
+/// The primitives KDB-X refuses where one is projected past its rank, with
+/// 'nyi: `count[1;]`, `first[;1]` and `neg[1;]` never become a function,
+/// while `sum[1;]`, `abs[;1]` and `last[1;]` do (#2948). By its name in `.q`
+/// each projects, `.q.count[1;]`, so only the bare word is refused.
+const NO_PROJECTION: &[&str] = &[
+    "count",
+    "distinct",
+    "first",
+    "flip",
+    "floor",
+    "get",
+    "group",
+    "hclose",
+    "inv",
+    "key",
+    "ltime",
+    "neg",
+    "not",
+    "null",
+    "reciprocal",
+    "reverse",
+    "string",
+    "type",
+    "value",
+    "where",
+];
+
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     // A keyword the file redefines in `.q` calls the new definition from
@@ -590,12 +703,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).unwrap().as_str();
-        let Some(arity) = most_arguments(name) else {
+        // `.q.ssr` is `ssr` itself, and `.q.count` `count`, which the loop
+        // below reads only by its bare name: q 5 `.q.ssr[a;b;c;d]` and
+        // `.q.count[1;2]` are 'rank (#2942).
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare) else {
             continue;
         };
-        if BUILTINS.split('|').any(|b| b == name)
+        if (bare == name && BUILTINS.split('|').any(|b| b == name))
             || !boundary(code, whole.start())
-            || redefined(name, whole.start())
+            || redefined(bare, whole.start())
             || (name.starts_with('.')
                 && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
         {
@@ -608,10 +725,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let slots = slots(&code[open + 1..close - 1]);
         let given = slots.len();
         // An elided slot makes a projection, which q refuses where it is
-        // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
-        // is 'rank, while `bin[a;b;]` is a projection that fails when run.
+        // made for a function it defines as a lambda, and for the primitives
+        // in `NO_PROJECTION`: q 5 `xasc[a;b;]` is 'rank and `ltime[1;]`
+        // 'nyi, while `bin[a;b;]` is a projection that fails when run.
         let projection = slots.iter().any(|slot| slot.trim().is_empty());
-        if given > arity && (!projection || LAMBDAS.contains(&name)) {
+        if given > arity
+            && (!projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name)))
+        {
             out.push(Finding::at(
                 path,
                 source,
@@ -621,6 +743,113 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     "{name} accepts at most {arity} argument(s), but this call supplies {given}"
                 ),
             ));
+        }
+    }
+    // The same count where the call is not one `name[...]`: q 5 refuses
+    // `ssr["a";"a"]["b";"c"]`, `(ssr)["a";"a";"b";"c"]`, `ssr . (a;b;c;d)`,
+    // `.[ssr;(a;b;c;d)]` and `ssr'[a;b;c;d]` with 'rank, as it does `count .
+    // 1 2`, `count'[1;2]` and `(count)[1;2]` (#2933). Not through `/` or
+    // `\`, which take two of a unary function: `count/[1;2]` runs.
+    for m in re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*").find_iter(code) {
+        let name = m.as_str();
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare).filter(|&n| n < usize::MAX) else {
+            continue;
+        };
+        if !boundary(code, m.start())
+            || redefined(bare, m.start())
+            || (name.starts_with('.')
+                && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
+        {
+            continue;
+        }
+        let refused = |projection: bool| {
+            !projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name))
+        };
+        let mut report = |detail: String| {
+            out.push(Finding::at(path, source, m.start(), "QA010", detail));
+        };
+        // A slot is empty where `comments` has nothing: in `code` a string
+        // is blank too.
+        let kept = |part: &str| {
+            let from = part.as_ptr() as usize - code.as_ptr() as usize;
+            &comments[from..from + part.len()]
+        };
+        let elided = |parts: &[&str]| parts.iter().any(|part| kept(part).trim().is_empty());
+        let over = |given: usize, how: &str| {
+            format!("{name} accepts at most {arity} argument(s), but {how} {given}")
+        };
+        // In parentheses of its own it is still the function: `(ssr)`.
+        let wrapped = crate::parenthesised(code, m.start(), m.end());
+        let end = wrapped.unwrap_or(m.end());
+        let next = end + (code[end..].len() - code[end..].trim_start_matches([' ', '\t']).len());
+        let rest = &code[next..];
+        if rest.starts_with('[') {
+            let Some((at, given, left)) = crate::over_applied(code, comments, next, arity) else {
+                continue;
+            };
+            if at != next {
+                report(format!(
+                    "{given} argument slots applied to a projection of {name} that accepts \
+                     {left} more: 'rank at runtime"
+                ));
+            } else if wrapped.is_some()
+                && let Some(close) = matching(code, at, b'[', b']')
+                && refused(elided(&slots(&code[at + 1..close - 1])))
+            {
+                // Without the parentheses the first bracket is the loop's
+                // above, or the one's below.
+                report(over(given, "this call supplies"));
+            }
+        } else if wrapped.is_none() && next == end && rest.starts_with("'[") {
+            let Some(close) = matching(code, next + 1, b'[', b']') else {
+                continue;
+            };
+            // A slot left empty is a projection of the derived function:
+            // q 5 `count'[1;]` is one.
+            let parts = slots(&code[next + 2..close - 1]);
+            if parts.len() > arity && !elided(&parts) {
+                report(over(parts.len(), "`'` applies it to"));
+            }
+        } else if (next > end || wrapped.is_some())
+            && re!(concat!(r"^\.(?:", blank!(), r"+|\()")).is_match(rest)
+        {
+            // `name . list`, the list read as QA012 reads a lambda's.
+            let after = crate::past_blanks(comments, next + 1);
+            let list = &code[after..];
+            let len = if list.starts_with('(') {
+                matching(list, 0, b'(', b')')
+            } else {
+                list.find(|c: char| ";)]}\r\n".contains(c))
+                    .or(Some(list.len()))
+            };
+            if let Some(len) = len
+                && crate::operand_ends(code, comments, after + len)
+                && let Some(given) = crate::listed(&list[..len], &comments[after..after + len])
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
+        } else if wrapped.is_none()
+            && rest.starts_with(';')
+            && let before = code[..m.start()].trim_end()
+            && before.ends_with(".[")
+            && !before[..before.len() - 2]
+                .ends_with(|c: char| c.is_alphanumeric() || "_.".contains(c))
+            && let Some(close) = matching(code, before.len() - 1, b'[', b']')
+        {
+            // `.[name;list]`, and under a handler, which is then all that
+            // runs: q 5 `.[ssr;(a;b;c;d);{x}]` is "rank". An empty third
+            // slot is a projection of the dot.
+            let parts = slots(&code[before.len()..close - 1]);
+            if (parts.len() == 2 || parts.len() == 3 && !kept(parts[2]).trim().is_empty())
+                && let Some(given) = crate::listed(parts[1], kept(parts[1]))
+                && given > arity
+            {
+                report(over(given, "`.` applies it to"));
+            }
         }
     }
     for Call {
@@ -643,11 +872,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             out.push(Finding::at(path, source, at, id, detail))
         };
         let max_arity = most_arguments(name).unwrap_or(arity);
-        // A projection is refused only by a builtin q defines as a lambda,
-        // which checks its slots where it is projected: q 5 `til[3;]`,
-        // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
-        // `count[1;]` are not refused until they run, if then (#631).
-        if args.len() > max_arity && (!projection || LAMBDAS.contains(&name)) {
+        // A projection is refused by a builtin q defines as a lambda, which
+        // checks its slots where it is projected - q 5 `til[3;]`, `til[;3]`
+        // and `mavg[1;;]` are 'rank (#631) - and by the primitives KDB-X
+        // answers 'nyi for, `count[1;]` and `first[;1]` (#2948). `sum[1;]`
+        // and `abs[;1]` are not refused until they run, if then.
+        if args.len() > max_arity
+            && (!projection || LAMBDAS.contains(&name) || NO_PROJECTION.contains(&name))
+        {
             report(
                 &mut out,
                 "QA010",
@@ -739,6 +971,17 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                 report(&mut out, "QD001", detail.into());
                 continue;
             }
+        }
+        // A general list of long atoms, or of int ones, is the vector they
+        // make, and a dictionary is counted by its values: q 5 `where (1;-2)`
+        // and `` where `a`b!1 -1 `` are 'limit, as `where 1 -2` is (#2941).
+        if name == "where" && negative_counts(args[0]) {
+            report(
+                &mut out,
+                "QD002",
+                "where: where cannot repeat an index a negative number of times".into(),
+            );
+            continue;
         }
         let Some(value) = literal(args[0]) else {
             continue;

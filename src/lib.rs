@@ -28,6 +28,14 @@ macro_rules! blank {
         r"(?:[ \t\r]|\n[\r\n]*[ \t])"
     };
 }
+/// A numeric or temporal literal as arithmetic takes one: `1`, `2.5`, `.5`,
+/// `1e-3`, `0x0f`, `00:01`, `2024.01.01` - a sign in an exponent, a start
+/// with the point, and the `:` of a time (#2937).
+macro_rules! number {
+    () => {
+        r"-?(?:\d[\d.]*e[-+]\d+[ef]?|\.?\d[A-Za-z0-9.:]*)"
+    };
+}
 mod families;
 mod intrinsics;
 pub mod options;
@@ -2224,12 +2232,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // `each` returns a general `()` where the arithmetic keeps the type,
         // and `""*2` is 'type in q 5 where each returns `()`.
         "QR004" => {
-            let m = re!(
-                r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
-            )
+            let m = re!(concat!(
+                r"^\{\s*(?:x\s*([-+*%])\s*(",
+                number!(),
+                r")|(",
+                number!(),
+                r")\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
+            ))
             .captures(source.get(start..)?)?;
             // `{x -1}` indexes x at -1: there is no arithmetic to lift.
-            if re!(r"^\{\s*x\s+-\d").is_match(m.get(0)?.as_str()) {
+            if re!(r"^\{\s*x\s+-\.?\d").is_match(m.get(0)?.as_str()) {
                 return None;
             }
             let tick = !m.get(0)?.as_str().contains("each");
@@ -2354,11 +2366,14 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                 return None;
             }
             begin = function.len();
+            // Written by `--fix` only where `[]` is that call: after
+            // `count`, a lambda of two arguments or data it would turn a
+            // 'type into a value nobody asked for (#2934).
             (
                 &source[begin..start + m.end()],
                 "[]".into(),
                 "Call with `[]`".into(),
-                true,
+                niladic(&v.code, source, begin),
             )
         }
         // `til 5.0` is 'type; a float with no fraction is the long it spells.
@@ -3272,6 +3287,42 @@ fn scalar_literal(s: &str) -> bool {
         && !re!(r"^[01]{2,}b$|^0x[0-9a-fA-F]{3,}$").is_match(s)
 }
 
+/// Where in `arg` its value is written, inside the blanks and the
+/// parentheses that wrap all of it: q 5 reads `(1)` and `( (1) )` as the atom
+/// 1, so `f . (1)` is the 'type error `f . 1` is (#2936). `literal` is `arg`
+/// in `comments`, where a string is no blank.
+fn unwrapped(arg: &str, literal: &str) -> std::ops::Range<usize> {
+    let from = literal.len() - literal.trim_start().len();
+    let to = literal.trim_end().len().max(from);
+    let inner = &arg[from..to];
+    if inner.len() > 1
+        && inner.starts_with('(')
+        && matching(inner, 0, b'(', b')') == Some(inner.len())
+    {
+        let within = unwrapped(&arg[from + 1..to - 1], &literal[from + 1..to - 1]);
+        from + 1 + within.start..from + 1 + within.end
+    } else {
+        from..to
+    }
+}
+
+/// Whether `before` ends in an operand, which makes the dot after it an
+/// apply: a name, a number, a string or a closing bracket. Not a word q
+/// reads a phrase after - the `in` of `x in . y`, the `from` of a query -
+/// where the dot begins that phrase.
+fn ends_in_operand(before: &str) -> bool {
+    let before = before.trim_end_matches([' ', '\t']);
+    let word = re!(r"[`.A-Za-z0-9_]+$")
+        .find(before)
+        .map_or("", |m| m.as_str());
+    let phrase = !word.contains('.')
+        && builtin(word).is_some_and(|b| match b.kind {
+            BuiltinKind::Function => b.params.len() == 2,
+            kind => matches!(kind, BuiltinKind::Query | BuiltinKind::Control),
+        });
+    !phrase && before.ends_with(|c: char| c.is_ascii_alphanumeric() || "_)]}\"".contains(c))
+}
+
 /// The length in `comments` of the char atom `s` starts with - a string of
 /// one byte as q counts them, `"a"` or `"\n"` - if it starts with one. In
 /// `code` a string is blanks, so `scalar_literal` never sees it (#738).
@@ -3514,9 +3565,10 @@ fn same_test(comments: &str, code: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
-/// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
-/// vector, a comparison of vectors, a general list or `enlist` of an item.
+/// Whether a test - of `$[...]`, `if` or `while`, or the count of `do` - is
+/// a literal q 5 refuses with 'type: an atom `refused_atom_condition`
+/// names, `()`, a boolean vector, a spaced numeric vector, a comparison of
+/// vectors, a general list or `enlist` of an item.
 /// `raw` is the test with strings still in it, `cond` the same text from
 /// the masked view. q 5: `$[(1;2);1;2]` and `$[enlist 1b;1;2]` are 'type
 /// (#633).
@@ -3557,7 +3609,7 @@ fn vector_comparison(cond: &str) -> bool {
 /// each 'type, as the same expression on a line of its own is.
 /// Where the parentheses around the function from `start` to `end` close,
 /// when nothing else is in them: `({...})` or `(f)`.
-fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
+pub(crate) fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
     let before = code[..start].trim_end_matches([' ', '\t']);
     let open = before.strip_suffix('(').map(|b| b.len())?;
     let close = matching(code, open, b'(', b')')?;
@@ -3574,12 +3626,27 @@ fn parenthesised(code: &str, start: usize, end: usize) -> Option<usize> {
 /// q 5 `{[a;b] a+b}[1][2;3]` and `[;1][2;3]` are 'rank (#628). A projection
 /// given an elided slot is not checked until it runs - q 5 `f[1][;2]` is a
 /// projection - so a later bracket counts only when it fills every slot.
-fn over_applied(code: &str, open: usize, rank: usize) -> Option<(usize, usize, usize)> {
+/// A slot is judged empty in `comments`, where a string is still text:
+/// `ssr["a";"a"]["b";"c"]` fills two and then two more (#2933).
+pub(crate) fn over_applied(
+    code: &str,
+    comments: &str,
+    open: usize,
+    rank: usize,
+) -> Option<(usize, usize, usize)> {
     let (mut open, mut rank, mut first) = (open, rank, true);
     loop {
         let close = matching(code, open, b'[', b']')?;
         let parts = slots(&code[open + 1..close - 1]);
-        let filled = parts.iter().filter(|p| !p.trim().is_empty()).count();
+        let mut from = open + 1;
+        let filled = parts
+            .iter()
+            .filter(|part| {
+                let full = !comments[from..from + part.len()].trim().is_empty();
+                from += part.len() + 1;
+                full
+            })
+            .count();
         if filled == 0 && parts.len() == 1 {
             // `f[]`: a call of a rank-1 function, nothing at any other.
             if rank <= 1 {
@@ -4054,6 +4121,42 @@ fn grouped(phrase: &str) -> String {
         .collect();
     String::from_utf8(filled).unwrap()
 }
+/// Whether what ends at `end` is a function `[]` calls with nothing: a lambda
+/// written out that takes one argument at most, or a name this file gives
+/// one such lambda and nothing else. q 5: `{[] 42}[]` is 42 and `{1}[]` 1,
+/// while `{[a;b] a+b}[]` is a projection, `count[]` 1 and `d[]` the data
+/// `d` (#2934).
+fn niladic(code: &str, source: &str, end: usize) -> bool {
+    let unary = |open: usize| {
+        matching(code, open, b'{', b'}')
+            .is_some_and(|close| lambda_rank(code, source, open, close) <= 1)
+    };
+    if code[..end].ends_with('}') {
+        let mut depth = 0i32;
+        for (i, b) in code.as_bytes()[..end].iter().enumerate().rev() {
+            match b {
+                b'}' => depth += 1,
+                b'{' if depth == 1 => return unary(i),
+                b'{' => depth -= 1,
+                _ => {}
+            }
+        }
+        return false;
+    }
+    let Some(name) = re!(r"\.?[A-Za-z][A-Za-z0-9_.]*$").find(&code[..end]) else {
+        return false;
+    };
+    if !boundary(code, name.start()) || shadowed(code, source, name.start(), name.as_str()) {
+        return false;
+    }
+    let assigned = regex::Regex::new(&format!(r"{}[ \t]*::?", regex::escape(name.as_str())))
+        .unwrap()
+        .find_iter(code)
+        .filter(|m| boundary(code, m.start()))
+        .map(|m| past_blanks(code, m.end()))
+        .collect::<Vec<_>>();
+    matches!(assigned[..], [at] if code[at..].starts_with('{') && unary(at))
+}
 /// Whether `before` ends in a character that would fuse with a token
 /// written straight after it: `a` and `b` are `ab`, `1` and `b` are `1b`.
 /// A symbol ending in `:` or `/` is one: `` `:db/ `` and `t` are `` `:db/t ``,
@@ -4328,12 +4431,19 @@ fn statement_groups(code: &str, source: &str) -> Vec<(usize, usize)> {
 /// 1;{x}]` a projection (#630).
 fn vector_items(arg: &str, literal: &str) -> Option<usize> {
     let (arg, literal) = (arg.trim(), literal.trim());
-    if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(arg) {
+    // A number as `number!` has it, so with a clock part or a leading dot:
+    // q 5 `f . 12:00 13:00 14:00` and `f . .5 .6 .7` are 'rank at rank 2
+    // (#2943).
+    if re!(concat!("^", number!(), r"(?:[ \t]+", number!(), ")+$")).is_match(arg) {
         Some(arg.split_whitespace().count())
     } else if re!(r"^(?:`[A-Za-z0-9_.:]*){2,}$").is_match(arg) {
         Some(arg.matches('`').count())
     } else if re!(r"^[01]{2,}b$").is_match(arg) {
         Some(arg.len() - 1)
+    } else if re!(r"^0x[0-9a-fA-F]{3,}$").is_match(arg) {
+        // A byte for each pair of digits, and one for an odd digit that
+        // leads: q 5 `0x010` is 0x0010.
+        Some((arg.len() - 1) / 2)
     } else if let Some(body) = literal
         .strip_prefix('"')
         .and_then(|l| l.strip_suffix('"'))
@@ -4344,6 +4454,27 @@ fn vector_items(arg: &str, literal: &str) -> Option<usize> {
         Some(1)
     } else {
         None
+    }
+}
+/// How many items the argument list of a dot apply holds where it is written
+/// out: a list in parentheses by its slots, and a vector by its items in
+/// however many parentheses - q 5 `f . (1 2 3)` and `f . ((1;2;3))` are the
+/// 'rank that `f . 1 2 3` is at rank 2, and `.[f;(1 2);h]` is the call that
+/// `.[f;1 2;h]` is (#2938, #2943). Nothing for what is not written out,
+/// `(x)`. `literal` is `arg` with its strings kept.
+pub(crate) fn listed(arg: &str, literal: &str) -> Option<usize> {
+    let from = arg.len() - arg.trim_start().len();
+    let list = arg.trim();
+    if list.starts_with('(') && matching(list, 0, b'(', b')') == Some(list.len()) {
+        let inner = &list[1..list.len() - 1];
+        let n = slots(inner).len();
+        if n > 1 {
+            Some(n)
+        } else {
+            listed(inner, literal.get(from + 1..from + list.len() - 1)?)
+        }
+    } else {
+        vector_items(arg, literal)
     }
 }
 /// A byte that is not UTF-8 - 0x80 or more, since an ASCII one always is -
@@ -7236,7 +7367,8 @@ fn lint_rules(
                     params.len()
                 };
                 if arity <= 8
-                    && let Some((at, count, rank)) = over_applied(code, open, arity.max(1))
+                    && let Some((at, count, rank)) =
+                        over_applied(code, &v.comments, open, arity.max(1))
                 {
                     add(
                         at,
@@ -7262,13 +7394,18 @@ fn lint_rules(
             } else {
                 params.len()
             };
-            let rest = code[end..].trim_start();
+            // The each of this statement, on this line or the indented one
+            // that continues it: a column-0 `each[{x};1 2]` under
+            // `f:{[a;b] a+b}` is a statement of its own (#2947).
+            // Reported at the each itself: from the lambda's end, a comment
+            // after it on the line above would take the finding.
+            let each = past_blanks(&v.comments, end);
             // `@'` is each as well: q 5 `{[a;b] a+b}@'1 2` is two projections.
             if arity >= 2
-                && let Some(it) = re!(r"\A(?:(?:each|peach)\b|@')").find(rest)
+                && let Some(it) = re!(r"\A(?:(?:each|peach)\b|@')").find(&code[each..])
             {
                 add(
-                    end,
+                    each,
                     "QA005",
                     peach_detail(it.as_str(), arity).unwrap_or_else(|| {
                         format!(
@@ -7558,13 +7695,11 @@ fn lint_rules(
         if parts.len() < 2 {
             continue;
         }
+        // And for a general list, `enlist` of an item or a comparison of
+        // vectors, as `$[...]` is: KDB-X `if[(1;2);1]`, `while[enlist 1b;1]`,
+        // `do[enlist 2;1]` and `if[1 2 3>2;1]` are each 'type (#2932).
         let raw = v.comments[open + 1..open + 1 + parts[0].len()].trim();
-        if refused_atom_condition(raw)
-            || re!(r"^\(\s*\)$").is_match(raw)
-            || re!(r"^[01]{2,}b$").is_match(raw)
-            || (re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(raw)
-                && !raw.ends_with('b'))
-        {
+        if refused_test(raw, parts[0].trim()) {
             let what = if &m[1] == "do" { "count" } else { "test" };
             add(
                 at,
@@ -8219,25 +8354,38 @@ fn lint_rules(
         }) {
             continue;
         }
-        if !boundary(code, whole.start())
-            || !gap(&m)
-            || redefined.contains(&key)
-            || overwritten(&key)
-            || foreign(whole.start(), &key)
-        {
+        if !boundary(code, whole.start()) || !gap(&m) {
             continue;
         }
-        let Some(&rank) = ranks.get(&key) else {
-            continue;
+        // `.z.s` is the lambda it is written in, whose rank is there to
+        // read: q 5 `f:{[a] $[a>0; .z.s[a-1;0]; a]}` is 'rank at `f 1`, as
+        // the call by name `f[a-1;0]` is (#2945). The innermost one - and
+        // not where the lambda assigns it, which makes it a local: q 5 runs
+        // `{[a] .z.s:{x+y}; .z.s[a;2]}`.
+        let rank = if name == ".z.s" {
+            let own = enclosing_brace(code, whole.start()).and_then(|brace| {
+                let end = matching(code, brace, b'{', b'}')?;
+                (!re!(r"\.z\.s\s*[:;)]").is_match(&code[brace..end]))
+                    .then(|| lambda_rank(code, source, brace, end))
+            });
+            match own {
+                Some(rank) => rank,
+                None => continue,
+            }
+        } else {
+            if redefined.contains(&key) || overwritten(&key) || foreign(whole.start(), &key) {
+                continue;
+            }
+            match ranks.get(&key) {
+                Some(&rank) if !shadowed(code, source, whole.start(), name) => rank,
+                _ => continue,
+            }
         };
-        if shadowed(code, source, whole.start(), name) {
-            continue;
-        }
         let open = whole.end() - 1;
         if rank == 0 {
             continue;
         }
-        if let Some((at, count, left)) = over_applied(code, open, rank) {
+        if let Some((at, count, left)) = over_applied(code, &v.comments, open, rank) {
             add(
                 if at == open { whole.start() } else { at },
                 "QA012",
@@ -8345,12 +8493,13 @@ fn lint_rules(
             continue;
         }
         let rank = lambda_rank(code, source, brace, end);
+        let each = past_blanks(&v.comments, end);
         let it = re!(r"\A(?:(?:each|peach)\b|@')")
-            .find(code[end..].trim_start())
+            .find(&code[each..])
             .map(|m| m.as_str());
         if rank >= 2 && (bracketed || it.is_some()) {
             add(
-                end,
+                if it.is_some() { each } else { end },
                 "QA005",
                 it.and_then(|it| peach_detail(it, rank)).unwrap_or_else(|| {
                     if named {
@@ -8440,12 +8589,13 @@ fn lint_rules(
             let arg = parts[1].trim();
             let second = parts[1].as_ptr() as usize - code.as_ptr() as usize;
             let literal = &v.comments[second..second + parts[1].len()];
-            if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
-                slots(&arg[1..arg.len() - 1]).len()
-            } else if re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*$").is_match(arg) {
-                arg.split_whitespace().count()
-            } else if let Some(n) = vector_items(arg, literal) {
+            // A vector before a lone number: `01b` and `0x0102` are two
+            // items each, and `(1 2)` the vector it holds - q 5
+            // `.[{[a;b] a+b};(1 2);{x}]` is 3 and `.[f;01b;{x}]` 1i (#2938).
+            if let Some(n) = listed(parts[1], literal) {
                 n
+            } else if re!(r"^-?\d[A-Za-z0-9.]*$").is_match(arg) {
+                1
             } else {
                 continue;
             }
@@ -8465,10 +8615,12 @@ fn lint_rules(
     // The handler of a protected apply is given one argument, the error
     // text, so a handler of rank 2 or more is projected, not run: q 5
     // `@[{'`boom};1;{[e;z] e}]` is `{[e;z] e}["boom"]`, and so with `{x,y}`
-    // and with `.[f;args;h]`. Only a lambda written out as the whole third
-    // slot - a name may be bound to anything - and only where the first slot
-    // is a function rather than data, which makes the three-slot form an
-    // amend.
+    // and with `.[f;args;h]`. The handler may be a lambda written out, in
+    // parentheses or not, one named here - `h2:{[a;b] "h"}; @[f;1;h2]` is
+    // `{[a;b] "h"}["stype"]` on KDB-X - or a projection of either that
+    // leaves two slots open, `{[a;b;c] "h"}[`a;]` (#2931). Only where the
+    // first slot is a function rather than data, which makes the three-slot
+    // form an amend.
     for m in re!(r"([@.])\[").find_iter(code) {
         let open = m.end() - 1;
         if !boundary(code, m.start())
@@ -8487,13 +8639,54 @@ fn lint_rules(
         if !(f.starts_with('{') || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(f)) {
             continue;
         }
-        let h = parts[2].trim();
-        let h_at = parts[2].as_ptr() as usize - code.as_ptr() as usize
+        let mut h = parts[2].trim();
+        let mut h_at = parts[2].as_ptr() as usize - code.as_ptr() as usize
             + (parts[2].len() - parts[2].trim_start().len());
-        if !h.starts_with('{') || matching(code, h_at, b'{', b'}') != Some(h_at + h.len()) {
-            continue;
+        while h.starts_with('(') && matching(h, 0, b'(', b')') == Some(h.len()) {
+            let inner = &h[1..h.len() - 1];
+            h_at += 1 + (inner.len() - inner.trim_start().len());
+            h = inner.trim();
         }
-        let rank = lambda_rank(code, source, h_at, h_at + h.len());
+        // The function, and where it ends: a bracket after it fills slots.
+        let (whole, f_end) = if h.starts_with('{') {
+            let Some(end) = matching(h, 0, b'{', b'}') else {
+                continue;
+            };
+            (lambda_rank(code, source, h_at, h_at + end), end)
+        } else {
+            let name = re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                .find(h)
+                .map_or("", |n| n.as_str());
+            let key = qualified(h_at, name);
+            if redefined.contains(&key)
+                || overwritten(&key)
+                || foreign(h_at, &key)
+                || shadowed(code, source, h_at, name)
+            {
+                continue;
+            }
+            match ranks.get(&key) {
+                Some(&r) => (r, name.len()),
+                None => continue,
+            }
+        };
+        let filled = match &h[f_end..] {
+            "" => 0,
+            given
+                if given.starts_with('[')
+                    && matching(given, 0, b'[', b']') == Some(given.len()) =>
+            {
+                let given = slots(&given[1..given.len() - 1]);
+                match given.iter().filter(|slot| !slot.trim().is_empty()).count() {
+                    // `f[]` fills none, and is no projection to count.
+                    0 => continue,
+                    _ if given.len() > whole => continue,
+                    n => n,
+                }
+            }
+            _ => continue,
+        };
+        let rank = whole - filled;
         if rank >= 2 {
             add(
                 h_at,
@@ -8539,13 +8732,7 @@ fn lint_rules(
     let items = |arg: &str| -> Option<usize> {
         let at = arg.as_ptr() as usize - code.as_ptr() as usize;
         let literal = &v.comments[at..at + arg.len()];
-        let arg = arg.trim();
-        if arg.starts_with('(') && matching(arg, 0, b'(', b')') == Some(arg.len()) {
-            let n = slots(&arg[1..arg.len() - 1]).len();
-            (n > 1).then_some(n)
-        } else {
-            vector_items(arg, literal)
-        }
+        listed(arg, literal)
     };
     let too_many = |rank: usize, n: usize| {
         (rank > 0 && n > rank).then(|| {
@@ -8554,6 +8741,47 @@ fn lint_rules(
             )
         })
     };
+    // An iterator's derived function takes what the lambda takes: q 5
+    // `f'[1 2;3 4;5 6]`, `f/[1;2 3;4]` and `f\[1;2 3;4]` are 'rank for
+    // `f:{[a;b] a+b}` (#2940). Over and scan take two of a unary lambda as
+    // well - `{x}/[1;2 3]` runs it once and is 2 3 - and each-right,
+    // each-left and each-prior two of any and no more: `{x+y+z}/:[1;2;3]` is
+    // 'rank and `{x}/:[1;2 3]` too. A slot left empty is a projection of the
+    // derived function, `f'[1;2;]`, judged in `comments`, where a string is
+    // still text.
+    for m in re!(r"[}A-Za-z0-9_.](/:|\\:|':|['/\\])\[").captures_iter(code) {
+        let (glyph, open) = (m.get(1).unwrap(), m.get(0).unwrap().end() - 1);
+        let Some((rank, id)) = applied(glyph.start(), &code[..glyph.start()], glyph.start()) else {
+            continue;
+        };
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        let mut from = open + 1;
+        let elided = parts.iter().any(|part| {
+            let empty = v.comments[from..from + part.len()].trim().is_empty();
+            from += part.len() + 1;
+            empty
+        });
+        let most = match glyph.as_str() {
+            "'" => rank,
+            "/" | "\\" => rank.max(2),
+            _ => rank.min(2),
+        };
+        if rank > 0 && !elided && parts.len() > most {
+            add(
+                glyph.start(),
+                id,
+                format!(
+                    "{} arguments applied through `{}` to a function of rank {rank}, which \
+                     takes {most} that way: 'rank at runtime",
+                    parts.len(),
+                    glyph.as_str()
+                ),
+            );
+        }
+    }
     // The blanks around the dot are optional after a lambda and before a
     // parenthesis: q 5 parses `{x}.(1;2)`, `{x}. 1` and `f .(1;2)` as the
     // same dot apply (#441). A digit straight after it is a float: `f .1`.
@@ -8562,9 +8790,13 @@ fn lint_rules(
     for m in re!(concat!(r"(?:\}[ \t]*|[ \t])\.(?:", blank!(), r"+|\()")).find_iter(code) {
         let dot = m.start() + m.as_str().find('.').unwrap();
         let left = code[..dot].trim_end_matches([' ', '\t']);
-        let Some((rank, id)) = applied(dot, left, left.len()) else {
+        // The rank is for the count below. A scalar is a 'type error after
+        // any operand, as it is in the brackets of `.[count;1]`: q 5
+        // `count . 1`, `(+) . 1`, `v . 0` and `` `f . 1 `` (#2936).
+        let known = applied(dot, left, left.len());
+        if known.is_none() && !ends_in_operand(&v.comments[..dot]) {
             continue;
-        };
+        }
         let quoted = past_blanks(&v.comments, dot + 1);
         if let Some(len) = char_atom(&v.comments[quoted..])
             && operand_ends(code, &v.comments, quoted + len)
@@ -8594,7 +8826,9 @@ fn lint_rules(
         if !operand_ends(code, &v.comments, after + end) {
             continue;
         }
-        if scalar_literal(arg.trim_end_matches([' ', '\t'])) {
+        let atom = unwrapped(arg, &v.comments[after..after + end]);
+        let quoted = &v.comments[after + atom.start..after + atom.end];
+        if scalar_literal(&arg[atom]) || char_atom(quoted) == Some(quoted.len()) {
             add(
                 dot,
                 "QA009",
@@ -8602,7 +8836,9 @@ fn lint_rules(
                  (`enlist` it, or use `@`)"
                     .into(),
             );
-        } else if let Some(detail) = items(arg).and_then(|n| too_many(rank, n)) {
+        } else if let Some((rank, id)) = known
+            && let Some(detail) = items(arg).and_then(|n| too_many(rank, n))
+        {
             add(dot, id, detail);
         }
     }
@@ -8626,13 +8862,25 @@ fn lint_rules(
         {
             add(at, "QA004", "`.[f;()]`".into());
         }
-        if parts.len() != 2 {
+        // Under a handler the call is as much 'rank, and the handler is all
+        // that ever runs: q 5 `.[{[a;b] a+b};(1;2;3);{x}]` is "rank" (#2939).
+        // An empty third slot is a projection of `.`, waiting for one.
+        let trapped = parts.len() == 3 && !v.comments[at + 2..close - 1].trim_end().ends_with(';');
+        if parts.len() != 2 && !trapped {
             continue;
         }
         if let Some((rank, id)) = applied(at, parts[0].trim_end(), f_end)
             && let Some(detail) = items(parts[1]).and_then(|n| too_many(rank, n))
         {
-            add(at, id, detail);
+            add(
+                at,
+                id,
+                if trapped {
+                    format!("{detail}, so the handler is all this ever runs")
+                } else {
+                    detail
+                },
+            );
         }
     }
     // `a -1` is `a` applied to `-1`, not `a` minus one: with whitespace before
@@ -8720,13 +8968,14 @@ fn lint_rules(
             from += part.len() + 1;
             empty
         });
-        let quoted = parts.get(1).map_or("", |part| {
-            let second = at + 3 + parts[0].len();
-            v.comments[second..second + part.len()].trim()
-        });
-        if elided
-            || parts.len() < 2
-            || !(scalar_literal(parts[1].trim()) || char_atom(quoted) == Some(quoted.len()))
+        if elided || parts.len() < 2 {
+            continue;
+        }
+        let second = at + 3 + parts[0].len();
+        let literal = &v.comments[second..second + parts[1].len()];
+        let atom = unwrapped(parts[1], literal);
+        if !(scalar_literal(&parts[1][atom.clone()])
+            || char_atom(&literal[atom.clone()]) == Some(atom.len()))
         {
             continue;
         }
@@ -10458,9 +10707,14 @@ fn lint_rules(
         // them is blank in `line`, so `(!).("S=;")` would pass for `. ()` -
         // and the whole of the right operand: `. (),y` applies to a list.
         // Reported at the `.` itself, which is where the fix edits.
+        // Nor is a dot that ends a number an apply: `3 4.` is the float
+        // vector, and q 5 `3 4. ()` indexes it with the empty list, `()`
+        // (#2935).
         for m in re!(r"\.\s*\(\s*\)").find_iter(line) {
             if re!(r"\(\s*\)$").is_match(&literals[m.range()])
                 && operand_ends(code, &v.comments, offset + m.end())
+                && !(line[..m.start()].ends_with(|c: char| c.is_ascii_digit())
+                    && ends_in_number(&line[..m.start()]))
             {
                 add(offset + m.start(), "QA004", "`. ()`".into());
             }

@@ -126,7 +126,7 @@ still listed is not taken for one to run `--fix` on again. Batch fixing handles 
 `*=` (QE004), a leading UTF-8 BOM (QE005), an invalid string escape (`"C:\data"` →
 `"C:\\data"`, QE002), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x` (QF015),
 a table literal of scalars, each column enlisted (QT005), a symbol used as a `like`
-pattern (`` `a* `` → `"a*"`, QB007), `f . ()` → `f[]` (QA004), `til 5.0` → `til 5` (QT008,
+pattern (`` `a* `` → `"a*"`, QB007), `f . ()` → `f[]` for a lambda that takes no argument (QA004), `til 5.0` → `til 5` (QT008,
 and `2.0 rotate` QT014, `3.0 mavg` QT017), a number signalled → a string (QT025),
 `where a:1` → `where a=1` (QT028), what q 5 refuses and q 4 read another way →
 the q 5 spelling of that reading (`-x` → `neg x` QE008, `+/x` → `(+/)x` QE009,
@@ -161,7 +161,8 @@ a filter (QB005), `x` → the one declared parameter (QF010), deleting a comment
 definition (QL002), passing an outer local into a nested lambda that reads it
 (`{a+x}` → `{[x;a] a+x}[;a]`, QF005), dropping the trailing `;` of `$[c;a;b;]` (QA007),
 `$[c;a]` → `if[c;a]` where nothing takes its value (QA006), `10/2` → `10%2` (QB014),
-removing `a:a` (QB017), renaming a parameter
+removing `a:a` (QB017), `f . ()` → `f[]` for anything else (QA004: `count[]` is 1 and a
+two-argument lambda's `[]` a projection, where `. ()` was 'type), renaming a parameter
 that shadows a builtin (QF001), a column one typo from the table's (QF020),
 `` hopen `host:5000 `` → `` hopen `:host:5000 `` (QT029), removing a `noqa` comment
 that suppresses nothing (QL003), and (uqf)

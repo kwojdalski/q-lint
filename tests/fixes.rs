@@ -582,6 +582,9 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QR004", "r:count {x*2} each b", "r:count b*2", false),
     ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
     ("QR004", "r:{x - 1} each b", "r:b-1", false),
+    // An exponent with a sign, a number that starts with its point (#2937).
+    ("QR004", "r:{x*1e-3} each b", "r:b*1e-3", false),
+    ("QR004", "r:{.5-x} each a,b", "r:.5-a,b", false),
     ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
     // In a query the argument ends where the column does (#350).
     (
@@ -622,6 +625,22 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
         true,
     ),
+    // `[]` is the call only of a function that takes nothing: after a
+    // builtin, a lambda of two arguments or data it turns q's 'type into a
+    // value - `count[]` is 1, `{[a;b] a+b}[]` a projection and `d[]` is `d`
+    // (KDB-X) - so `--fix` leaves those to the editor (#2934).
+    ("QA004", "r:{[] 42} . ()", "r:{[] 42}[]", true),
+    ("QA004", "n:count . ()", "n:count[]", false),
+    ("QA004", "p:{[a;b] a+b} . ()", "p:{[a;b] a+b}[]", false),
+    ("QA004", "d:`a`b!1 2;c:d . ()", "d:`a`b!1 2;c:d[]", false),
+    ("QA004", "f:{x+y};r:f . ()", "f:{x+y};r:f[]", false),
+    (
+        "QA004",
+        "f:{1};f:{x+y};r:f . ()",
+        "f:{1};f:{x+y};r:f[]",
+        false,
+    ),
+    ("QA004", "f:{1};g:{[f] f . ()}", "f:{1};g:{[f] f[]}", false),
     ("QT008", "r:til 5.0", "r:til 5", true),
     ("QT008", "r:til 3f", "r:til 3", true),
     // One digit in quotes is a char atom, which is 'stype too (#565).
@@ -972,6 +991,15 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
+        // Each over apply and each in brackets are reported, not rewritten.
+        ("QR004", "a:1 2 3;r:{x*2}@'a"),
+        ("QR004", "a:1 2 3;r:each[{x*2};a]"),
+        ("QR002", "a:1 2 3;r:{x}@'a"),
+        ("QR002", "a:1 2 3;r:each[{x};a]"),
+        ("QV002", "a:1 2 3;r:abs@'a"),
+        ("QV002", "a:1 2 3;r:each[abs;a]"),
+        // `{x -.5}` indexes x, and has no arithmetic to lift.
+        ("QR004", "r:{x -.5} each b"),
         // A symbol applied to () is a projection, which `[]` would call (#408)
         ("QA004", "f:{42};r:`f . ()"),
         // A comment holding a `}` would go with the code (#410)
