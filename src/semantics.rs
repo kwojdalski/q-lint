@@ -3716,9 +3716,14 @@ pub fn check(
         // source and checked back against the views: the name has to be live
         // code, and the quote has to be blank in both views, which is what
         // distinguishes a masked string from a comment.
+        // A symbol or a string needs no blank before it, and a lambda or a
+        // negative literal after one is an argument too: with `f:{x+y}`,
+        // q 5 gives a projection for `` f`a ``, `f"s"`, `f -1` and `f {x}`
+        // alike (#2723).
         let named = re!(
-            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
+            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:[ \\t]*([`\"])|[ \\t]+([({A-Za-z0-9]|\\.[A-Za-z]|-\\.?[0-9]))"
         );
+        let argument_of = |m: &regex::Captures| m.get(2).or(m.get(3)).unwrap().start();
         // Each query's phrases, from the keyword to `from` and through a
         // `where`, with the table it reads.
         let queries: Vec<(usize, usize, &str)> = re!(
@@ -3771,11 +3776,14 @@ pub fn check(
         while let Some(m) = named.captures_at(code, from) {
             let name = m.get(1).unwrap();
             candidates.push((name.start(), name.as_str()));
-            from = m.get(2).unwrap().start();
+            from = argument_of(&m);
         }
-        for m in named.captures_iter(raw).filter(|m| &m[2] == "\"") {
+        for m in named
+            .captures_iter(raw)
+            .filter(|m| m.get(2).is_some_and(|q| q.as_str() == "\""))
+        {
             let name = m.get(1).unwrap();
-            let quote = m.get(2).unwrap().start();
+            let quote = argument_of(&m);
             if code.get(name.start()..name.end()) == Some(name.as_str())
                 && code.as_bytes()[quote] == b' '
                 && comments.as_bytes()[quote] == b'"'
@@ -3882,7 +3890,8 @@ pub fn check(
                 });
             let head = match before.chars().next_back() {
                 None => true,
-                Some(c) => ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword,
+                // After a `}` too: `{x}f 1` is `{x}[f 1]` (#2723).
+                Some(c) => ";([{}:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword,
             };
             if !head {
                 continue;
@@ -3911,10 +3920,14 @@ pub fn check(
             // name its left operand: q 5 parses `fmt 0: x` as
             // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508). A
             // qSQL keyword ends the phrase: `select g from t` names a column.
+            // `where` only in a query - anywhere else it is the unary, and
+            // `f where 1 0` applies `f` to what it gives (#2723).
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
                 .is_some_and(|w| {
-                    INFIX.contains(&w.as_str()) || matches!(w.as_str(), "from" | "by" | "where")
+                    INFIX.contains(&w.as_str())
+                        || matches!(w.as_str(), "from" | "by")
+                        || w.as_str() == "where" && query_at(at).is_some()
                 })
                 || re!(r"^[012]:").is_match(&code[argument..])
             {

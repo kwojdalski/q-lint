@@ -210,6 +210,31 @@ g:{x>y}
 b:1 2 3
 r:b where g b
 
+=== QP006 profile: uqf | and is itself an argument: f where 1 0 is f[where 1 0] (#2723; q 5: 104h)
+f:{x+y}
+d:f where 1 0
+
+=== QP006 profile: uqf | a symbol or a string glued to the name is its argument (#2723; q 5: type f`a is 104h)
+f:{x+y}
+a:f`a
+b:f"s"
+
+=== QP006 profile: uqf | and so is a negative literal or a lambda after a blank (#2723; q 5: f -1 is f[-1])
+f:{x+y}
+c:f -1
+e:f {x}
+
+=== QP006 profile: uqf | a call after a lambda's brace opens that lambda's argument (#2723; q 5: {x}f 1 is {x}[f 1])
+f:{x+y}
+g:{x}f 1
+
+=== clean profile: uqf | a symbol vector's items, a minus set off on both sides, and a table before where are no calls (#2723)
+f:{x+y}
+t:([]f:1 2)
+a:`f`a
+b:f - 1
+c:select from t where f>1
+
 === QP006 profile: uqf | and so does any unary keyword's: not g a b is not g[a b] (q 5)
 g:{x>y}
 r:not g 1 2
