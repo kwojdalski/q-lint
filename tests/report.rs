@@ -447,3 +447,26 @@ fn rules_and_explain_refuse_what_they_would_ignore() {
     assert_eq!(status, Some(0));
     assert!(out.lines().count() > 100, "{out}");
 }
+
+/// Off Windows `\` is a character of a file's name, not what separates its
+/// directories: `a\b.q` is reported as itself, not as `a/b.q`, a file that
+/// is not there for an annotation to land on (#2766). A baseline keeps it
+/// too, so a file of each name is told from the other.
+#[cfg(unix)]
+#[test]
+fn a_backslash_in_a_file_name_stays_one_in_every_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a\\b.q"), TWO).unwrap();
+    let (status, out, err) = run(d, &["--format", "github", "."]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(out.starts_with("::warning file=a\\b.q,line=1"), "{out}");
+    let (_, out, err) = run(d, &["--format", "sarif", "."]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+    let loc = &report["runs"][0]["results"][0]["locations"][0]["physicalLocation"];
+    assert_eq!(loc["artifactLocation"]["uri"], "a%5Cb.q", "{loc}");
+    let (status, _, err) = run(d, &["--write-baseline", "base.json", "."]);
+    assert_eq!(status, Some(0), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    assert!(written.contains(r#""path":"a\\b.q""#), "{written}");
+}

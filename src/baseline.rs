@@ -67,15 +67,27 @@ impl<'a> SourceLines<'a> {
     }
 }
 
+/// A path's text with `/` between its parts. Only Windows separates them
+/// with `\`: anywhere else it is a character of a file's name, and `a\b.q`
+/// read as `a/b.q` names another file, one that is not there (#2766).
+pub(crate) fn slashed(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 /// `path` relative to `root`, with `/`; as it is where it is not under it.
 /// Both are made absolute the same way: on Windows that adds the `\\?\`
 /// prefix, which one side alone would keep from matching the other.
 pub(crate) fn relative(root: &Path, path: &Path) -> String {
     let full = crate::config::absolute(path);
-    full.strip_prefix(crate::config::absolute(root))
-        .unwrap_or(&full)
-        .to_string_lossy()
-        .replace('\\', "/")
+    slashed(
+        full.strip_prefix(crate::config::absolute(root))
+            .unwrap_or(&full),
+    )
 }
 
 /// `path` as a baseline in `root` names it: relative, with `/`, and through
@@ -91,7 +103,7 @@ fn key_path(root: &Path, path: &Path) -> String {
         .take_while(|(a, b)| a == b)
         .count();
     if common == 0 {
-        return full.to_string_lossy().replace('\\', "/");
+        return slashed(&full);
     }
     let up = root.components().skip(common).map(|_| "..".to_string());
     let down = full
