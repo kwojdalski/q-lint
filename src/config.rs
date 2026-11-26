@@ -489,22 +489,28 @@ impl Policy {
     /// Whether `path` is excluded, by its configuration or by `--exclude`.
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
-        let full = absolute(path);
+        Ok(self.excluded_as(&settings, &absolute(path), true))
+    }
+
+    /// `excluded`, for the file `full` under `settings`; `named` is whether
+    /// the default list is asked about its own name.
+    fn excluded_as(&self, settings: &Settings, full: &Path, named: bool) -> bool {
         // The defaults match the path's own name only, not a directory above
         // it: `qlinter ~/dist/proj` lints proj, and a walk is what skips a
         // `dist` below it.
-        let default = settings.exclude.is_none()
+        let default = named
+            && settings.exclude.is_none()
             && full
                 .file_name()
                 .is_some_and(|n| DEFAULT_EXCLUDE.iter().any(|d| n == *d));
-        Ok(default
+        default
             || settings
                 .exclude
                 .iter()
                 .flatten()
                 .chain(&settings.extend_exclude)
                 .chain(&self.overrides.exclude)
-                .any(|glob| matches(&full, glob)))
+                .any(|glob| matches(full, glob))
     }
 
     /// `excluded`, for a path named on the command line with
@@ -514,12 +520,15 @@ impl Policy {
     /// skips it, as the walk would (#415), from whatever directory it runs
     /// in (#801).
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
-        if self.excluded(path)? {
-            return Ok(true);
-        }
         let settings = self.settings(path)?;
         let full = absolute(path);
         let root = self.project_root(&settings, &full)?;
+        // The project's top is not a directory of the project, whatever it
+        // is called: `qlinter --force-exclude .` in a checkout named
+        // `target` linted nothing, and passed (#2874).
+        if self.excluded_as(&settings, &full, full != root) {
+            return Ok(true);
+        }
         // A name pattern names a directory at any depth, and the walk asks
         // about each directory before entering it - so `gen` skips
         // `../other/gen/f.q` in a walk of `../other`. `matches` sees a

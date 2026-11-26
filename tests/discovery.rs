@@ -1329,6 +1329,38 @@ fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
     );
 }
 
+/// The project's top is not one of its directories, whatever it is called:
+/// in a checkout named `target`, `--force-exclude .` took the directory's
+/// own name for a default exclusion, linted nothing and passed, while the
+/// same file named there was linted (#2874).
+#[test]
+fn force_exclude_does_not_read_the_project_roots_own_name_as_a_default_directory() {
+    let repo = Repo::new();
+    repo.write("fe/target/a.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    for path in ["a.q", "."] {
+        assert_eq!(
+            repo.codes(
+                "fe/target",
+                &[&style[..], &["--force-exclude", path]].concat()
+            ),
+            ["QF016"],
+            "{path}"
+        );
+    }
+    // From above it, `target` is a directory of the project, as in a walk.
+    assert_eq!(
+        repo.codes("fe", &[&style[..], &["--force-exclude", "target"]].concat()),
+        Vec::<String>::new()
+    );
+    // And so is one below a configuration's root.
+    repo.write("fe/qlinter.toml", "profile = \"style\"\n");
+    assert_eq!(
+        repo.codes("fe/target", &["--force-exclude", "."]),
+        Vec::<String>::new()
+    );
+}
+
 #[test]
 fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
     // `--exclude gen` is rooted at the cwd, here/; a walk of ../other skips
