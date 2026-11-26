@@ -3,7 +3,8 @@
 // its test file - `test_<name>.q` or `<name>_test.q` in the workspace, or a
 // new `tests/test_<name>.q` (beside the file when there is no `tests`
 // folder). It shows the stub and the file and asks first; an existing file
-// is only added to, at its end, as an edit that can be undone, and a new one
+// is only added to, at the end of what q reads of it, as an edit that can be
+// undone, and a new one
 // is never written over. `teststub.ts` has the rules. Nothing is registered
 // while q-lint.testStub.enable is off: the action is not offered and the
 // command refuses.
@@ -25,7 +26,8 @@ import {
   type TextDocument,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
-import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, type Target } from "./teststub";
+import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, unreadFrom, type Target } from "./teststub";
+import { isBlankLine } from "./statements";
 import { plainMessage } from "./history";
 import { assertWritableIn } from "./workspacewrite";
 
@@ -158,13 +160,21 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     const lines = text.split("\n");
     const ends = text === "" || text.endsWith("\n");
     const edit = new WorkspaceEdit();
-    const end = new Position(lines.length - 1, lines[lines.length - 1].length);
-    edit.insert(file.uri, end, `${ends ? "" : "\n"}\n${stub}`);
+    // Before the text q does not read - after the script's end, or in a
+    // block comment left open - where the test would never be defined (#2908).
+    const unread = unreadFrom(text);
+    const spaced = unread !== undefined && unread > 0 && !isBlankLine(lines[unread - 1]);
+    if (unread !== undefined) {
+      edit.insert(file.uri, new Position(unread, 0), `${spaced ? "\n" : ""}${stub}\n`);
+    } else {
+      const end = new Position(lines.length - 1, lines[lines.length - 1].length);
+      edit.insert(file.uri, end, `${ends ? "" : "\n"}\n${stub}`);
+    }
     if (!(await workspace.applyEdit(edit))) {
       void window.showErrorMessage(plainMessage(`q-lint: could not add the test to ${workspace.asRelativePath(file.uri)}.`));
       return false;
     }
-    stubLine = lines.length + (ends ? 0 : 1);
+    stubLine = unread !== undefined ? unread + (spaced ? 1 : 0) : lines.length + (ends ? 0 : 1);
   }
   const shown = await window.showTextDocument(file.uri);
   const select = new Position(stubLine, 0);

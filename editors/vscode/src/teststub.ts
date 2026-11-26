@@ -17,7 +17,7 @@
 import { definitions } from "./definitions";
 import { globLiteral } from "./globliteral";
 import { argumentNames, codeMask, lambdas } from "./paramcache";
-import { contextAfter, scriptCode, statements } from "./statements";
+import { blockDepth, contextAfter, scriptCode, statements, trimBlanks } from "./statements";
 
 export const TEST_STUB_COMMAND = "q-lint.generateTestStub";
 
@@ -116,6 +116,25 @@ export function stubText(target: Target, name: string, style: Style, context = "
 /// and a `system "d .ns"` is one (#2909).
 export function endContext(text: string): string {
   return contextAfter(scriptCode(text));
+}
+
+/// The 0-based line of `text`, a test file's, from which q reads none of
+/// it: the `\` alone that ends the script, or the `/` alone that opens a
+/// block comment nothing closes. A test added there, at the file's end, is
+/// never defined, so it goes before that line (#2908). Undefined when q
+/// reads the text to its end.
+export function unreadFrom(text: string): number | undefined {
+  let depth = 0;
+  let opened = 0;
+  for (const [i, raw] of text.split("\n").entries()) {
+    const line = trimBlanks(raw);
+    if (depth === 0 && line === "\\") {
+      return i;
+    }
+    opened = depth === 0 ? i : opened;
+    depth = blockDepth(depth, line);
+  }
+  return depth > 0 ? opened : undefined;
 }
 
 /// Where a new test file for `source` (a path) goes: `tests/test_<name>.q`
