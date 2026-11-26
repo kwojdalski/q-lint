@@ -193,11 +193,17 @@ export function unquotedName(text: string): string {
 }
 
 /// The name of the function at `offset` in `line`, dots and all, or
-/// undefined when the cursor is on no name.
+/// undefined when the cursor is on no name. A `_` after a number, or with
+/// no name before it, is q's drop and not the name's start: `f` is the name
+/// in `-1_f x` and in `x _f` (#2986).
 export function nameAt(line: string, offset: number): string | undefined {
   const before = /[.\w]*$/.exec(line.slice(0, offset))?.[0] ?? "";
   const after = /^[.\w]*/.exec(line.slice(offset))?.[0] ?? "";
-  const name = (before + after).replace(/\.+$/, "");
+  const dropped = /^(?:\.?\d[^_]*)?_+/.exec(before + after)?.[0].length ?? 0;
+  if (dropped > before.length) {
+    return undefined;
+  }
+  const name = (before + after).slice(dropped).replace(/\.+$/, "");
   return /^\.?[A-Za-z][\w]*(\.[A-Za-z][\w]*)*$/.test(name) ? name : undefined;
 }
 

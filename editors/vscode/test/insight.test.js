@@ -41,6 +41,25 @@ test("the name under the cursor, dots and all", () => {
   assert.strictEqual(fs.nameAt(".ns.", 2), ".ns");
 });
 
+// `[.\w]*` backwards took the drop and the number before it with the name:
+// `1_f` is no name, so the command asked for one instead of opening f.
+test("a name after a drop is the name under the cursor (#2986)", () => {
+  assert.strictEqual(fs.nameAt("-1_f x", 3), "f");
+  assert.strictEqual(fs.nameAt("-1_f x", 4), "f");
+  assert.strictEqual(fs.nameAt("count 2_g", 8), "g");
+  assert.strictEqual(fs.nameAt("x _f", 3), "f");
+  assert.strictEqual(fs.nameAt("2_.ns.h y", 5), ".ns.h");
+  assert.strictEqual(fs.nameAt("1e2_f_g", 6), "f_g");
+  assert.strictEqual(fs.nameAt("2000.01.01_days", 12), "days");
+  // On the number or the drop itself there is no name.
+  assert.strictEqual(fs.nameAt("-1_f x", 2), undefined);
+  assert.strictEqual(fs.nameAt("x _f", 2), undefined);
+  // An underscore inside a name is the name's.
+  assert.strictEqual(fs.nameAt("r:a_b 1", 3), "a_b");
+  assert.strictEqual(fs.nameAt("r:.ns.f_1[1]", 8), ".ns.f_1");
+  assert.strictEqual(fs.nameAt("x1_f", 3), "x1_f");
+});
+
 test("where a caller uses a name: as code, not in a string or a comment, or by its short name", () => {
   const at = (text, name) => fs.firstUse(text, name, charKinds(text));
   const doc = "/ g on p\n{[x] \"f\";fx:1; f x}";
