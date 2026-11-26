@@ -683,9 +683,6 @@ fn missing_from(
         // alike - only the symbol `` `select `` or a dotted `.q.select`
         // names it (#728).
         let after = unsym[m.end()..].trim_start_matches([' ', '\t']);
-        if after.starts_with('[') && m.as_str() != "select" {
-            continue;
-        }
         // A keyword with a point and a name after it is a name: q 5 loads
         // `exec.fill:{x}` under `\d .qf` and reads `exec.fill 1` (#2219).
         if unsym[m.end()..].starts_with('.')
@@ -701,6 +698,24 @@ fn missing_from(
             (sig.named && m.start() < sig.body)
                 || (after.starts_with(':') && !after.starts_with("::"))
         }) {
+            continue;
+        }
+        // Only select takes a row limit: q 5 refuses `exec[2] a from t`,
+        // `update[2] a:1 from t` and `delete[2] from t` with 'type, and an
+        // empty one, `exec[] a from t`, with '] (#2846).
+        if after.starts_with('[') && m.as_str() != "select" {
+            let empty = re!(r"^\[\s*\]").is_match(after);
+            out.push(Finding::at(
+                path,
+                source,
+                m.start(),
+                "QE007",
+                format!(
+                    "`{}` takes no row limit - only `select` does: q raises '{}",
+                    m.as_str(),
+                    if empty { "]" } else { "type" }
+                ),
+            ));
             continue;
         }
         let at = ends[&m.start()];
@@ -806,8 +821,9 @@ fn missing_from(
 /// still there. Each was refused by q 5's `parse`: a `,` with nothing after
 /// it before `from`, `by` or `where` or at the end (`select a, from t`,
 /// `select from t where a>1,`: ',, #2215); a row limit with no count
-/// (`select[] from t` ']', `select[;2] from t` ';', #2225) or with its sort
-/// first (`select[<a;2] from t`, 'length, #2226); and `delete distinct a`
+/// (`select[] from t` ']', `select[;2] from t` ';', #2225), with its sort
+/// first (`select[<a;2] from t`, 'length, #2226) or with a slot no sort
+/// (`select[2;a] from t`, 'length, #2847); and `delete distinct a`
 /// ('type), a `by` in a delete ('by) and a second `by` ('from, #2227).
 fn phrase_refusal(
     keyword: &str,
@@ -848,14 +864,36 @@ fn phrase_refusal(
         }
         if let Some(close) = close {
             let inner = &open[..close];
-            let first = inner[..slots.get(1).map_or(inner.len(), |&s| s - 1)].trim();
-            if first.is_empty() {
+            let slot = |i: usize| {
+                let end = slots.get(i + 1).map_or(inner.len(), |&s| s - 1);
+                inner[slots[i]..end].trim()
+            };
+            let sort = |i: usize| slot(i).is_empty() || slot(i).starts_with(['<', '>']);
+            let first = slot(0);
+            // With no count, q 5 reads a second slot that is no number and
+            // a third that is a sort: `select[;]`, `select[;>a]`,
+            // `select[;a]` and `select[;>a;>b]` parse, `select[;2]` is ';,
+            // and `select[;>a;b]` and `select[;;;]` 'length (#2848).
+            if first.is_empty() && (slots.len() == 1 || re!(r"^-?\.?\d").is_match(slot(1))) {
                 return Some("has a row limit with no count in it: q refuses it at parse");
             }
             if slots.len() == 2 && first.starts_with(['<', '>']) {
                 return Some(
                     "has its row limit's sort before its count: q raises 'length; write \
                      `select[n;<c]`",
+                );
+            }
+            // After a count only a sort, and nothing after that: q 5 refuses
+            // `select[2;a]`, `select[2;>a;]` and `select[2;>a;b]` with
+            // 'length (#2847).
+            if if first.is_empty() {
+                slots.len() > 3 || (slots.len() == 3 && !sort(2))
+            } else {
+                slots.len() > 2 || (slots.len() == 2 && !sort(1))
+            } {
+                return Some(
+                    "has a row limit q cannot read: after its count comes only a sort, `<` or \
+                     `>` and a column, and nothing after that; q raises 'length",
                 );
             }
         }
@@ -1449,7 +1487,7 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             }
             if open.is_some_and(|o| {
                 before.as_bytes()[o] == b'['
-                    && slots <= 1
+                    && slots <= 2
                     && re!(r"(?:^|[^A-Za-z0-9.])select\s*$").is_match(&before[..o])
             }) {
                 continue;

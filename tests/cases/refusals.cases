@@ -2467,3 +2467,26 @@ e:t _0:30
 a:-1:30
 b:t -1:30
 c:t_1:30
+
+=== QE007 profile: general | a row limit on exec, update or delete, which only select takes (#2846; q 5: 'type, and '] for an empty one)
+a:exec[2] a from t
+b:update[2] a:1 from t
+c:delete[2] from t
+d:exec[] a from t
+
+=== QE007 profile: general | a select row limit with a slot after its count that is no sort, or a third slot (#2847; q 5: 'length)
+a:select[2;a] from t
+b:select[2;`a] from t
+c:select[2;>a;] from t
+d:select[2;>a;b] from t
+e:select[2;;] from t
+f:select[2;>a;>b] from t
+
+=== clean profile: general | while with no count a sort, an empty slot or a name parses (#2848; q 5 parses each)
+a:select[;>a] from t
+b:select[;] from t
+c:select[;a] from t
+d:select[;;] from t
+e:select[;>a;>b] from t
+f:select[2;] from t
+g:select[2;>a] from t
