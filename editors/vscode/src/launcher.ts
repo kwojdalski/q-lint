@@ -168,9 +168,9 @@ export function commandText(plan: Pick<Plan, "command" | "args">): string {
 }
 
 /// The arguments as Set Launch Definition's Arguments box shows them: one
-/// with a space, or empty, in double quotes.
+/// with a space or a single quote, or empty, in double quotes.
 export function argsText(args: string[]): string {
-  return args.map((a) => (/\s/.test(a) || a === "" ? `"${a}"` : a)).join(" ");
+  return args.map((a) => (/[\s']/.test(a) || a === "" ? `"${a}"` : a)).join(" ");
 }
 
 /// The arguments the box's `text` gives: `args` as they were when it is the

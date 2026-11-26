@@ -151,6 +151,10 @@ test("a definition is read from the saved list and an import, never from a disco
   assert.deepStrictEqual(splitArgs('-name="a b" -x "" c'), ["-name=a b", "-x", "", "c"]);
   assert.deepStrictEqual(splitArgs('  a"b c"d  e" '), ["ab cd", 'e"']);
   assert.deepStrictEqual(splitArgs(""), []);
+  // A pair of single quotes groups too, and each kind keeps the other (#3111).
+  assert.deepStrictEqual(splitArgs("-load 'my dir/rdb.q' -x 'c d'"), ["-load", "my dir/rdb.q", "-x", "c d"]);
+  assert.deepStrictEqual(splitArgs(`-e 'say "hi"' "it's" -n='a b' '' don't`), ["-e", 'say "hi"', "it's", "-n=a b", "", "don't"]);
+  assert.deepStrictEqual(launchOf({ args: "-load 'my dir/rdb.q'" }), { args: ["-load", "my dir/rdb.q"] });
   assert.deepStrictEqual(launchOf({}), {});
   assert.strictEqual(launchOf("q"), undefined);
 });
@@ -414,6 +418,9 @@ test("the Arguments box gives back the arguments it was filled with (#1430)", ()
   // An empty argument is shown quoted, so splitting the box keeps it.
   assert.strictEqual(argsText(["-e", "", "a b"]), '-e "" "a b"');
   assert.deepStrictEqual(argsFromText('-e "" "a b" -x', ["-e", "", "a b"]), ["-e", "", "a b", "-x"]);
+  // One with a single quote too, now that a pair of them groups (#3111).
+  assert.strictEqual(argsText(["it's", "that's"]), `"it's" "that's"`);
+  assert.deepStrictEqual(argsFromText(`"it's" "that's" -x`, ["it's", "that's"]), ["it's", "that's", "-x"]);
 });
 
 test("Stop Process ends what a wrapper script started too, and frees its port (#1672)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {

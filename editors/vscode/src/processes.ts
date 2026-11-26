@@ -343,8 +343,10 @@ export function launchOf(value: unknown): Launch | undefined {
 
 /// Arguments as typed in one box: split at spaces, a pair of double quotes
 /// keeping what is between them together, as a shell does: anywhere in a
-/// word (`-name="a b"` is `-name=a b`, #1695), and taken off. A quote with
-/// no pair is kept as it is.
+/// word (`-name="a b"` is `-name=a b`, #1695), and taken off. A pair of
+/// single quotes does the same, a double quote between them kept: `-load
+/// 'my dir/rdb.q'` was three arguments, quotes and all (#3111). A quote
+/// with no pair is kept as it is.
 export function splitArgs(text: string): string[] {
   const words: string[] = [];
   let word: string | undefined;
@@ -355,8 +357,8 @@ export function splitArgs(text: string): string[] {
         words.push(word);
         word = undefined;
       }
-    } else if (c === '"' && text.indexOf('"', i + 1) !== -1) {
-      const end = text.indexOf('"', i + 1);
+    } else if ((c === '"' || c === "'") && text.indexOf(c, i + 1) !== -1) {
+      const end = text.indexOf(c, i + 1);
       word = (word ?? "") + text.slice(i + 1, end);
       i = end;
     } else {
