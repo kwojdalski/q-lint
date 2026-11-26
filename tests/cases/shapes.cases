@@ -1677,6 +1677,19 @@ a:{$[null getenv`HOME;1;0]}
 b:{if[null[getenv`X]; :0]; 1}
 d:{if[null getenv x; :0]; 1}
 
+=== QT036 | null of a local that getenv alone assigns, as a condition (q 5: 'type from each, the variable set or not; #2744)
+f:{e:getenv`HOME; if[null e; :`unset]; `set}
+g:{e:getenv`HOME; $[not null e;`set;`unset]}
+h:{e:getenv`A; n:0; while[null e; e:getenv`B; n+:1]; n}
+
+=== clean | a local that holds something else as well, one item of it, the vector put to use, and another lambda's name (#2744)
+f:{e:getenv`HOME; e:`$e; if[null e; :`unset]; `set}
+g:{e:getenv`HOME; if[null e 0; :`unset]; `set}
+h:{e:getenv`HOME; if[all null e; :`unset]; `set}
+i:{e:getenv`HOME; r:where null e; r}
+j:{e:getenv`HOME; (e;{[e] if[null e; :`unset]; `set}`a)}
+k:{[e] if[null e; :0]; e:getenv`HOME; e}
+
 === clean | "" match, count, or all and any reducing the vector (#1143)
 a:""~getenv`X
 b:0=count getenv`X

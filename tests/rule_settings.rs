@@ -103,6 +103,24 @@ fn qx002_name_pattern_replaces_the_names_read_as_credentials() {
     assert!(found[0].2.contains("`dbcred`"), "{found:?}");
 }
 
+/// A pattern that does not end the name leaves room for what the name
+/// says after its credential word, and only that makes it a message or a
+/// place: a word before it, or letters inside another word, do not (#2736).
+#[test]
+fn qx002_reads_what_a_name_says_after_its_credential_word() {
+    let dir = project("[lint.rules.QX002]\nname-pattern = \"password|token\"\n");
+    let source = "passwordPrompt:\"Enter it\"\ntoken_url:\"http://x\"\ntokenNames:\"ab\"\n\
+                  passwordProfile:\"hunter2\"\nfilePassword:\"hunter2\"\n";
+    fs::write(dir.path().join("a.q"), source).unwrap();
+    let found: Vec<_> = findings(dir.path())
+        .into_iter()
+        .filter(|f| f.0 == "QX002")
+        .collect();
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].2.contains("`passwordProfile`"), "{found:?}");
+    assert!(found[1].2.contains("`filePassword`"), "{found:?}");
+}
+
 #[test]
 fn an_unknown_option_or_a_wrong_value_is_a_configuration_error() {
     for (config, said) in [

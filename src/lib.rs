@@ -1646,8 +1646,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             )
         }
         // `reverse asc x` is `desc x` for a list or table, but not for a
-        // dictionary with tied values - q 5 orders the tied keys
-        // differently - so only in the editor.
+        // dictionary or keyed table with tied values - q 5 orders the tied
+        // keys differently, as the finding says (#2739) - so only in the
+        // editor.
         "QR001" => {
             let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
                 .captures(source.get(start..)?)?;
@@ -2097,8 +2098,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // only on request.
         // The finding sits on the clock it names.
         "QP003" => {
-            let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
-            let clock = utc_clock(m.as_str());
+            let code = v.code.get(start..)?;
+            // `ltime .z.p` goes whole, for the clock it was applied to.
+            let (m, local) = match LTIME_CLOCK.captures(code) {
+                Some(c) => (c.get(0)?, ltime_clock(&c)),
+                None => {
+                    let m = re!(r"^\.z\.[PTNZD]\b").find(code)?;
+                    (m, m.as_str())
+                }
+            };
+            let clock = utc_clock(local);
             (
                 &source[start..start + m.end()],
                 clock.clone().into(),
@@ -2614,20 +2623,26 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             let symbols = unsymbolled(&v.code[line_start..line_end]);
             let symbols = &symbols[start - line_start..];
             let in_code = |m: &regex::Match| {
-                if m.as_str().starts_with('"') {
-                    code.as_bytes()[m.end() - 1] == b'$'
-                } else {
-                    code[m.range()] == *m.as_str()
-                        && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
-                            || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
-                }
+                code_around_string(code, m)
+                    && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
+                        || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
             };
-            let swaps: [(&regex::Regex, &str); 5] = [
+            let swaps: [(&regex::Regex, &str); 12] = [
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
                 (re!(r"\b15h(\s*\$)"), "12h$1"),
-                (re!(r"(^|[^\w.])(-?0[NW])z\b"), "$1${2}p"),
-                (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
+                // The type in parentheses, and as `$`'s first argument (#2720).
+                (re!(r"(\(\s*)`datetime(\s*\)\s*\$)"), "${1}`timestamp$2"),
+                (re!(r#"(\(\s*)"z"(\s*\)\s*\$)"#), "${1}\"p\"$2"),
+                (re!(r"(\(\s*-?)15h(\s*\)\s*\$)"), "${1}12h$2"),
+                (re!(r"(\$\[\s*)`datetime(\s*;)"), "${1}`timestamp$2"),
+                (re!(r#"(\$\[\s*)"z"(\s*;)"#), "${1}\"p\"$2"),
+                (re!(r"(\$\[\s*-?)15h(\s*;)"), "${1}12h$2"),
+                (re!(r"(^|[^\w.])(-?0[NnWw])z\b"), "$1${2}p"),
+                // The `z` goes with the `T`: left behind it keeps the
+                // literal a datetime, `2024.01.01D12:00z` (q 5: -15h, #2743).
+                (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d[\d:.]*)z?"), "${1}D$2"),
+                (re!(r"\b(\d{4}\.\d{2}\.\d{2}D\d[\d:.]*)z\b"), "$1"),
             ];
             let (m, regex, to) = swaps
                 .iter()
@@ -2640,10 +2655,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             // So only before a date, datetime or timestamp literal or the
             // clock's own, or the empty list, which a table's schema casts;
             // what a name holds is not known here.
-            if m.as_str().ends_with('$')
+            if m.as_str().ends_with(['$', ';'])
                 && !re!(r"^[ \t]*(?:-?\d{4}\.\d{2}\.\d{2}(?:[TD]\d|[^\w.:]|$)|\.z\.[pPzZdD](?:[^\w.]|$)|\([ \t]*\))")
                     .is_match(&line[m.end()..])
             {
+                return None;
+            }
+            if m.as_str().starts_with('$') && !cast_brackets(&v.code, start + m.start()) {
                 return None;
             }
             begin = start + m.start();
@@ -3221,6 +3239,24 @@ fn char_atom(s: &str) -> Option<usize> {
     (q_bytes(&m[1]).len() == 1).then(|| m.get(0).unwrap().end())
 }
 
+/// Whether a match is code but for the one string it may hold: `"z"$` and
+/// `$["z";` are casts where everything around the type string is code.
+/// `code` has strings blanked, and the match was made where they are kept.
+fn code_around_string(code: &str, m: &regex::Match) -> bool {
+    let s = m.as_str();
+    let (open, close) = match (s.find('"'), s.rfind('"')) {
+        (Some(open), Some(close)) if open < close => (open, close + 1),
+        _ => (0, 0),
+    };
+    code[m.start()..m.start() + open] == s[..open] && code[m.start() + close..m.end()] == s[close..]
+}
+
+/// Whether the `$[` at `at` of `code` is a cast, `$[type;value]`, and no
+/// conditional, which has three slots or more: q 5 `$[15h;1;2]` is 1.
+fn cast_brackets(code: &str, at: usize) -> bool {
+    matching(code, at + 1, b'[', b']').is_some_and(|end| slots(&code[at + 2..end - 1]).len() == 2)
+}
+
 /// The UTC clock QP003 asks for in place of a local one: the same clock in
 /// lower case, but a timestamp for the local datetime `.z.Z`, since `.z.z`
 /// is the legacy datetime QP002 reports in the same profile (#519).
@@ -3229,6 +3265,21 @@ fn utc_clock(local: &str) -> String {
         ".z.p".into()
     } else {
         local.to_ascii_lowercase()
+    }
+}
+
+/// `ltime` applied to the UTC clock, juxtaposed or in brackets, where a
+/// finding starts.
+static LTIME_CLOCK: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^ltime(?:[ \t]+(\.z\.[pz])\b|[ \t]*\[[ \t]*(\.z\.[pz])[ \t]*\])").unwrap()
+});
+
+/// The local clock `ltime` of a UTC one is: q 5 `ltime .z.p` is `.z.P`, a
+/// timestamp, and `ltime .z.z` is `.z.Z`, a datetime (#2722).
+fn ltime_clock(c: &regex::Captures) -> &'static str {
+    match c.get(1).or(c.get(2)).map(|m| m.as_str()) {
+        Some(".z.z") => ".z.Z",
+        _ => ".z.P",
     }
 }
 
@@ -6997,8 +7048,12 @@ fn lint_rules(
         //
         // `{[t;x] ...}` makes `x` the second argument, and every q reader
         // arrives expecting it to be the first.
+        //
+        // A typed or filtered slot binds its name all the same: q 5 runs
+        // ``{[a;x:`j] x}[1;2]`` as 2 (#2725).
         for (i, slot) in sig.slots.iter().enumerate() {
-            if let Some(expected) = ["x", "y", "z"].iter().position(|n| n == slot)
+            let slot = typed_at(slot).map_or(*slot, |at| slot[..at].trim());
+            if let Some(expected) = ["x", "y", "z"].iter().position(|&n| n == slot)
                 && expected != i
             {
                 add(
@@ -9497,11 +9552,19 @@ fn lint_rules(
         // whose documentation is elsewhere - here. Lambdas sharing a
         // parameter list are common (KX ml's many `[config]` functions), and
         // each documented in place is not what a stray run describes.
+        //
+        // And only one a name at the left margin is given, which is what a
+        // block can sit above: an anonymous `{[t;c] ...}` inside another
+        // function's body has names in common with half the stale blocks
+        // there are, and documents none of them (#2729).
         let (sets, repeating) = undocumented.get_or_insert_with(|| {
             let mut found = Undocumented::default();
             for (b, _) in code.match_indices('{') {
-                let other = signature(code, source, b);
                 let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
+                if !re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*[ \t]*::?[ \t]*$").is_match(&code[at..b]) {
+                    continue;
+                }
+                let other = signature(code, source, b);
                 let documented = source[..at]
                     .lines()
                     .rev()
@@ -9546,7 +9609,26 @@ fn lint_rules(
             continue;
         }
         let sig = signature(code, source, at);
-        if !sig.named || sig.slots.is_empty() {
+        // Without a parameter list the lambda takes x, y and z up to the
+        // highest its body reads, and a block naming anything else is as
+        // stale above `{til x}` as above `{[x] til x}` (#2728).
+        if !sig.named {
+            let end = matching(code, at, b'{', b'}').unwrap_or(code.len());
+            let takes = &["x", "y", "z"][..lambda_rank(code, source, at, end).clamp(1, 3)];
+            if !takes.contains(&name.as_str()) {
+                add(
+                    name.start(),
+                    "QS007",
+                    format!(
+                        "`@param {}` names a parameter this lambda does not take; with no \
+                         parameter list it takes {takes:?}",
+                        name.as_str(),
+                    ),
+                );
+            }
+            continue;
+        }
+        if sig.slots.is_empty() {
             continue;
         }
         // A typed or pattern slot binds names of its own: `a:`j` binds a,
@@ -10100,13 +10182,16 @@ fn lint_rules(
             // So is one held in parentheses of its own: `(1.5)(2)` is 'type,
             // and with both pairs gone it would be the vector `1.5 2`. The
             // first pair alone can go - `1.5(2)` is the same application -
-            // so only the second is left (#516).
+            // so only the second is left (#516). And after a blank and a
+            // minus they keep it a subtraction: `x -(1)` is `x-1`, where
+            // `x -1` applies `x` to -1 and `3 -1` is a vector (#2724).
             let numeric = m[1]
                 .trim()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit());
             if numeric
                 && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$|\(\s*-?\d[A-Za-z0-9.:]*\s*\)$")
                     .is_match(line[..whole.start()].trim_end())
+                    || re!(r"\s-$").is_match(&line[..whole.start()])
                     || line[whole.end()..]
                         .trim_start_matches([' ', '\t'])
                         .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.'))
@@ -10139,19 +10224,42 @@ fn lint_rules(
         // And at the start of each statement after a `;` or a lambda's `{`:
         // `x:1;my_var:2` and `f:{l:1;l}` assign as the same lines broken
         // after the `;` do (#662).
+        // And each name after it in a chain, and each a pattern binds: q 5
+        // runs `a:my_var:1` and `(l;m):3 4` as the assignments they are
+        // (#2730).
+        let mut targets: Vec<(usize, &str)> = vec![];
         for m in re!(r"(?m)(?:^|[;{])[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures_iter(line) {
-            let at = offset + m.get(1).unwrap().start();
-            if line[m.get(0).unwrap().end()..].starts_with([':', '='])
-                || in_parens[at]
-                || in_qsql_phrase(code, at)
-            {
-                continue;
+            let (mut name, mut end) = (m.get(1).unwrap().range(), m.get(0).unwrap().end());
+            loop {
+                let at = offset + name.start;
+                if line[end..].starts_with([':', '=']) || in_parens[at] || in_qsql_phrase(code, at)
+                {
+                    break;
+                }
+                targets.push((name.start, &line[name]));
+                let Some(next) =
+                    re!(r"^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures(&line[end..])
+                else {
+                    break;
+                };
+                let next_name = next.get(1).unwrap();
+                name = end + next_name.start()..end + next_name.end();
+                end += next.get(0).unwrap().end();
             }
-            let target = m.get(1).unwrap();
-            let text = target.as_str();
+        }
+        for (open, close, _) in semantics::pattern_targets(line) {
+            if !in_qsql_phrase(code, offset + open) {
+                targets.extend(
+                    pattern_names(&line[open..=close])
+                        .into_iter()
+                        .map(|name| (name.as_ptr() as usize - line.as_ptr() as usize, name)),
+                );
+            }
+        }
+        for (start, text) in targets {
             if text.contains('_') {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS001",
                     format!("`{text}` contains `_`, which is also the drop operator"),
                 );
@@ -10166,7 +10274,7 @@ fn lint_rules(
                 && !text.starts_with('.')
             {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS002",
                     format!(
                         "`{text}` has a dot but does not start with one, so it reads as a namespace it is not"
@@ -10175,7 +10283,7 @@ fn lint_rules(
             }
             if text == "l" {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS003",
                     "`l` is hard to tell from `1` in many fonts".into(),
                 );
@@ -10866,9 +10974,18 @@ fn lint_rules(
             // first is the one pattern whose string is the point - `"z"$`.
             let in_code = |m: &regex::Match| line[m.range()] == *m.as_str();
             // A symbol may spell a datetime and hold none: `` `2020.01.01T10 ``
-            // is -11h in q 5 (#409). Only the literal's own spelling: a
-            // symbol naming the clock, `` `.z.z ``, is there to be looked up.
+            // is -11h in q 5 (#409). One naming the clock is data as well,
+            // `` `a`.z.z `` and `` (`.z.Z;"local") ``, and reads it only where
+            // `get` or `value` looks the name up (#2721).
             let symbols = unsymbolled(line);
+            let in_symbol = |at: usize| symbols.as_bytes()[at] != line.as_bytes()[at];
+            let looked_up = |at: usize| {
+                let lead = line[..at - 1].trim_end_matches([' ', '\t']);
+                let lead = lead.strip_suffix('[').unwrap_or(lead);
+                line.as_bytes()[at - 1] == b'`'
+                    && !line[at + 4..].starts_with('`')
+                    && re!(r"(?:^|[^\w.`])(?:get|value)$").is_match(lead)
+            };
             // A file handle names a file whatever it spells: `` `:.z.P `` and
             // `` `:log/.z.Z `` read no clock (#651).
             let paths: Vec<_> = re!(r"`:[A-Za-z0-9_.:/]*")
@@ -10880,7 +10997,10 @@ fn lint_rules(
                 in_code(m)
                     && !in_path(m.start())
                     && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
-                        || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
+                        || !in_symbol(m.start()))
+                    && (!(m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z"))
+                        || !in_symbol(m.end() - 4)
+                        || looked_up(m.end() - 4))
             };
             // Reported at the first of them, which is where the fix starts.
             // Any cast whose type string holds a `z` or `Z`: q 5 `"Z"$"2023.01.01"`
@@ -10894,8 +11014,13 @@ fn lint_rules(
                     [
                         re!(r"`datetime\s*\$"),
                         re!(r"\b15h\s*\$"),
-                        re!(r"(?:^|[^\w.])-?0[NW]z\b"),
-                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
+                        // In either case: q 5 reads `0nz` and `0wz` as `0Nz`
+                        // and `0Wz` (#2719).
+                        re!(r"(?:^|[^\w.])-?0[NnWw]z\b"),
+                        // A timestamp's spelling with a `z` after it is a
+                        // datetime still: q 5 `type 2024.01.01D12:00:00.000z`
+                        // is -15h (#2743).
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b|D[\d:.]*z\b)"),
                         // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
                         // and `.my.z.z` is one dotted name of the file's (#510).
                         re!(r"(?:^|[^\w.])\.z\.[zZ]\b"),
@@ -10903,21 +11028,47 @@ fn lint_rules(
                     .iter()
                     .filter_map(|regex| regex.find_iter(literals).find(in_code)),
                 )
+                // The type in parentheses, or as `$`'s first argument, casts
+                // the same: q 5 `(15h)$x`, `` (`datetime)$x ``, `$["z";x]` and
+                // `` $[`datetime;x] `` are each -15h (#2720).
+                .chain(
+                    [
+                        re!(r#"\(\s*(?:"[A-Za-z ]*[zZ][A-Za-z ]*"|`datetime|-?15h)\s*\)\s*\$"#),
+                        re!(r#"\$\[\s*(?:"[A-Za-z ]*[zZ][A-Za-z ]*"|`datetime|-?15h)\s*;"#),
+                    ]
+                    .iter()
+                    .filter_map(|regex| {
+                        regex.find_iter(literals).find(|m| {
+                            code_around_string(line, m)
+                                && (!m.as_str().starts_with('$') || cast_brackets(line, m.start()))
+                        })
+                    }),
+                )
+                // Digits and a `z` alone: q 5 reads `20240101z` as that
+                // date's datetime, nine digits or more as seconds from 1970,
+                // and so a fraction ten characters long or more,
+                // `20240101.5z` and `1.2345678z` - each -15h. A shorter one
+                // it refuses, which is QE010's (#2719).
+                .chain(re!(r"\b\d+(?:\.\d*)?z\b").find_iter(literals).find(|m| {
+                    in_code(m)
+                        && !line[..m.start()].ends_with('.')
+                        && m.len() >= 9 + usize::from(m.as_str().contains('.'))
+                }))
                 // The null's pattern takes in the byte before it.
-                .map(|m| match m.as_str().find("0N").or(m.as_str().find("0W")) {
-                    Some(at) if m.as_str().ends_with('z') => {
-                        m.start() + at - usize::from(m.as_str()[..at].ends_with('-'))
-                    }
-                    // The `"z"` cast on its `$`: the string is not code, and
-                    // a fix only starts in code.
-                    _ if m.as_str().starts_with('"') => m.end() - 1,
-                    // The clock's pattern takes in the byte before it too;
-                    // a date's `z`, `2023.01.01z`, is no clock (#501).
-                    _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
-                        m.end() - 4
-                    }
-                    _ => m.start(),
-                })
+                .map(
+                    |m| match re!(r"0[NnWw]z$").find(m.as_str()).map(|n| n.start()) {
+                        Some(at) => m.start() + at - usize::from(m.as_str()[..at].ends_with('-')),
+                        // The `"z"` cast on its `$`: the string is not code, and
+                        // a fix only starts in code.
+                        _ if m.as_str().starts_with('"') => m.end() - 1,
+                        // The clock's pattern takes in the byte before it too;
+                        // a date's `z`, `2023.01.01z`, is no clock (#501).
+                        _ if m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z") => {
+                            m.end() - 4
+                        }
+                        _ => m.start(),
+                    },
+                )
                 .min()
             {
                 add(offset + at, "QP002", "Legacy datetime value or cast".into());
@@ -10930,6 +11081,8 @@ fn lint_rules(
                         .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
                 })
                 .filter(|m| line[m.range()] == *m.as_str() && !in_path(m.start()))
+                // Nor does a symbol, whose fix would rename the data (#2721).
+                .filter(|m| !in_symbol(m.start()))
             {
                 let utc = utc_clock(m.as_str());
                 add(
@@ -10939,6 +11092,25 @@ fn lint_rules(
                         "`{}` is the local wall clock; the convention is UTC `{}`",
                         m.as_str(),
                         utc
+                    ),
+                );
+            }
+            // `ltime` of the UTC clock is the local one by another name:
+            // q 5 `ltime .z.p` is `.z.P`, and `ltime .z.z` is `.z.Z` (#2722).
+            for at in line.match_indices("ltime").map(|(at, _)| at) {
+                let Some(c) = LTIME_CLOCK.captures(&line[at..]) else {
+                    continue;
+                };
+                if !boundary(line, at) || line[at + c[0].len()..].starts_with('.') {
+                    continue;
+                }
+                add(
+                    offset + at,
+                    "QP003",
+                    format!(
+                        "`{}` is the local wall clock; the convention is UTC `{}`",
+                        &c[0],
+                        utc_clock(ltime_clock(&c))
                     ),
                 );
             }

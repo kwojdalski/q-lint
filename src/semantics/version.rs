@@ -198,12 +198,20 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
     // which is QF002's (KDB-X refuses every call of `{[_] 1}` with 'match).
     for &(brace, open, body) in &signatures {
         let sig = crate::signature(code, source, brace);
-        if sig.slots.iter().any(|slot| {
+        if let Some(slot) = sig.slots.iter().find(|slot| {
             !slot.is_empty()
-                && *slot != "_"
+                && **slot != "_"
                 && !crate::is_param_name(slot)
                 && !crate::application(slot)
         }) {
+            // What the first such slot is, by its colon outside every
+            // bracket: `x:`j` is typed, `x:neg` filtered, and with none -
+            // `(a;b)`, `k!v`, `1` - the slot is a pattern (#2734).
+            let does = match crate::typed_at(slot) {
+                Some(at) if slot[at + 1..].trim_start().starts_with('`') => "types a parameter",
+                Some(_) => "filters a parameter",
+                None => "takes a pattern for a parameter",
+            };
             let close = code[..body].rfind(']').unwrap_or(open);
             out.push(Finding::at(
                 path,
@@ -211,7 +219,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 brace,
                 "QK003",
                 format!(
-                    "`{}` types or filters a parameter, which q runs from 4.1 on",
+                    "`{}` {does}, which q runs from 4.1 on",
                     first_line(&source[brace..=close])
                 ),
             ));
@@ -226,10 +234,16 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 let Some(close) = matching(code, i + 1, b'[', b']').map(|e| e - 1) else {
                     continue;
                 };
-                let after = code[close + 1..].trim_start_matches([' ', '\t']);
+                // The `)` may stand on a later line, after a comment the
+                // code view has blanked, but not at the left margin, where
+                // q starts another statement (#2742).
+                let after = code[close + 1..].trim_start();
+                let end = code.len() - after.len();
                 let inner = code[i + 2..close].trim();
-                if after.starts_with(')') && !inner.is_empty() {
-                    let end = close + 1 + (code[close + 1..].len() - after.len());
+                if after.starts_with(')')
+                    && !inner.is_empty()
+                    && !code[..end].ends_with(['\n', '\r'])
+                {
                     out.push(Finding::at(
                         path,
                         source,
@@ -260,6 +274,23 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                     format!("`{}` was removed in q 4.1", &code[i..i + 5]),
                 ));
             }
+            // The namespace indexed by the name reaches the function as
+            // the dotted name does: KDB-X gives null for `` .Q`Xf `` and
+            // `` .Q[`Cf] `` (#2733).
+            b'.' if code[i..].starts_with(".Q") && (i == 0 || !word(b[i - 1])) => {
+                if let Some(m) = re!(r"^\.Q[ \t]*(?:`|\[[ \t]*`)(Xf|Cf)").captures(&code[i..])
+                    && !code[i + m.get(0).unwrap().end()..]
+                        .starts_with(|c: char| word(c as u8) || c == ':')
+                {
+                    out.push(Finding::at(
+                        path,
+                        source,
+                        i,
+                        "QK005",
+                        format!("`.Q.{}` was removed in q 4.1", &m[1]),
+                    ));
+                }
+            }
             _ => {}
         }
     }
@@ -271,11 +302,21 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
 /// says so - read as the builtin. An older q has no such word, so for it
 /// the name is the file's own: one the file assigns, `use:5`, or binds as
 /// a parameter, `{[use] use+1}`, is no use of KDB-X's (KDB-X refuses both,
-/// 'assign and 'nyi, which QF004 and QF001 report for it).
+/// 'assign and 'nyi, which QF004 and QF001 report for it). The name is the
+/// file's own where q would read it so: everywhere for a global - assigned
+/// outside every lambda, or with `::` in one - and in the one lambda that
+/// takes it or assigns it for a local (#2731). A column is neither: one a
+/// table literal names, `([] use:1 2)`, or a query's phrase reads,
+/// `select use from t where use>0`, which an older q runs (#2732).
 fn kdbx_builtins(path: &str, code: &str, source: &str, out: &mut Vec<Finding>) {
     for builtin in crate::BUILTINS.iter().filter(|b| newer_builtin(&b.name)) {
         let word = builtin.name.as_str();
-        let found: Vec<usize> = code
+        // Whether the word at `at` is assigned, and with `::`.
+        let assigned = |at: usize| {
+            let rest = code[at + word.len()..].trim_start_matches([' ', '\t']);
+            rest.starts_with(':').then(|| rest.starts_with("::"))
+        };
+        let mut found: Vec<usize> = code
             .match_indices(word)
             .map(|(at, _)| at)
             .filter(|&at| {
@@ -285,16 +326,50 @@ fn kdbx_builtins(path: &str, code: &str, source: &str, out: &mut Vec<Finding>) {
                         .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
             })
             .collect();
-        let bound = found.iter().any(|&at| {
-            code[at + word.len()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(':')
-                || in_signature(code, at)
+        let columns = found
+            .iter()
+            .any(|&at| assigned(at).is_some())
+            .then(|| crate::table_columns_blanked(code));
+        found.retain(|&at| {
+            !columns.as_ref().is_some_and(|c| !c[at..].starts_with(word))
+                && !crate::in_qsql_phrase(code, at)
         });
-        if bound {
+        // The lambda each one stands directly in, by its brace.
+        let mut owners = Vec::with_capacity(found.len());
+        let mut braces = vec![];
+        for (i, c) in code.bytes().enumerate() {
+            if owners.len() == found.len() {
+                break;
+            }
+            if i == found[owners.len()] {
+                owners.push(braces.last().copied());
+            }
+            match c {
+                b'{' => braces.push(i),
+                b'}' => {
+                    braces.pop();
+                }
+                _ => {}
+            }
+        }
+        let binds = |at: usize| assigned(at).is_some() || in_signature(code, at);
+        let global = found
+            .iter()
+            .zip(&owners)
+            .any(|(&at, owner)| assigned(at).is_some_and(|double| double || owner.is_none()));
+        if global {
             continue;
         }
-        for at in found {
+        let locals: std::collections::HashSet<usize> = found
+            .iter()
+            .zip(&owners)
+            .filter(|&(&at, _)| binds(at))
+            .filter_map(|(_, owner)| *owner)
+            .collect();
+        for (at, owner) in found.iter().copied().zip(&owners) {
+            if owner.is_some_and(|brace| locals.contains(&brace)) {
+                continue;
+            }
             out.push(Finding::at(
                 path,
                 source,

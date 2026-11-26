@@ -998,6 +998,61 @@ fn string_equality_in_a_filter_names_the_row_count() {
     }
 }
 
+/// QV001 says more than "put it first" of a constraint with the column on the
+/// right: q 5 narrows the partitions only for one that starts with the
+/// column, and `where d=date, sym=s` measured slower than either order of
+/// `date=d` (#2741).
+#[test]
+fn a_partition_constraint_read_from_the_right_is_told_to_turn_round() {
+    for (source, advice) in [
+        (
+            "r:select from t where sym=`a, d=date",
+            "write the constraint with `date` on the left and put it first",
+        ),
+        (
+            "r:select from t where sym=`a, (date=d)",
+            "put the `date` constraint first",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QV001" && f.detail.ends_with(advice)),
+            "{source:?}: QV001 should end {advice}: {found:?}"
+        );
+    }
+}
+
+/// QR001 does not call the two the same outright: both sorts are stable,
+/// so with d:`a`b`c!1 1 2 q 5 gives `c`b`a for `key reverse asc d` and
+/// `c`a`b for `key desc d`, and 0b for `(reverse desc d)~asc d` (#2739).
+#[test]
+fn reverse_of_a_sort_is_the_other_sort_only_up_to_ties() {
+    for (source, claim) in [
+        (
+            "r:reverse asc d",
+            "`reverse asc` is `desc`, in one pass; on",
+        ),
+        (
+            "r:reverse desc d",
+            "`reverse desc` is `asc`, in one pass; on",
+        ),
+        (
+            "r:reverse asc d",
+            "differ in the order of keys whose values tie",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QR001" && f.detail.contains(claim)),
+            "{source:?}: QR001 should say {claim}: {found:?}"
+        );
+    }
+}
+
 /// QE009 names the iterator the way q 5's error does, whole: `b:,/:a` is
 /// '/:, `-':a` is ':, `f\:a` is '\:, and `{+/x}` is '/.
 #[test]
