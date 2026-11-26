@@ -1652,10 +1652,18 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
                 .captures(source.get(start..)?)?;
             let other = if &m[1] == "asc" { "desc" } else { "asc" };
+            // `asc` marks what it sorted: q 5 has `attr asc 3 1 2` as `` `s ``
+            // and `attr reverse desc 3 1 2` as `` ` ``, and a table's first
+            // column likewise. `desc` marks nothing, as `reverse asc` (#2800).
+            let attribute = if other == "asc" {
+                " (`asc` marks the result as sorted, which `reverse desc` does not)"
+            } else {
+                ""
+            };
             (
                 m.get(0)?.as_str(),
                 other.into(),
-                format!("Replace `reverse {}` with `{other}`", &m[1]).into(),
+                format!("Replace `reverse {}` with `{other}`{attribute}", &m[1]).into(),
                 false,
             )
         }

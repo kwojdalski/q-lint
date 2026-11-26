@@ -361,6 +361,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
     ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
     ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
+    ("QR001", "r:reverse desc 3 1 2", "r:asc 3 1 2", false),
     ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
     ("QR002", "r:count {x} each y", "r:count y", false),
     ("QR002", "r:{x}' y", "r:y", false),
@@ -2323,6 +2324,41 @@ fn a_datetime_cast_fix_keeps_the_instant() {
         return;
     };
     assert_eq!(values, ["1b", "1b", "1b", "0b"]);
+}
+
+/// `asc` marks what it sorted and `reverse desc` does not, so that rewrite
+/// changes what `attr` says of a list and of a table's first column: it is
+/// offered in the editor with a title that says so. `desc` for `reverse asc`
+/// has nothing to say - neither marks anything (#2800).
+#[test]
+fn asc_for_reverse_desc_says_the_result_is_marked_sorted() {
+    let title = |source: &str| {
+        let finding = selected(source, &["QR001"]).remove(0);
+        let fix = q_lint_rs::fix_for(&finding, source).unwrap();
+        assert!(!fix.batch_safe, "{source}");
+        fix.title.to_string()
+    };
+    assert!(
+        title("r:reverse desc 3 1 2").contains("marks the result as sorted"),
+        "{}",
+        title("r:reverse desc 3 1 2")
+    );
+    assert_eq!(
+        title("r:reverse asc 3 1 2"),
+        "Replace `reverse asc` with `desc`"
+    );
+    let scripts = [
+        "r:attr reverse desc 3 1 2 1",
+        "r:attr asc 3 1 2 1",
+        "r:(attr reverse asc 3 1 2 1;attr desc 3 1 2 1)",
+        "r:(reverse desc 3 1 2 1)~asc 3 1 2 1",
+        "r:(attr first flip reverse desc t;attr first flip asc t:([]a:3 1 2))",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["`", "`s", "``", "1b", "``s"]);
 }
 
 /// `asc scan x` iterates `asc` to convergence, so `reverse` reverses the
