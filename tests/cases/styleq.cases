@@ -125,9 +125,21 @@ unrelated:{[val] val}
 /// Adds two numbers.
 sum2:{[a;b] a+b}
 
-=== clean profile: styleq | a lambda with no declared signature has nothing to compare against
+=== clean profile: styleq | a lambda with no parameter list takes x, y and z up to the highest it reads
 //@param x The argument.
 implicit:{x+1}
+/ @param x one
+/ @param y the other
+both:{x+y}
+
+=== QS007 profile: styleq | and a block naming anything else is stale above it too (#2728)
+/ @param n how many
+m:{til x}
+
+=== QS007 profile: styleq | as is one naming an argument it does not read (#2728)
+/ @param x one
+/ @param y the other
+one:{x+1}
 
 === QS008 profile: styleq | `x` declared somewhere q would not put it
 f:{[t;x] t+x}

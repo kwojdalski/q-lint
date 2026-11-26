@@ -9455,7 +9455,26 @@ fn lint_rules(
             continue;
         }
         let sig = signature(code, source, at);
-        if !sig.named || sig.slots.is_empty() {
+        // Without a parameter list the lambda takes x, y and z up to the
+        // highest its body reads, and a block naming anything else is as
+        // stale above `{til x}` as above `{[x] til x}` (#2728).
+        if !sig.named {
+            let end = matching(code, at, b'{', b'}').unwrap_or(code.len());
+            let takes = &["x", "y", "z"][..lambda_rank(code, source, at, end).clamp(1, 3)];
+            if !takes.contains(&name.as_str()) {
+                add(
+                    name.start(),
+                    "QS007",
+                    format!(
+                        "`@param {}` names a parameter this lambda does not take; with no \
+                         parameter list it takes {takes:?}",
+                        name.as_str(),
+                    ),
+                );
+            }
+            continue;
+        }
+        if sig.slots.is_empty() {
             continue;
         }
         // A typed or pattern slot binds names of its own: `a:`j` binds a,
