@@ -6,7 +6,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
-const { plainMessage } = require("../out/history.js");
+const { plainMessage, terminalText } = require("../out/history.js");
 
 // VS Code's own pattern for a link in a notification (vs/base/common/linkedText.ts).
 const LINK = /\[([^\]]+)\]\(((?:https?:\/\/|command:|file:)[^)\s]+)(?: (["'])(.+?)(\3))?\)/gi;
@@ -94,4 +94,8 @@ test("every progress notification's title and message pass through plainMessage 
     visit(sf);
   }
   assert.deepStrictEqual(found, []);
+});
+
+test("text for a test run's output terminal ends lines in CRLF and shows control characters, not runs them (#2661)", () => {
+  assert.strictEqual(terminalText("a\nb\r\nc\u001b[2J\td\u007f\u0007"), "a\r\nb\r\nc\u241b[2J\td\u2421\u2407");
 });

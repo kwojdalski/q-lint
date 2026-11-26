@@ -76,7 +76,7 @@ import {
   type ServerTest,
   type TestMode,
 } from "./testing";
-import { plainMessage } from "./history";
+import { plainMessage, terminalText } from "./history";
 
 export { RERUN_FAILED } from "./testing";
 export const TEST_CONTROLLER = "q-lint.tests";
@@ -469,7 +469,7 @@ class QTests {
     // Every call below goes to `process` and no other: a run does not
     // follow a connection made while it is under way (#1283).
     const covering = coverage ? await this.coverStart(run, process).catch((error: unknown) => {
-      run.appendOutput(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}\r\n`);
+      run.appendOutput(`${terminalText(`Coverage not counted: ${error instanceof Error ? error.message : String(error)}`)}\r\n`);
       return undefined;
     }) : undefined;
     const outcome = (item: TestItem, state: TestOutcome["state"], message?: string): void => {
@@ -530,7 +530,7 @@ class QTests {
       for (const row of rows) {
         const done = await send([k4Statement(row)], "run");
         if (done !== undefined && !done.value.passed) {
-          run.appendOutput(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}\r\n`);
+          run.appendOutput(`${terminalText(`${row.action} (line ${row.line + 1}) failed: ${done.value.text}`)}\r\n`);
         }
       }
     };
@@ -660,7 +660,7 @@ class QTests {
       watches.forEach((w) => w?.dispose());
       if (covering !== undefined && !stopped) {
         await this.coverEnd(run, covering, process).catch((error: unknown) =>
-          run.appendOutput(`Coverage not read: ${error instanceof Error ? error.message : String(error)}\r\n`),
+          run.appendOutput(`${terminalText(`Coverage not read: ${error instanceof Error ? error.message : String(error)}`)}\r\n`),
         );
       }
       run.end();
@@ -790,7 +790,7 @@ class QTests {
       }
       sent = plan.names;
       const statuses = readInstalled(await connection.call(install, plan.names, plan.was, plan.src, plan.probes.length), plan.names.length);
-      statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`Not instrumented, ${plan.names[i]}: ${status}\r\n`));
+      statuses.forEach((status, i) => status !== "ok" && run.appendOutput(`${terminalText(`Not instrumented, ${plan.names[i]}: ${status}`)}\r\n`));
       return { plan, installed: new Set(plan.names.filter((_, i) => statuses[i] === "ok")) };
     }, "ask", label, undefined, true).catch(async (error: unknown) => {
       if (sent !== undefined) {

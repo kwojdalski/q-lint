@@ -122,3 +122,14 @@ export function iconsEscaped(text: string): string {
 export function plainMessage(text: string): string {
   return text.replace(/\]\(/g, "]\u200b(");
 }
+
+/// `text` as a test run's output terminal shows it as written (#2661): it
+/// wants CRLF line ends, and runs ESC and other control characters, so
+/// each line end becomes CRLF and every other C0 control but tab, and DEL, is shown
+/// as its Control Pictures symbol (ESC as U+241B).
+export function terminalText(text: string): string {
+  return text
+    .replace(/\r?\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, (c) => String.fromCharCode(c === "\u007f" ? 0x2421 : 0x2400 + c.charCodeAt(0)))
+    .replace(/\n/g, "\r\n");
+}
