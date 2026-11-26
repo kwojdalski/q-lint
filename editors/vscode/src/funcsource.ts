@@ -151,6 +151,14 @@ export function readCallers(raw: unknown): Callers {
   return { callers, scanned: n(r.scanned), more: n(r.more) };
 }
 
+/// `text`, a name as the user gave it, as a name: q code names a function
+/// or table as a symbol too (`` `.ns.f ``), and the IPC client would send
+/// a string starting with a backtick as a symbol, not the name (#2649).
+export function unquotedName(text: string): string {
+  const name = text.trim();
+  return /^`[.A-Za-z]/.test(name) ? name.slice(1) : name;
+}
+
 /// The name of the function at `offset` in `line`, dots and all, or
 /// undefined when the cursor is on no name.
 export function nameAt(line: string, offset: number): string | undefined {

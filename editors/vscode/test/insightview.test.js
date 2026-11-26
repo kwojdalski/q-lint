@@ -237,6 +237,13 @@ test("Open Function Source shows the process's text read-only; Edit and Redefine
   assert.strictEqual(sources.state().copies.length, 1);
 });
 
+test("Open Function Source takes a function named as a symbol, `.ns.h, as the name .ns.h (#2649)", async (t) => {
+  const { q } = await setUp(t);
+  const uri = await stub.commands.get("q-lint.openFunctionSource")("`.ns.h");
+  assert.strictEqual(uri.path, "/.ns.h.q");
+  assert.deepStrictEqual(calls(q, SOURCE), [[".ns.h"]]);
+});
+
 test("a second Redefine is checked against the text the process kept, not the one the editor sent (#1895)", async (t) => {
   const { q } = await setUp(t);
   const uri = await stub.commands.get("q-lint.openFunctionSource")(".ns.h");

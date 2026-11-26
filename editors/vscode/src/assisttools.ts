@@ -34,6 +34,7 @@ import { lintArgs, readLint, schemaOf, tablesOf, type LintFinding } from "./assi
 import { launchable } from "./batch";
 import { ASSIST_SETTINGS, assistOff, readAssist, type AssistFeature } from "./assistconfig";
 import { GATHER, LIMITS, readExplorer, readGathered } from "./explorer";
+import { unquotedName } from "./funcsource";
 import { markdownText } from "./history";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
@@ -83,6 +84,10 @@ export interface TablesInput {
 /// A model may send null for an optional field it leaves out (#1623).
 const given = (value: unknown): unknown => (value === null ? undefined : value);
 
+/// A table named as a string, `` `trade `` as `trade` (#2649); anything
+/// else as it is.
+const tableGiven = (value: unknown): unknown => (typeof value === "string" ? unquotedName(value) : given(value));
+
 export class ListTablesTool implements LanguageModelTool<TablesInput> {
   /// The process the user was asked to read each table on, or null when
   /// nothing was connected and they were asked nothing.
@@ -92,7 +97,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
 
   prepareInvocation(options?: LanguageModelToolInvocationPrepareOptions<TablesInput>): PreparedToolInvocation {
     const active = this.live.activeLabel();
-    const table = given(options?.input?.table);
+    const table = tableGiven(options?.input?.table);
     if (typeof table !== "string" || !isTableName(table.trim())) {
       return { invocationMessage: `Reading the tables of ${active ?? "the q process"}` };
     }
@@ -129,7 +134,7 @@ export class ListTablesTool implements LanguageModelTool<TablesInput> {
       return { error: notConnected(this.live.processes(), [...this.live.discovery.discovered(), ...this.live.sharedList()]) };
     }
     const named = given(input.process);
-    const table = given(input.table);
+    const table = tableGiven(input.table);
     if (named !== undefined && named !== active) {
       return {
         error: `List q Tables reads the connected process, ${active}, only. To read ${JSON.stringify(named)}, connect to it first: Run q Query with "process" connects.`,

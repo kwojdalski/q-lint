@@ -40,6 +40,7 @@ import {
   sourceDocument,
   sourcePath,
   SOURCE_COMMANDS,
+  unquotedName,
   type Source,
 } from "./funcsource";
 import { borrowWhenFree } from "./infoview";
@@ -135,8 +136,14 @@ export class FunctionSources implements TextDocumentContentProvider {
   }
 
   /// The function a command was asked about: an explorer row's, a name
-  /// passed, the name under the cursor in a q editor, or one typed.
+  /// passed, the name under the cursor in a q editor, or one typed; a
+  /// backtick in front of it, as a symbol names it, is not part of it.
   private async target(arg: Node | string | undefined, verb: string): Promise<string | undefined> {
+    const name = await this.targetAsWritten(arg, verb);
+    return name === undefined ? undefined : unquotedName(name);
+  }
+
+  private async targetAsWritten(arg: Node | string | undefined, verb: string): Promise<string | undefined> {
     if (typeof arg === "string" && arg !== "") {
       return arg;
     }
