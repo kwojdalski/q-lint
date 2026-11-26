@@ -178,6 +178,25 @@ test("a virtual workspace folder is not a q terminal's working directory (#1843)
   assert.strictEqual(fake.terminals[0].options.cwd, undefined);
 });
 
+// The .env was read from the first folder unfiltered: a vscode-vfs one's
+// /acme/desk/.env on the local disk, while the terminal started in the
+// folder on disk, without its .env (#2528).
+test("the .env is the folder on disk's the terminal starts in, not a virtual first folder's path", async () => {
+  const fake = fakeVscode({}, { "/acme/desk/.env": "QLIC=/wrong\n", "/w/local/.env": "QLIC=/opt/kx\n" }, "/acme/desk");
+  const { workspace, window, Uri } = fake.vscode;
+  workspace.workspaceFolders[0].uri.scheme = "vscode-vfs";
+  const local = { uri: Uri.file("/w/local"), name: "local", index: 1 };
+  workspace.workspaceFolders.push(local);
+  workspace.getWorkspaceFolder = (uri) => (uri.path.startsWith("/acme/desk/") ? workspace.workspaceFolders[0] : uri.path.startsWith("/w/local/") ? local : undefined);
+  for (const file of ["/elsewhere/a.q", "/acme/desk/a.q"]) {
+    window.activeTextEditor = { document: { uri: Uri.file(file), isDirty: false, save: async () => true, getText: () => "" } };
+    fake.terminals.length = 0;
+    await loadTerminals(fake).repl();
+    assert.strictEqual(fake.terminals[0].options.cwd, "/w/local", file);
+    assert.strictEqual(fake.terminals[0].options.env.QLIC, "/opt/kx", file);
+  }
+});
+
 test("another file, and none: a missing .env is no .env and says nothing", async () => {
   const fake = fakeVscode({ "env.file": "config/q.env" }, { "/ws/config/q.env": "QLIC=/lic\n" });
   await loadTerminals(fake).repl();
