@@ -241,8 +241,11 @@ export class TableStreams {
     });
     panel.webview.onDidReceiveMessage((message: { type?: string; paused?: unknown }) => {
       if (message.type === "ready") {
-        // A page loaded again has no rows: it is sent them all.
+        // A page loaded again has no rows: it is sent them all. It starts
+        // unpaused, its button "Pause": so does the stream, or a page
+        // reloaded while paused stays empty until Pause is clicked twice (#2499).
         seen = -1;
+        stream.paused = false;
         draw();
       } else if (message.type === "pause") {
         stream.paused = message.paused === true;
