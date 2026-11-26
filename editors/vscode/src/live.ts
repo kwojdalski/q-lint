@@ -2511,7 +2511,8 @@ export class Live {
     // Stopped with the connect it is for: by Disconnect, or a connect elsewhere (#2127).
     const output = await runCredentialCommand(process.credentialCommand, {
       signal,
-      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.[0]?.uri.fsPath, os.homedir()),
+      // A folder on disk: a virtual one's fsPath is no directory (#2514).
+      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);
