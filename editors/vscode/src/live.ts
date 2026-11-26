@@ -2886,6 +2886,8 @@ export class Live {
     await this.save(now.map((p) => (p.label === process.label ? set(p) : p)));
     if (this.active?.label === process.label && this.active.server === undefined) {
       this.active = set(this.active);
+      // What is read of it depends on its evaluation (#2495).
+      this.changed.fire("edited");
     }
     this.showStatus();
     const effective = this.directOf(set(process)) === undefined ? "wrapped" : "direct";

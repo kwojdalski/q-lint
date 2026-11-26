@@ -342,3 +342,19 @@ test("on a guarded direct process, a feature that needs q-lint's lambda is refus
   assert.deepStrictEqual(stub.messages.filter(([kind]) => kind === "warning"), []);
   assert.strictEqual(await ask(pm, "0=lambdas"), true);
 });
+
+test("the Process Explorer reads a process again once its evaluation changes, and says the new mode's (#2495)", { skip }, async (t) => {
+  const taken = new Set();
+  const rdb = await startQ(t, TABLES, taken);
+  const { live, explorer, view } = await setUp(t, [{ label: "rdb", host: "127.0.0.1", port: rdb, tags: [], evaluation: "direct" }]);
+  const until = async (f) => {
+    for (let i = 0; i < 60 && !f(); i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await until(() => view.message !== undefined);
+  assert.match(view.message, /rdb is evaluated directly/);
+  await stub.commands.get("q-lint.setProcessEvaluation")("rdb", "wrapped");
+  await until(() => explorer.rows().length > 0);
+  assert.strictEqual(view.message, undefined);
+  assert.ok(explorer.rows().some((n) => n.label === "."));
+});
