@@ -1128,6 +1128,16 @@ u:update a by b,b from t
 t:([]a:1 2;b:3 4)
 r:update a:1,a:2 from t
 
+=== QB019 | and in an exec's list, the keys of its dictionary (q 5: key exec a,a from t and key exec max a,min a from t are `a`a1, #2701)
+t:([]a:1 2;b:3 4)
+r:exec a,a from t
+s:exec max a,min a from t
+
+=== clean | an exec of distinct names (#2701)
+t:([]a:1 2;b:3 4)
+r:exec a,b from t
+s:exec a by a from t
+
 === clean | distinct names
 t:([]a:1 2;b:3 4)
 r:select a,b from t

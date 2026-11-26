@@ -527,9 +527,11 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
     // `select a,a from t` has columns a and a1, and so do `select max a,min a`
     // and `select a,max a`, each item named as `column_name` says. A select's
     // by list is renamed the same way - `select a by b,b` groups by b and b1 -
-    // where update's by names no column and is left alone.
+    // where update's by names no column and is left alone. An exec's list
+    // names the keys of the dictionary it returns, renamed alike: q 5
+    // `key exec a,a from t` is `a`a1 (#2701).
     let mut strings = InString::new(code);
-    for q in re!(r"\b(?:select|update)\b").find_iter(code) {
+    for q in re!(r"\b(?:select|update|exec)\b").find_iter(code) {
         if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
