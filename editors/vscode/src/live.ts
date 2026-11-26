@@ -2707,7 +2707,7 @@ export class Live {
     }
     this.reconnectRun++;
     if (this.connection === undefined && this.connecting === undefined) {
-      void window.showInformationMessage(apart.length > 0 ? plainMessage(`q-lint: stopped the connect script of ${apart.join(", ")} on a connection of its own.`) : "q-lint: not connected to a q process.");
+      void window.showInformationMessage(plainMessage(apart.length > 0 ? `q-lint: stopped the connect script of ${apart.join(", ")} on a connection of its own.` : "q-lint: not connected to a q process."));
       return;
     }
     this.reconnectStopped = true;
@@ -3814,7 +3814,7 @@ export class Live {
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
       const stopped = timedOut === undefined ? this.stopPreparingApart() : [];
-      void window.showInformationMessage(stopped.length > 0 ? plainMessage(`q-lint: stopped the connect script of ${stopped.join(", ")} on a connection of its own.`) : "q-lint: no query is running.");
+      void window.showInformationMessage(plainMessage(stopped.length > 0 ? `q-lint: stopped the connect script of ${stopped.join(", ")} on a connection of its own.` : "q-lint: no query is running."));
       return;
     }
     this.aborted = this.running?.started;
