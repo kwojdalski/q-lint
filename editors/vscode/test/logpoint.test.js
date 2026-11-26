@@ -7,6 +7,7 @@ const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
 const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, readLogpoints, hitLines } = require("../out/logpoint.js");
 const { registerLogpoints } = require("../out/logpointview.js");
+const { DRIFT } = require("../out/definitions.js");
 
 test("the process's list and hits are read whatever shape q gives them", () => {
   assert.deepStrictEqual(readLogpoints({ names: "sq", hits: [] }), { names: ["sq"], hits: [] });
@@ -33,6 +34,8 @@ function setup() {
   const held = new Set();
   const connection = {
     call: async (lambda, name) => {
+      // Add Logpoint reads the function's text first, and sends it back with the logging in it.
+      if (lambda === DRIFT) return { name: [name], state: ["lambda"], text: ["{x}"] };
       sent.push([lambda, name]);
       if (lambda === LOG_ADD) return held.add(name), name;
       if (lambda === LOG_REMOVE) return held.delete(name), true;

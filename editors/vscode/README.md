@@ -1424,19 +1424,25 @@ code that runs anywhere it matters.
 
 **Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
 of the function under the cursor - or one named - on the active process
-without editing its file: the function is replaced there by a wrapper of
-the same parameters that prints `(name; arguments)` with `0N!`, to the
-process's console or log (a launched process's output channel), keeps the
-last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
-in `.qlint.log.orig`. Where q refuses a global write - a call made under
+without editing its file: the function is replaced there by its own text
+with one statement more at the start of its body, which prints
+`(name; arguments)` with `0N!`, to the process's console or log (a launched
+process's output channel), and keeps the last 1000 calls as text in
+`.qlint.log.hits`; what the name held is kept in `.qlint.log.saved`. The
+function is otherwise itself: a call uses no more of q's stack, so a deep
+recursion runs as before, and a call it makes of itself through `.z.s` is
+logged too. Where q refuses a global write - a call made under
 `reval`, or in a secondary thread of `peach` - the call is printed but not
-kept, and the function answers as before. The editor marks the definition `logpoint on
+kept, and the function answers as before. A call q refuses on a typed or
+pattern parameter list never starts, and is not logged. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
 them; a function redefined while it had a logpoint is left as it is. With
 the last one removed, `.qlint.log` is deleted and `.qlint` is left empty: q
 cannot remove a namespace. Only a lambda takes one, and a projection or
-alias made of the function before keeps calling the original. Adding and
+alias made of the function before keeps calling the original; a reference
+taken while the logpoint is on - a handler, a timer - keeps answering,
+unlogged, once it is removed. Adding and
 removing go through the read-only guard; reading the
 hits changes nothing. `q-lint.logpoints.enable` hides the commands.
 

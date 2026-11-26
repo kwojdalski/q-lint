@@ -3,27 +3,39 @@
 // Free of any `vscode` import, so node tests it; `logpointview.ts` is the
 // VS Code around it.
 //
-// A logpoint replaces a function `f` on the process with a wrapper of the
-// same parameters that prints the call's arguments with `0N!` - to the
-// process's own console or log - keeps the last 1000 calls, as one line of
-// text each, in `.qlint.log.hits`, and then calls the function it replaced,
-// kept in `.qlint.log.orig`. The keeping is trapped: where q refuses a
-// global write - under `reval`, in a secondary thread of `peach` - the call
-// is not kept and the function still answers (#1894). Removing it puts that back, unless `f` was
-// redefined meanwhile, which is left as it is - and which is listed as having
-// no logpoint, and takes a new one (#2558); when the last logpoint goes,
+// A logpoint replaces a function `f` on the process with its own text and
+// one statement more, at the start of its body, as coverage instruments a
+// function (`instrument.ts`): it prints the call's arguments with `0N!` -
+// to the process's own console or log - and keeps the last 1000 calls, as
+// one line of text each, in `.qlint.log.hits`. The function is otherwise
+// itself: a call costs no frame of q's stack more, so a recursion as deep
+// as q allows still runs (#2979), and a call it makes of itself through
+// `.z.s` is logged too. What `f` held is kept in `.qlint.log.saved`. The
+// keeping is trapped: where q refuses a global write - under `reval`, in a
+// secondary thread of `peach` - the call is not kept and the function still
+// answers (#1894). Removing it puts that back, unless `f` was redefined
+// meanwhile, which is left as it is - and which is listed as having no
+// logpoint, and takes a new one (#2558); when the last logpoint goes,
 // `.qlint.log` goes too. `.qlint` itself stays, empty when nothing else of
 // q-lint's is in it: q has no call that removes a context, and
 // `delete qlint from`.` deletes the user's root variable of that name
 // instead (#1871).
 //
-// The wrapper's parameters are its own, one per slot the function takes, so
-// a typed (`[x:`j]`) or pattern (`[(a;b)]`) parameter list is checked by
-// the function it calls (#2406).
+// The statement logs only while `.qlint.log` is there and lists the
+// function: a reference taken while the logpoint is on - a handler, a
+// timer - holds the text with the statement in it, and keeps answering,
+// unlogged, once the logpoint is removed (#2974).
+//
+// The parameters are the function's own, so a call q refuses on a typed
+// (`[x:`j]`) or pattern (`[(a;b)]`) parameter list is refused as before
+// (#2406), and, never having started, is not logged.
 //
 // Only a lambda takes a logpoint. A projection or alias made of `f` before
 // the logpoint keeps calling the original, unlogged.
 
+import { codeMask, parameters, patternNames } from "./paramcache";
+import { DRIFT, readDrift } from "./definitions";
+import { DEFINE_AS, inserted, outer } from "./instrument";
 import { FULL_TEXT } from "./qtext";
 
 export const LOGPOINT_COMMANDS = {
@@ -33,47 +45,83 @@ export const LOGPOINT_COMMANDS = {
   hits: "q-lint.showLogpointHits",
 } as const;
 
-/// Wraps the function named `nm` (a string); answers its name.
+/// A name q-lint can write into q code as a symbol.
+const GLOBAL = /^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/;
+
+/// `text` (a lambda, the function `name`) made to log each call's
+/// arguments at the start of its body, as the list a call gives them: one
+/// item for each slot of its parameter list - a pattern slot as its names
+/// make it up again - or its `x`, `y` and `z`.
+export function logText(text: string, name: string): string | undefined {
+  const mask = codeMask(text);
+  const lambda = outer(text, mask);
+  if (lambda === undefined || !GLOBAL.test(name)) {
+    return undefined;
+  }
+  const item = (slot: string): string => {
+    const names = patternNames(slot);
+    return /^[A-Za-z][A-Za-z0-9_]*\s*(?::|$)/.test(slot) ? names[0] : !slot.includes(":") && !slot.includes("!") && !slot.includes("[") ? slot : names.length === 1 ? `enlist ${names[0]}` : `(${names.join(";")})`;
+  };
+  // A lambda that reads none of x, y and z still takes x.
+  const args = lambda.slots !== undefined ? lambda.slots.filter((slot) => slot !== "").map(item) : ["x", ...parameters(text, lambda, mask).slice(1)];
+  const list = args.length === 0 ? "enlist(::)" : args.length === 1 ? `enlist ${args[0]}` : `(${args.join(";")})`;
+  return inserted(text, [{ offset: lambda.bodyStart, text: `$[\`log in key\`.qlint;.qlint.log.hit[\`${name};${list}];::];` }]);
+}
+
+/// Replaces the function named `nm` (a string), whose text on the process
+/// is `was`, with `src` (`logText` of it), defined in its own context;
+/// answers its name.
 export const LOG_ADD = [
-  "{[nm]",
+  "{[nm;was;src]",
   " nm:`$(),nm;f:@[get;nm;{::}];",
   " if[not 100h=type f;'\"not a lambda on the process\"];",
   // A name redefined since its logpoint has none any more: the stale entry
-  // goes, and the new definition is wrapped (#2558).
-  " o:@[get;`.qlint.log.orig;{(`$())!()}];",
-  " if[nm in key o;$[.qlint.log.wrap[nm]~f;'\"it has a logpoint already\";[.qlint.log.orig:(enlist nm)_o;.qlint.log.wrap:(enlist nm)_.qlint.log.wrap]]];",
-  // The wrapper takes one plain parameter per slot: a typed or pattern
-  // slot's names (`0`1 on KDB-X) are no names to bind (#2406).
-  " p:(value f)1;p:`$\"a\",/:string til $[p~enlist`;0;count p];",
-  " s:\";\"sv string p;a:$[0=count p;\"enlist(::)\";1=count p;\"enlist \",s;\"(\",s,\")\"];n:\"`\",string nm;",
-  " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist .qlint.log.text \",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
-  " if[not`log in key`.qlint;.qlint.log.orig:(`$())!();.qlint.log.wrap:(`$())!();.qlint.log.hits:()];",
+  // goes, and the new definition takes one (#2558).
+  " i:@[get;`.qlint.log.inst;{(`$())!()}];",
+  " if[nm in key i;if[i[nm]~f;'\"it has a logpoint already\"]];",
+  " if[not((),was)~last value f;'\"it was redefined on the process meanwhile; add the logpoint again\"];",
+  ` r:${DEFINE_AS}[f;(),src];`,
+  " if[not first r;'last r];",
+  " if[not`log in key`.qlint;.qlint.log.saved:(`$())!();.qlint.log.inst:(`$())!();.qlint.log.hits:()];",
   // `-3!` stops at the process's `\c` width, 79 characters (#2547).
   ` .qlint.log.text:${FULL_TEXT}[300];`,
-  " .qlint.log.orig[nm]:f;.qlint.log.wrap[nm]:w;",
-  " nm set w;string nm}",
+  " .qlint.log.hit:{[nm;a]if[not nm in key .qlint.log.inst;:(::)];0N!(nm;a);@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;nm;300 sublist .qlint.log.text a);{}];};",
+  " .qlint.log.saved[nm]:f;.qlint.log.inst[nm]:last r;",
+  " nm set last r;string nm}",
 ].join("\n");
+
+/// Adds a logpoint to `fn` on the process `call` sends to: reads the text
+/// the process holds for it, and sends that back with the logging in it.
+/// Answers the name; throws what the process refused it with.
+export async function addLogpoint(call: (code: string, ...args: unknown[]) => Promise<unknown>, fn: string): Promise<string> {
+  const state = readDrift(await call(DRIFT, fn)).get(fn);
+  const src = state?.state === "lambda" ? logText(state.text, fn) : undefined;
+  if (state === undefined || src === undefined) {
+    throw new Error("not a lambda on the process");
+  }
+  return String(await call(LOG_ADD, fn, state.text, src));
+}
 
 /// Takes the logpoint off `nm` (a string); answers whether the function was
 /// put back (false: it was redefined meanwhile, and is left as it is).
 export const LOG_REMOVE = [
   "{[nm]",
-  " nm:`$(),nm;o:@[get;`.qlint.log.orig;{(`$())!()}];",
+  " nm:`$(),nm;o:@[get;`.qlint.log.saved;{(`$())!()}];",
   " if[not nm in key o;'\"it has no logpoint\"];",
-  " back:.qlint.log.wrap[nm]~@[get;nm;{::}];",
+  " back:.qlint.log.inst[nm]~@[get;nm;{::}];",
   " if[back;nm set o nm];",
-  " .qlint.log.orig:(enlist nm)_o;.qlint.log.wrap:(enlist nm)_.qlint.log.wrap;",
-  " if[0=count .qlint.log.orig;.qlint:(enlist`log)_.qlint];",
+  " .qlint.log.saved:(enlist nm)_o;.qlint.log.inst:(enlist nm)_.qlint.log.inst;",
+  " if[0=count .qlint.log.saved;.qlint:(enlist`log)_.qlint];",
   " back}",
 ].join("\n");
 
 /// An expression that reads, and changes nothing: the names with a
-/// logpoint - those still holding their wrapper, not one redefined since
+/// logpoint - those still holding the text with it, not one redefined since
 /// (#2558) - and the calls kept, oldest first, as (time; name; arguments).
 export const LOG_LIST = [
   "{[]",
   " if[not`log in key`.qlint;:`names`hits!(();())];",
-  " n:{x where{.qlint.log.wrap[x]~@[get;x;{::}]}each x}key .qlint.log.orig;",
+  " n:{x where{.qlint.log.inst[x]~@[get;x;{::}]}each x}key .qlint.log.saved;",
   " `names`hits!(string n;{(string x 0;string x 1;x 2)}each .qlint.log.hits)}[]",
 ].join("\n");
 

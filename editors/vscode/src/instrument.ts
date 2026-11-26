@@ -113,7 +113,7 @@ export function positionIn(text: string, offset: number, at: Pos): Pos {
 }
 
 /// `text` with each insertion put in at its offset.
-function inserted(text: string, at: { offset: number; text: string }[]): string {
+export function inserted(text: string, at: { offset: number; text: string }[]): string {
   let out = text;
   // From the end, and of two at one offset the later first, so the earlier
   // ends up in front.
@@ -126,7 +126,7 @@ function inserted(text: string, at: { offset: number; text: string }[]): string 
 
 /// The outer lambda of a definition's text (`{` to `}`), or undefined when
 /// the text is not one lambda.
-function outer(text: string, mask: boolean[]): Lambda | undefined {
+export function outer(text: string, mask: boolean[]): Lambda | undefined {
   const all = lambdas(text, mask);
   return all.length === 1 && all[0].open === 0 && all[0].close === text.length - 1 ? all[0] : undefined;
 }
@@ -169,7 +169,7 @@ export function coverageText(text: string, first: number): Covered | undefined {
 /// (the value is then the generic null). With `signals`, at each `'value`
 /// of its own body too. An error q itself signals is not seen: the caller
 /// allows for a call that ended unseen. A nested lambda's are its own.
-function exits(text: string, lambda: Lambda, mask: boolean[], statements: BodyStatement[], hook: string, signals: boolean): { offset: number; text: string }[] {
+export function exits(text: string, lambda: Lambda, mask: boolean[], statements: BodyStatement[], hook: string, signals: boolean): { offset: number; text: string }[] {
   const own = ownCode(lambda, mask);
   const out: { offset: number; text: string }[] = [];
   // The last thing before here that is not blank or a comment: "" at the
@@ -304,6 +304,11 @@ export function restoreExpression(ns: "cov" | "err"): string {
   ].join("\n");
 }
 
+/// A q function that reads `s`, a lambda's text, in the context the lambda
+/// `old` was defined in, as Redefine does: (1b; what it read) or (0b; the
+/// error reading it gave).
+export const DEFINE_AS = '{[old;s]c:first(value old)3;o:system"d";system"d ",$[null c;".";".",string c];r:@[{(1b;value x)};s;{(0b;x)}];system"d ",string o;r}';
+
 /// Replaces each of `nms` (strings) whose text on the process is `was` with
 /// `src`, defined in its own context, keeping what it held. `d` is how many
 /// probes coverage counts (`.qlint.cov.d`, longs, through `.qlint.cov.hit`);
@@ -320,10 +325,7 @@ export function installLambda(ns: "cov" | "err"): string {
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",
     "  if[not w~last value old;:\"changed\"];",
-    "  c:first(value old)3;o:system\"d\";",
-    "  system\"d \",$[null c;\".\";\".\",string c];",
-    "  r:@[{(1b;value x)};s;{(0b;x)}];",
-    "  system\"d \",string o;",
+    `  r:${DEFINE_AS}[old;s];`,
     "  if[not first r;:last r];",
     "  if[not 100h=type last r;:\"not a lambda\"];",
     `  ${n}.saved[nm]:old;${n}.inst[nm]:last r;`,
