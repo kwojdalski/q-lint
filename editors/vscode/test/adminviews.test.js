@@ -218,6 +218,14 @@ test("Timers lists \\t and the TorQ jobs; a job is turned off and \\t set; on a 
   assert.match(views.timers()[0].description, /^every 500 ms, no \.z\.ts$/);
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], 0), true);
   assert.strictEqual(views.timers()[0].description, "off");
+  // A keybinding's interval is checked as the box's is: q ignores these silently (#2380).
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], 500), true);
+  for (const bad of [15000000000, 2147483648, -5, 1.5, 1e21]) {
+    assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], bad), false, String(bad));
+    assert.match(stub.messages.at(-1)[1], /is not a timer interval: Whole milliseconds; 0 turns the timer off\. The timer was not set\./);
+  }
+  await viewOf(ADMIN_VIEWS.timers).refresh(true);
+  assert.match(views.timers()[0].description, /^every 500 ms/);
 });
 
 test("closing a handle and setting \\t send nothing when another process became active while asked (#1259)", async (t) => {

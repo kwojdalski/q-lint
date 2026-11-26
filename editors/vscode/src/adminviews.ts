@@ -331,6 +331,13 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
       }
       ms = Number(text.trim());
     }
+    // Given by a keybinding, checked as the box checks it: q takes a \t it
+    // cannot hold - negative, past 2^31 - silently, and turns the timer off (#2380).
+    const problem = intervalProblem(String(ms));
+    if (problem !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${String(ms)} is not a timer interval: ${problem} The timer was not set.`));
+      return false;
+    }
     const done = await change(intervalCode(ms), "set the timer", label, timers);
     await timers.view?.refresh();
     return done;
