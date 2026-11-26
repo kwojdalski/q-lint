@@ -149,6 +149,22 @@ test("a cached lambda's body lines run on their own with the call's arguments, o
     assert.strictEqual(await run("(m;n)"), "1 20");
   });
 
+  // Defined under \d .ns, the names were set in the root, and the body's
+  // lines, run where the file's \d applies, read .ns.a and .ns.b (#2407).
+  await t.test("a lambda defined under \\d .ns: the names are set in .ns", async () => {
+    const source = "\\d .ns\nnf:{[na;nb] na+nb}\n\\d .\n";
+    const { text } = instrument(source, "na+nb");
+    assert.ok(text.includes("@[`.ns.na`.ns.nb set';(na;nb);::]"), text);
+    await run(text);
+    assert.strictEqual(await run(".ns.nf[1;2]"), "3");
+    assert.strictEqual(await run("\\d .ns\nna+nb"), "3");
+    assert.strictEqual(await run("`na`nb in key`."), "00b");
+    const one = instrument("\\d .ns\nng:{[nv] nv*2}\n", "nv*2");
+    await run(one.text);
+    await run(".ns.ng 4");
+    assert.strictEqual(await run(".ns.nv"), "4");
+  });
+
   await t.test("implicit x, y and z", async () => {
     const { text } = instrument("add3:{x+y+z}", "+y");
     await run(text);
