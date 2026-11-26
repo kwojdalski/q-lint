@@ -505,15 +505,18 @@ export function merge(processes: Process[], incoming: Process[]): Process[] {
 /// The labels of the processes `merge` replaces with one at another host,
 /// port or user, or reached another way - TLS or an SSH tunnel added or
 /// taken away (#1269): their stored password was given for the old one, and
-/// is not to be sent to the new.
+/// is not to be sent to the new. A host name is one host in any letter
+/// case, and with or without the root's dot after it: a list writing
+/// `rdb1.corp` for `RDB1.corp` had the password deleted (#3109).
 export function passwordsToForget(processes: Process[], incoming: Process[]): string[] {
+  const named = (host: string): string => host.trim().toLowerCase().replace(/\.$/, "");
   const byLabel = new Map(incoming.map((p) => [p.label, p]));
   return processes
     .filter((p) => {
       const next = byLabel.get(p.label);
       return (
         next !== undefined &&
-        (next.host !== p.host || next.port !== p.port || next.user !== p.user || (next.tls === true) !== (p.tls === true) || next.ssh !== p.ssh)
+        (named(next.host) !== named(p.host) || next.port !== p.port || next.user !== p.user || (next.tls === true) !== (p.tls === true) || next.ssh !== p.ssh)
       );
     })
     .map((p) => p.label);

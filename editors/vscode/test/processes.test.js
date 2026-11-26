@@ -134,6 +134,9 @@ test("an import that moves a process to another host or user forgets its passwor
   const reached = [p("t", "h1", "u"), p("s", "h1", "u"), p("x", "h1", "u")].map((q, i) => (i === 0 ? { ...q, tls: true } : i === 1 ? { ...q, ssh: "jump" } : q));
   assert.deepStrictEqual(passwordsToForget(reached, [p("t", "h1", "u"), p("s", "h1", "u"), { ...p("x", "h1", "u"), ssh: "other" }]), ["t", "s", "x"]);
   assert.deepStrictEqual(passwordsToForget(reached, reached), []);
+  // One host in another letter case, or with the root's dot, is not another (#3109).
+  const cased = [p("a", "RDB1.corp", "bob"), p("b", "rdb1.corp", "bob"), p("c", "rdb1.corp", "bob")];
+  assert.deepStrictEqual(passwordsToForget(cased, [p("a", "rdb1.corp", "bob"), p("b", "rdb1.corp.", "bob"), p("c", "rdb2.corp", "bob")]), ["c"]);
 });
 
 // Only the tunnel or TLS changed, the refusal named an address edit to the
