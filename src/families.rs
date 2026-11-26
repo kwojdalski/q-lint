@@ -223,9 +223,20 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((start, end)) = applied(code, comments, source, m.start(), m.end()) else {
+        let Some((mut start, end)) = applied(code, comments, source, m.start(), m.end()) else {
             continue;
         };
+        let word = &code[m.start()..m.end()];
+        let given = code[start..end].trim_start();
+        // `eval` evaluates a parse tree, and a string is its own: KDB-X 5
+        // returns `eval "select from t where a=",x` as the text it was
+        // given and runs nothing. Parsed first, the text does run (#2991).
+        if word == "eval" {
+            let Some(parsed) = re!(r"^(?:parse\b|-5!)").find(given) else {
+                continue;
+            };
+            start = end - given.len() + parsed.end();
+        }
         // Built where it is run, or into a local this lambda runs on a later
         // statement - `q:"select ...",s; value q`, the commoner way to write
         // it (#2735). Any assignment of the local before the call counts.

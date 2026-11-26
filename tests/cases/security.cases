@@ -164,6 +164,16 @@ n:{[h;x] @[h;"select from t where a=",x;{x}]}
 f:{[h] h["select from t"]}
 g:{[h;x] (h;"select from t where a=",x)}
 
+=== QX001 | eval of the query parsed runs it (#2991)
+f:{eval parse "select from t where a=",x}
+g:{eval -5!"select from t where a=",x}
+k:{[s] q:"select from t where a=",s; eval parse q}
+
+=== clean | eval of a string returns the string and runs nothing (#2991)
+f:{eval "select from t where a=",x}
+g:{@[eval;"select from t where a=",x;{x}]}
+k:{[s] q:"select from t where a=",s; eval q}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}
