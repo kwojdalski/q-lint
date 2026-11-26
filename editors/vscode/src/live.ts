@@ -3023,7 +3023,9 @@ export class Live {
       }
       Object.defineProperty(values, name, { value, enumerable: true, writable: true, configurable: true });
     }
-    await this.context.globalState.update(PLACEHOLDER_VALUES_KEY, remembered(stored, values));
+    // Read again: another window may have remembered values while these
+    // boxes were open, and they are kept (#2527).
+    await this.context.globalState.update(PLACEHOLDER_VALUES_KEY, remembered(this.context.globalState.get<unknown>(PLACEHOLDER_VALUES_KEY), values));
     return substitute(code, values);
   }
 
