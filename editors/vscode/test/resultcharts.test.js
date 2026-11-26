@@ -292,3 +292,15 @@ test("the SVG of zoomed linked panes runs each line to the edges of the zoom, as
     assert.deepStrictEqual(path && [path[1], path[2]], ["64.0", "780.0"], JSON.stringify(range));
   }
 });
+
+test("a zoom is kept while the panes' points meet it (#3128)", () => {
+  const g = grid([["t", 7, ["9000", "10000", "11000", ""]], ["a", 9, ["1", "2", "", "4"]]]);
+  const d = M.linkedData(g, all(g), [1]);
+  assert.strictEqual(M.zoomOver(d, { min: 1500, max: 3000 }), null);
+  assert.strictEqual(M.zoomOver(d, { min: 10500, max: 12000 }), null, "the point at 11000 has no value");
+  assert.deepStrictEqual(M.zoomOver(d, { min: 9200, max: 9800 }), { min: 9200, max: 9800 }, "between two points: their line crosses it");
+  assert.deepStrictEqual(M.zoomOver(d, { min: 1, max: 9000 }), { min: 1, max: 9000 });
+  assert.strictEqual(M.zoomOver(d, null), null);
+  // Nothing to judge it by: kept, for the rows that come back.
+  assert.deepStrictEqual(M.zoomOver({ panes: [] }, { min: 1, max: 2 }), { min: 1, max: 2 });
+});

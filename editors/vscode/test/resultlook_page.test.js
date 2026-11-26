@@ -284,6 +284,31 @@ test("linked panes read every series at the crosshair, zoom together on a drag a
   assert.ok(!page.body.all((e) => e.tagName === "SELECT")[0].children.some((o) => o.value === "linked"));
 });
 
+test("linked panes keep a zoom over a result that is still in it, and drop one the points have moved out of (#3128)", () => {
+  FakeChart.made = [];
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const at = (times) => [["time", 7, times], ["a", 9, ["10", "20", "30", "40"]], ["b", 9, ["5", "6", "7", "8"]]];
+  page.send(result("s.1", at(["1000", "2000", "3000", "4000"]), { view: "chart", look: { chart: { kind: "linked", series: ["a", "b"], colours: {} } } }));
+  const canvas = page.body.all((e) => e.tagName === "CANVAS")[0];
+  canvas.fire("mousedown", { offsetX: 1500 });
+  canvas.fire("mousemove", { offsetX: 3000 });
+  canvas.fire("mouseup", { offsetX: 3000 });
+  assert.deepStrictEqual(page.state.zoom, { min: 1500, max: 3000 });
+  const panes = () => FakeChart.made.filter((c) => !c.destroyed).map((p) => [p.config.options.scales.x.min, p.config.options.scales.x.max]);
+  // Run again, a point later: the zoom is still over the points.
+  page.send(result("s.2", at(["2000", "3000", "4000", "5000"]), { view: "chart" }));
+  assert.deepStrictEqual(panes(), [[1500, 3000], [1500, 3000]]);
+  // The window has moved on: every pane was empty, its axis still 1500 to 3000.
+  for (const id of ["s.3", "s.3"]) {
+    page.send(result(id, at(["9000", "10000", "11000", "12000"]), { view: "chart" }));
+    assert.strictEqual(page.state.kind, "linked");
+    assert.deepStrictEqual(panes(), [[undefined, undefined], [undefined, undefined]]);
+    assert.strictEqual(page.rendered().linked.range, null);
+    const plotted = page.posted.filter((m) => m.type === "plotted").at(-1).data;
+    assert.ok(!plotted.includes("Nothing to chart.") && /<path d="M[^"]* L/.test(plotted));
+  }
+});
+
 test("a series named __proto__ keeps the colour picked for it and the one its preset holds (#2079)", () => {
   const page = loadPage(undefined);
   const columns = [["t", 7, ["1", "2"]], ["__proto__", 9, ["3", "4"]]];

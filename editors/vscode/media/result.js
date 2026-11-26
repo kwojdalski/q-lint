@@ -1970,6 +1970,8 @@
       }
     } else if (state.kind === "linked") {
       data = chosen.note ? { x: -1, panes: [], note: chosen.note } : MORE.linkedData(grid, rows, picked);
+      // A zoom the points have moved out of is dropped (#3128).
+      state.zoom = MORE.zoomOver(data, state.zoom);
       summary = { kind: "linked", datasets: data.panes.map(function (p) { return { label: p.label, points: p.data.length }; }) };
       if (data.note) {
         summary.note = data.note;

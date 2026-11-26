@@ -534,6 +534,23 @@
     return hi - lo <= Math.abs(full || 0) / 200 ? null : { min: lo, max: hi };
   }
 
+  /// `range`, a zoom, while it meets the x that the points of `data`, a
+  /// linkedData(), span; null once they have moved out of it, as those of a
+  /// query run again for a later window have: every pane was empty (#3128).
+  function zoomOver(data, range) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    data.panes.forEach(function (p) {
+      p.data.forEach(function (pt) {
+        if (pt.y !== null && isFinite(pt.y)) {
+          lo = Math.min(lo, pt.x);
+          hi = Math.max(hi, pt.x);
+        }
+      });
+    });
+    return range && lo <= hi && (range.max < lo || range.min > hi) ? null : range || null;
+  }
+
   /// The points of a pane (rising x) inside `range` ({min, max}), or all of
   /// them, and a point where its line crosses an edge of the range: on
   /// screen a zoomed pane clips the line at its edges, so that it runs
@@ -866,6 +883,7 @@
     readout: readout,
     zoomRange: zoomRange,
     inRange: inRange,
+    zoomOver: zoomOver,
     xText: xText,
     linkedConfig: linkedConfig,
     linkedSvg: linkedSvg,
