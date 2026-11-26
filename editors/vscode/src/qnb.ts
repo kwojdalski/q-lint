@@ -26,7 +26,7 @@
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
 
-import { blockDepth, statements } from "./statements";
+import { blockDepth, statements, trimBlanks } from "./statements";
 
 /// The format this extension writes, and the newest it reads.
 export const QNB_VERSION = 1;
@@ -319,7 +319,10 @@ export function decodeItem(item: QnbItem): Uint8Array {
 
 // --- export
 
-const trimEnd = (line: string): string => line.replace(/\s+$/, "");
+// q's blanks only: a `/` and a no-break space or a form feed is a line
+// comment to q, and closed as a block comment its `\` ended the script
+// (#2906).
+const trimEnd = trimBlanks;
 
 /// A code cell as a script runs it the way the cell runs: q reads a script
 /// as `statements.ts` reads a cell, but across cells, so what one cell leaves
