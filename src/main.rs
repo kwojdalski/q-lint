@@ -752,7 +752,7 @@ fn run(args: Args) -> Result<u8, String> {
     let mut workspace = Workspace::default();
     let mut indexed = std::collections::HashSet::new();
     for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
-        if indexed.insert(fs::canonicalize(file).unwrap_or_else(|_| file.clone())) {
+        if indexed.insert(q_lint_rs::graph::on_disk(file)) {
             let mut defined = index(source);
             if let Some((placement, implicit)) = placed {
                 placement.apply(&mut defined, &implicit);
@@ -782,8 +782,10 @@ fn run(args: Args) -> Result<u8, String> {
         // file it is: each name starts from what the one before it left, or
         // the second write would clobber the first and the second patch
         // would not apply after it (#761).
-        let mut current: std::collections::HashMap<PathBuf, String> = Default::default();
-        let canonical = |file: &PathBuf| fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+        // A hard link is one file under two names too, though each has a
+        // canonical path of its own (#2859).
+        let mut current: std::collections::HashMap<_, String> = Default::default();
+        let canonical = |file: &PathBuf| q_lint_rs::graph::on_disk(file);
         for ((path, source), file) in sources.iter_mut().zip(&disk) {
             if let Some(text) = current.get(&canonical(file)) {
                 source.clone_from(text);
@@ -1073,9 +1075,9 @@ fn add_noqa(
     let (mut added, mut changed, mut left, mut stale, mut undecoded) = (0, 0, 0, 0, 0);
     // Each file as it is on disk once its first name is done: a later name
     // is linted against that, not the text read before the write (#1199).
-    let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
+    let mut written: std::collections::HashMap<_, String> = Default::default();
     for ((path, source), disk) in sources.iter_mut().zip(disk) {
-        let file = fs::canonicalize(disk).unwrap_or_else(|_| disk.clone());
+        let file = q_lint_rs::graph::on_disk(disk);
         if let Some(text) = written.get(&file) {
             source.clone_from(text);
             let found = policy.lint(source, path, workspace)?;

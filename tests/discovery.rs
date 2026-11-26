@@ -808,6 +808,64 @@ fn one_file_under_two_names_does_not_define_its_names_for_itself() {
     assert_eq!(found, serde_json::json!({"real.q": [], "twin.q": []}));
 }
 
+/// A hard link is one file under two names as a symlink is, but with a
+/// canonical path of its own, which is what told files apart: the file was
+/// indexed twice, so its own `a` was "defined elsewhere" and QT022 went
+/// unsaid; the graph had each name depend on the other; and `--diff` printed
+/// the one fix as a patch per name, the second of which cannot apply (#2859).
+#[cfg(unix)]
+#[test]
+fn a_hard_link_is_one_file_under_two_names() {
+    let repo = Repo::new();
+    repo.write("real.q", "a:1\nf:{a 0}\n");
+    fs::hard_link(repo.path("real.q"), repo.path("twin.q")).unwrap();
+    let general = ["--isolated", "--profile", "general"];
+    assert_eq!(
+        repo.codes(".", &[&general[..], &["."]].concat()),
+        ["QT022", "QT022"]
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["analyze", "graph", "."])
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found, serde_json::json!({"real.q": [], "twin.q": []}));
+
+    let repo = Repo::new();
+    repo.write("a.q", "f:{[x;y] x==y}\n");
+    fs::hard_link(repo.path("a.q"), repo.path("b.q")).unwrap();
+    let select = ["--isolated", "--select", "QE004"];
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(select)
+        .args(["--diff", "."])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert_eq!(stdout.matches("\n+f:{[x;y] x=y}").count(), 1, "{stdout}");
+    assert!(
+        stderr.contains("1 fix(es) available in 1 file(s)"),
+        "{stderr}"
+    );
+    let out = run(
+        &repo.path("."),
+        &[&select[..], &["--add-noqa", "."]].concat(),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("added 1 noqa directive(s) in 1 file(s)"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path("b.q")).unwrap(),
+        "f:{[x;y] x==y} / noqa: QE004\n"
+    );
+}
+
 #[test]
 fn a_script_loaded_under_a_context_defines_in_it_for_the_others() {
     // q 5 runs main.q to 42: b.q, loaded under `\d .a`, defines `.a.ff`,

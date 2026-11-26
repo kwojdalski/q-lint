@@ -188,6 +188,27 @@ pub fn build_from(
     graph
 }
 
+/// What tells one file on disk from another, whatever name it is reached
+/// by: its device and inode, which a symlink resolves to and a hard link
+/// shares, where a hard link's canonical path is its own (#2859). Without
+/// those - on Windows, or for a path that names no file - the canonical
+/// path, or else the path as given.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OnDisk {
+    Inode(u64, u64),
+    Path(PathBuf),
+}
+
+/// The file `path` is on disk.
+pub fn on_disk(path: &Path) -> OnDisk {
+    #[cfg(unix)]
+    if let Ok(found) = std::fs::metadata(path) {
+        use std::os::unix::fs::MetadataExt;
+        return OnDisk::Inode(found.dev(), found.ino());
+    }
+    OnDisk::Path(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
 /// The files of a graph, found by any name a load reaches them by.
 struct Tree<'a> {
     files: &'a [PathBuf],
@@ -216,15 +237,13 @@ impl<'a> Tree<'a> {
             }
         }
         // One file under two names is one file: neither name depends on the
-        // other, nor makes a name the file defines ambiguous (#527).
+        // other, nor makes a name the file defines ambiguous (#527). A hard
+        // link is such a name, with a real path of its own (#2859).
+        let mut first: HashMap<OnDisk, usize> = HashMap::new();
         let identity = files
             .iter()
-            .map(|p| {
-                std::fs::canonicalize(p)
-                    .ok()
-                    .and_then(|real| position.get(&real).copied())
-                    .unwrap_or(position[p])
-            })
+            .enumerate()
+            .map(|(i, p)| *first.entry(on_disk(p)).or_insert(i))
             .collect();
         // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
         // `.Q.lo`), so it leads to each of them (#533).
