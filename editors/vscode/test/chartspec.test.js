@@ -237,3 +237,22 @@ test("a saved chart's x labels are as far apart as they are wide, and none passe
   const svg = C.chartSvg(few, [0, 1, 2], "bar", C.chartData(few, [0, 1, 2], "bar", [1], 20), look, {});
   assert.deepStrictEqual([...svg.matchAll(/text-anchor="middle" fill[^>]*>([^<]*)</g)].map((m) => m[1]), ["aa", "bb", "cc", "s"]);
 });
+
+test("a saved chart's legend wraps to rows inside the image, the plot giving way to them (#3132)", () => {
+  const names = [...Array(10).keys()].map((i) => "bid_price_level_" + i);
+  const g = { columns: [{ name: "s", numeric: false, type: 11 }].concat(names.map((name) => ({ name, numeric: true, type: 9 }))), cells: [["a", "b"]].concat(names.map(() => ["1", "2"])), values: [null].concat(names.map((_, i) => [i, i + 1])) };
+  const columns = names.map((_, i) => i + 1);
+  const look = { colours: ["#f00", "#0f0"] };
+  const svg = C.chartSvg(g, [0, 1], "line", C.chartData(g, [0, 1], "line", columns, 20), look, { width: 800, height: 450 });
+  const entries = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" fill[^>]*>(bid_price_level_\d)</g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), label: m[3] }));
+  assert.deepStrictEqual(entries.map((e) => e.label), names, "every series is named");
+  entries.forEach((e) => assert.ok(e.x + e.label.length * 6.5 <= 800, e.label + " ends at " + (e.x + e.label.length * 6.5)));
+  assert.deepStrictEqual([...new Set(entries.map((e) => e.y))], [429, 443], "two rows, the last where one row was");
+  const plot = /<rect x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)" fill="none"/.exec(svg);
+  assert.strictEqual(Number(plot[1]) + Number(plot[2]), 450 - 64 - 14, "the plot ends a row higher");
+  // One row is where it was, and no more rows than there is room for.
+  assert.deepStrictEqual(C.legendRows([{ label: "a", colour: "#f00" }, { label: "bb", colour: "#0f0" }], 64, 780, 10), [[{ x: 64, label: "a", colour: "#f00" }, { x: 94.5, label: "bb", colour: "#0f0" }]]);
+  const many = C.legendRows(names.concat(names).map((label) => ({ label, colour: "#f00" })), 64, 780, 2);
+  assert.deepStrictEqual(many.map((row) => row.map((e) => e.label)), [names.slice(0, 5), names.slice(5, 9).concat(["and 11 more"])]);
+  assert.ok(many[1][4].x + "and 11 more".length * 6.5 <= 780 && many[1][4].colour === null);
+});

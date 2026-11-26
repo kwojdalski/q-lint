@@ -609,8 +609,6 @@
     const border = xml(look.border || "#ccc");
     const right = 20;
     const top = opts.title ? 40 : 16;
-    const bottom = spec.legend === false && !spec.xTitle ? 28 : 64;
-    const ph = H - top - bottom;
     const out = ['<svg xmlns="http://www.w3.org/2000/svg"' + (opts.at !== undefined ? ' x="0" y="' + opts.at + '"' : "") + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + xml(look.font || "sans-serif") + '" font-size="11">'];
     if (opts.background) {
       out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
@@ -628,6 +626,11 @@
     const yt = axes.yt;
     const left = opts.left || axes.left;
     const pw = W - left - right;
+    // The legend in as many rows as it takes (#3132), a third of the image
+    // at most.
+    const legend = spec.legend === false ? [] : C.legendRows(spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)));
+    const bottom = spec.legend === false && !spec.xTitle ? 28 : C.legendMargin(legend);
+    const ph = H - top - bottom;
     // Halved, so a span past the largest double does not overflow.
     const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v / 2 - xr.lo / 2) / (xr.hi / 2 - xr.lo / 2)) * pw); };
     const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v / 2 - yr.lo / 2) / (yr.hi / 2 - yr.lo / 2)) * ph); };
@@ -697,14 +700,7 @@
     if (spec.yTitle) {
       out.push('<text transform="translate(14 ' + (top + ph / 2) + ') rotate(-90)" text-anchor="middle" fill="' + fg + '">' + xml(spec.yTitle) + "</text>");
     }
-    if (spec.legend !== false) {
-      let lx = left;
-      (spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; })).forEach(function (item) {
-        out.push('<rect x="' + lx + '" y="' + (H - 16) + '" width="10" height="10" fill="' + xml(item.colour) + '"/>');
-        out.push('<text x="' + (lx + 14) + '" y="' + (H - 7) + '" fill="' + fg + '">' + xml(item.label) + "</text>");
-        lx += 24 + item.label.length * 6.5;
-      });
-    }
+    out.push.apply(out, C.legendSvg(legend, H, fg));
     out.push("</svg>");
     return out.join("\n");
   }

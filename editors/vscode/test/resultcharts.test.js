@@ -219,3 +219,13 @@ test("an FX book's spread is in plain digits, and each SVG's left margin is as w
   assert.strictEqual(margins.length, 2);
   assert.ok(margins[0] === margins[1] && margins[0] > 64, margins.join(" "));
 });
+
+test("a map's legend of many categories wraps to rows inside the saved image (#3132)", () => {
+  const venues = [...Array(10).keys()].map((i) => "execution_venue_" + i);
+  const g = grid([["lat", 9, venues.map((_, i) => String(i))], ["lon", 9, venues.map((_, i) => String(i))], ["venue", 11, venues]]);
+  const svg = M.mapSvg(M.mapData(g, all(g), { size: -1, colour: 2 }, look), look, { width: 800, height: 400 }, WORLD);
+  const entries = [...svg.matchAll(/<text x="([\d.]+)" y="([\d.]+)" fill[^>]*>(execution_venue_\d)</g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]), label: m[3] }));
+  assert.deepStrictEqual(entries.map((e) => e.label), venues);
+  entries.forEach((e) => assert.ok(e.x + e.label.length * 6.5 <= 800, e.label + " ends at " + (e.x + e.label.length * 6.5)));
+  assert.strictEqual(new Set(entries.map((e) => e.y)).size, 2);
+});

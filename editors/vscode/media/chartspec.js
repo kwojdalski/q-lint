@@ -568,6 +568,62 @@
     return out;
   }
 
+  /// An SVG chart's legend in rows: `items` of {label, colour} from `left`
+  /// on, a row begun where the next entry would pass `right`. On one row,
+  /// four of ten long names started past the image's edge, so the file did
+  /// not say which line was which (#3132). `most` rows at most: the entries
+  /// there is no row for are counted in a last "and N more".
+  function legendRows(items, left, right, most) {
+    const wide = function (label) { return 24 + label.length * 6.5; };
+    const rows = [[]];
+    let x = left;
+    let k = 0;
+    for (; k < items.length; k++) {
+      const label = String(items[k].label);
+      if (x > left && x + wide(label) - 10 > right) {
+        if (rows.length >= most) {
+          break;
+        }
+        rows.push([]);
+        x = left;
+      }
+      rows[rows.length - 1].push({ x: x, label: label, colour: items[k].colour });
+      x += wide(label);
+    }
+    if (k < items.length) {
+      const last = rows[rows.length - 1];
+      const more = function () { return "and " + (items.length - k) + " more"; };
+      while (last.length > 1 && x + more().length * 6.5 > right) {
+        x = last.pop().x;
+        k--;
+      }
+      last.push({ x: x, label: more(), colour: null });
+    }
+    return rows;
+  }
+
+  /// The margin under an SVG chart's plot that legendRows() `rows` need:
+  /// the 64 pixels of one row, and 14 for each row more.
+  function legendMargin(rows) {
+    return 64 + 14 * Math.max(0, rows.length - 1);
+  }
+
+  /// legendRows() `rows` as SVG, the last row at the foot of an image `H`
+  /// high. `fill`, the text's colour, is escaped already.
+  function legendSvg(rows, H, fill) {
+    const out = [];
+    rows.forEach(function (row, r) {
+      const y = H - 16 - 14 * (rows.length - 1 - r);
+      row.forEach(function (e) {
+        if (e.colour) {
+          out.push('<rect x="' + e.x + '" y="' + y + '" width="10" height="10" fill="' + xml(e.colour) + '"/>');
+        }
+        out.push('<text x="' + (e.x + (e.colour ? 14 : 0)) + '" y="' + (y + 9) + '" fill="' + fill + '">' + xml(e.label) + "</text>");
+      });
+    });
+    return out;
+  }
+
   /// The chart chartData() describes as an SVG document, drawn here rather
   /// than by Chart.js, so it is vector graphics: axes with round ticks, each
   /// series as a line (filled for an area, stepped for a step), bars,
@@ -582,8 +638,6 @@
     const border = look.border || "#ccc";
     const y2 = Number.isInteger(opts.y2) && kind !== "histogram" && kind !== "candlestick" && data.datasets.some(function (d) { return d.column === opts.y2; }) ? opts.y2 : -1;
     const top = opts.title ? 40 : 16;
-    const bottom = 64;
-    const ph = H - top - bottom;
     const out = [
       '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + font + '" font-size="11">',
     ];
@@ -635,6 +689,13 @@
     const left = yMargin(labelled(main));
     const right = alt ? yMargin(labelled(alt)) : 20;
     const pw = W - left - right;
+    const colour = function (i) { return look.colours[i % look.colours.length]; };
+    // The legend, under the x axis's title, in as many rows as it takes
+    // (#3132): a third of the image at most.
+    const legend = kind === "candlestick" ? [] : legendRows(data.datasets.map(function (d, j) {
+      return { label: d.label + (d.column === y2 ? " (right)" : ""), colour: colour(j) };
+    }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)));
+    const ph = H - top - legendMargin(legend);
     // Gridlines and the left axis's labels; the right axis's labels.
     main.ticks.values.forEach(function (v) {
       const y = main.y(v).toFixed(1);
@@ -681,7 +742,6 @@
       }
       out.push.apply(out, xLabels(labels, top + ph + 16, W, xml(fg)));
     }
-    const colour = function (i) { return look.colours[i % look.colours.length]; };
     const band = n > 0 ? pw / n : pw;
     if (kind === "candlestick") {
       const ohlc = data.ohlc;
@@ -761,15 +821,7 @@
     if (xTitle) {
       out.push('<text x="' + (left + pw / 2) + '" y="' + (top + ph + 34) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(xTitle) + "</text>");
     }
-    if (kind !== "candlestick") {
-      let lx = left;
-      data.datasets.forEach(function (d, j) {
-        const label = d.label + (d.column === y2 ? " (right)" : "");
-        out.push('<rect x="' + lx + '" y="' + (H - 16) + '" width="10" height="10" fill="' + xml(colour(j)) + '"/>');
-        out.push('<text x="' + (lx + 14) + '" y="' + (H - 7) + '" fill="' + xml(fg) + '">' + xml(label) + "</text>");
-        lx += 24 + label.length * 6.5;
-      });
-    }
+    out.push.apply(out, legendSvg(legend, H, xml(fg)));
     out.push("</svg>");
     return out.join("\n");
   }
@@ -805,6 +857,9 @@
     short: short,
     yMargin: yMargin,
     xLabels: xLabels,
+    legendRows: legendRows,
+    legendMargin: legendMargin,
+    legendSvg: legendSvg,
     xml: xml,
   };
   if (typeof module !== "undefined" && module.exports) {
