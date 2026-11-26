@@ -17,6 +17,16 @@ test("the function at the cursor, with its parameters; a test is not one", () =>
   assert.strictEqual(functionAt(SRC, 0), undefined);
 });
 
+// Every name starting "test" was taken for a test (#2411).
+test("a function whose name merely starts with test is one; test_x, testX and .qt...test_x are not (#2411)", () => {
+  for (const [src, name] of [["testable:{x+1}\n", "testable"], ["tester:{[h] h}\n", "tester"], ["testdata:{[n] n?10}\n", "testdata"]]) {
+    assert.strictEqual(functionAt(src, 0)?.name, name, src);
+  }
+  for (const src of ["test_x:{[] 1b}\n", "testSpread:{[] 1b}\n", ".qt.fx.test_mid:{[] 1b}\n", "test:{[] 1b}\n"]) {
+    assert.strictEqual(functionAt(src, 0), undefined, src);
+  }
+});
+
 test("a typed or pattern parameter list takes one argument per slot (#2332)", () => {
   // KDB-X: `{[(u;v);w] u+v+w}` takes two arguments, `{[n:{x>0}] n}` one.
   assert.deepStrictEqual(functionAt("h:{[(u;v);w] u+v+w}\n", 0), { name: "h", params: ["arg1", "w"] });
