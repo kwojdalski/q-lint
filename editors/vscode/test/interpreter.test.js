@@ -148,7 +148,7 @@ test("the settings and commands are declared, on by default, and hidden while of
 
 /// The stand-in with a status bar item kept, an active editor of `language`,
 /// HOME and PATH pointed at `home`, and an Interpreters on a fresh context.
-function setUp(t, home, language = "q") {
+function setUp(t, home, language = "q", probes = undefined) {
   stub.reset();
   const items = [];
   const saved = { HOME: process.env.HOME, PATH: process.env.PATH, QHOME: process.env.QHOME, QLIC: process.env.QLIC };
@@ -170,6 +170,7 @@ function setUp(t, home, language = "q") {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     for (const d of context.subscriptions) d.dispose?.();
   });
+  if (probes !== undefined) void context.globalState.update("q-lint.interpreter.probes", probes);
   const interpreters = new Interpreters(context);
   return { interpreters, items, context, changeEditor: (lang) => ((vscode.window.activeTextEditor = lang ? { document: { languageId: lang } } : undefined), editorListeners.forEach((l) => l())) };
 }
@@ -211,6 +212,23 @@ test("the picker lists each q with its version, sets the workspace's qBinary, an
   assert.strictEqual(await stub.commands.get(I.INTERPRETER_COMMANDS.select)(), undefined);
   assert.match(stub.messages.at(-1)[1], /is not a program this user can run/);
   assert.strictEqual(stub.updates.length, 1);
+});
+
+// A null kept for the configured binary threw in the constructor, inside
+// activate, so nothing after it started; a string showed "q undefined
+// undefined" (#2510).
+test("a kept probe that is not one is left out: the status bar shows the binary's name, and nothing throws", (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-kept-"));
+  const q = fakeQ(path.join(home, "bin", "q"), "QLINTVER|4.1|2024.10.16|m64|2035.01.01");
+  for (const bad of [null, "4.1", 7, [], { major: "4.1" }, { major: 4.1, release: "2024.10.16", os: "m64" }, { major: "4.1", release: "2024.10.16", os: "m64", expiry: 5 }]) {
+    const { interpreters } = setUp(t, home, "q", { [q]: bad });
+    assert.strictEqual(interpreters.status(), "$(terminal) q", JSON.stringify(bad));
+  }
+  for (const bad of [null, "probes", [{ major: "4.1" }]]) {
+    assert.strictEqual(setUp(t, home, "q", bad).interpreters.status(), "$(terminal) q", JSON.stringify(bad));
+  }
+  const { interpreters } = setUp(t, home, "q", { [q]: { major: "4.1", release: "2024.10.16", os: "m64" } });
+  assert.strictEqual(interpreters.status(), "$(terminal) q 4.1 2024.10.16");
 });
 
 test("in a multi-root workspace the picker reads and writes the active file's folder's qBinary (#1333)", async (t) => {

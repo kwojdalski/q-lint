@@ -179,9 +179,22 @@ export class Interpreters {
     return readTerminal(get).qBinary;
   }
 
+  /// What each binary's probe printed, as kept: an entry that is not a
+  /// probe's - null, a string, one without its version - is left out. One
+  /// null threw in the constructor, inside `activate`, and nothing after it
+  /// started (#2510).
   private kept(): Record<string, Kept> {
-    const value = this.context.globalState.get<Record<string, Kept>>(PROBES_KEY, {});
-    return value !== null && typeof value === "object" ? value : {};
+    const value = this.context.globalState.get<unknown>(PROBES_KEY, {});
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+    const text = (v: unknown): v is string => typeof v === "string";
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, Kept] => {
+        const k = entry[1] as Record<string, unknown> | null;
+        return typeof k === "object" && k !== null && text(k.major) && text(k.release) && text(k.os) && (k.expiry === undefined || text(k.expiry));
+      }),
+    );
   }
 
   /// The licence file `file` would read with `env` now, and when it was
