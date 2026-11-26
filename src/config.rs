@@ -1581,8 +1581,18 @@ pub fn absolute(path: &Path) -> PathBuf {
     if is_link(path)
         && let Some(name) = path.file_name()
     {
-        return absolute(holder(path)).join(name);
+        return resolved(holder(path)).join(name);
     }
+    resolved(path)
+}
+
+/// `path` resolved through every link in it, `path` itself included, but
+/// for a directory that is a link out of the directory holding it, which is
+/// kept by name. The directories a linked file sits in are resolved by this,
+/// not by `absolute`: a directory linked in from inside its holder named the
+/// linked file under the link while the real file beside it was reported
+/// under the target (#2761).
+fn resolved(path: &Path) -> PathBuf {
     if let Some(kept) = under_link(path) {
         return kept;
     }
@@ -1594,7 +1604,7 @@ pub fn absolute(path: &Path) -> PathBuf {
         if ancestor.exists()
             && let Ok(rest) = lexical.strip_prefix(ancestor)
         {
-            return absolute(ancestor).join(rest);
+            return resolved(ancestor).join(rest);
         }
     }
     lexical
@@ -1611,11 +1621,11 @@ fn holder(path: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-/// `path` under the nearest directory above it that is a link out of the
-/// directory holding it, with that link kept and only the rest resolved.
+/// `path` under the nearest directory at or above it that is a link out of
+/// the directory holding it, with that link kept and only the rest resolved.
 /// None when there is no such link, or `path` leaves it again by a `..`.
 fn under_link(path: &Path) -> Option<PathBuf> {
-    let (link, target) = path.ancestors().skip(1).find_map(|dir| {
+    let (link, target) = path.ancestors().find_map(|dir| {
         if !is_link(dir) {
             return None;
         }
@@ -1624,7 +1634,12 @@ fn under_link(path: &Path) -> Option<PathBuf> {
         outside.then_some((dir, target))
     })?;
     let real = fs::canonicalize(path).ok()?;
-    Some(absolute(link).join(real.strip_prefix(target).ok()?))
+    let rest = real.strip_prefix(target).ok()?;
+    let kept = absolute(link);
+    Some(match rest.as_os_str().is_empty() {
+        true => kept,
+        false => kept.join(rest),
+    })
 }
 
 fn lexical(path: &Path) -> PathBuf {
