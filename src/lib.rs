@@ -10070,19 +10070,42 @@ fn lint_rules(
         // And at the start of each statement after a `;` or a lambda's `{`:
         // `x:1;my_var:2` and `f:{l:1;l}` assign as the same lines broken
         // after the `;` do (#662).
+        // And each name after it in a chain, and each a pattern binds: q 5
+        // runs `a:my_var:1` and `(l;m):3 4` as the assignments they are
+        // (#2730).
+        let mut targets: Vec<(usize, &str)> = vec![];
         for m in re!(r"(?m)(?:^|[;{])[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures_iter(line) {
-            let at = offset + m.get(1).unwrap().start();
-            if line[m.get(0).unwrap().end()..].starts_with([':', '='])
-                || in_parens[at]
-                || in_qsql_phrase(code, at)
-            {
-                continue;
+            let (mut name, mut end) = (m.get(1).unwrap().range(), m.get(0).unwrap().end());
+            loop {
+                let at = offset + name.start;
+                if line[end..].starts_with([':', '=']) || in_parens[at] || in_qsql_phrase(code, at)
+                {
+                    break;
+                }
+                targets.push((name.start, &line[name]));
+                let Some(next) =
+                    re!(r"^[ \t]*(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?").captures(&line[end..])
+                else {
+                    break;
+                };
+                let next_name = next.get(1).unwrap();
+                name = end + next_name.start()..end + next_name.end();
+                end += next.get(0).unwrap().end();
             }
-            let target = m.get(1).unwrap();
-            let text = target.as_str();
+        }
+        for (open, close, _) in semantics::pattern_targets(line) {
+            if !in_qsql_phrase(code, offset + open) {
+                targets.extend(
+                    pattern_names(&line[open..=close])
+                        .into_iter()
+                        .map(|name| (name.as_ptr() as usize - line.as_ptr() as usize, name)),
+                );
+            }
+        }
+        for (start, text) in targets {
             if text.contains('_') {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS001",
                     format!("`{text}` contains `_`, which is also the drop operator"),
                 );
@@ -10097,7 +10120,7 @@ fn lint_rules(
                 && !text.starts_with('.')
             {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS002",
                     format!(
                         "`{text}` has a dot but does not start with one, so it reads as a namespace it is not"
@@ -10106,7 +10129,7 @@ fn lint_rules(
             }
             if text == "l" {
                 add(
-                    offset + target.start(),
+                    offset + start,
                     "QS003",
                     "`l` is hard to tell from `1` in many fonts".into(),
                 );

@@ -326,6 +326,19 @@ f:{[p;q] r:p+q; r}
 === clean profile: styleq | a qSQL column alias is not a local
 f:{[t] select y:a+b from t}
 
+=== QS001 QS002 profile: styleq | each name in a chain is assigned (#2730; q 5: after a:my_var:1 and b:c.d:2, (my_var;c.d) is 1 2)
+a:my_var:1
+b:c.d:2
+
+=== QS003 profile: styleq | and so is each name a pattern binds (#2730; q 5: (l;m):3 4 sets l to 3)
+(l;m):3 4
+
+=== clean profile: styleq | a name the chain only reads, a comparison, and a column a query names are not assigned (#2730)
+t:([]a:1 2)
+a:b:my_var
+c:b=my_var
+r:u:select my_col:a from t
+
 === QS010 QS001 profile: styleq | a snake_case name in a file that otherwise writes camelCase
 tradeCount:0
 lastPrice:0n
