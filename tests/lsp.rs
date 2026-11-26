@@ -4464,6 +4464,52 @@ fn a_file_opened_by_another_spelling_reports_under_one_uri() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// A file renamed in case alone, on a disk that ignores case, is one file
+/// under a new name: the watcher says lib.q is deleted and Lib.q created,
+/// and lib.q still answers on the disk - as Lib.q - so the key it was read
+/// under was never forgotten. Its diagnostics stayed under the old name,
+/// beside the new one's, and Go to Definition listed both (#2817). A disk
+/// that tells the two names apart has no such rename to make.
+#[test]
+fn a_file_renamed_in_case_alone_is_forgotten_under_its_old_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("lib.q"), RESERVED_PARAM).unwrap();
+    if !root.join("LIB.Q").exists() {
+        return;
+    }
+    let (old, new, app) = (
+        file_uri(&root.join("lib.q")),
+        file_uri(&root.join("Lib.q")),
+        file_uri(&root.join("app.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    assert_eq!(codes_of(&server.diagnostics_for(&old)), ["QF001"]);
+    std::fs::rename(root.join("lib.q"), root.join("Lib.q")).unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":old,"type":3},{"uri":new,"type":1}]}}),
+    );
+    let reported = last_published(&mut server, &[&old, &new]);
+    assert_eq!(reported[&old], Vec::<String>::new(), "cleared");
+    assert_eq!(reported[&new], ["QF001"]);
+    server.open(&app, "r:f 1\n");
+    server.send(
+        json!({"jsonrpc":"2.0","id":81,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":app},"position":{"line":0,"character":2}}}),
+    );
+    let reply = server.until(|m| m["id"] == 81);
+    let found: Vec<&str> = reply["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| place["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, [new.as_str()], "{reply}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 /// A symlinked file reports closed under its own name and the
 /// configuration above it, as `qlinter .` lints it: it reported under its
 /// target's URI - a file outside the workspace - with the target's

@@ -419,14 +419,18 @@ impl Index {
 
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
-        let key = file_key(path);
-        self.reached.remove(&key);
-        match self.files.remove(&key) {
+        self.forget_keyed(&file_key(path))
+    }
+
+    /// `forget` for the file keyed `key`.
+    fn forget_keyed(&mut self, key: &str) -> bool {
+        self.reached.remove(key);
+        match self.files.remove(key) {
             Some(old) => {
                 if !old.withheld {
                     self.ws.remove(&old.placed);
                 }
-                self.ws.place(Path::new(&key), &Placement::default());
+                self.ws.place(Path::new(key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
                 self.stale = true;
@@ -532,18 +536,33 @@ impl Index {
     /// the open documents, whose buffers still hold their text. A watcher
     /// reports a deleted folder as one event for the folder, not one per
     /// file inside it (#543).
+    ///
+    /// By the name the event gives it, below the real path of the folder it
+    /// was in, which is the key it was read under. `file_key` of the whole
+    /// path follows whatever answers to it now, and on a disk that ignores
+    /// case lib.q renamed Lib.q still answers to lib.q - as Lib.q, a key
+    /// the index does not hold yet, so the old one was never forgotten and
+    /// the file was listed twice (#2817). Each is forgotten by its key as
+    /// it stands, for the same reason, and a key that is an open document's
+    /// by the disk's answer is that document's still.
     fn remove_tree(&mut self, path: &str, docs: &Documents) -> bool {
-        let gone = std::path::PathBuf::from(file_key(path));
+        let given = Path::new(path);
+        let gone = match (given.parent(), given.file_name()) {
+            (Some(dir), Some(name)) => Path::new(&file_key(&dir.to_string_lossy())).join(name),
+            _ => file_key(path).into(),
+        };
         let open: Vec<String> = docs.keys().map(|uri| file_key(&path_of(uri))).collect();
         let under: Vec<String> = self
             .files
             .keys()
-            .filter(|k| std::path::Path::new(k).starts_with(&gone) && !open.contains(k))
+            .filter(|k| {
+                Path::new(k).starts_with(&gone) && !open.contains(k) && !open.contains(&file_key(k))
+            })
             .cloned()
             .collect();
         let mut changed = false;
         for key in under {
-            changed |= self.forget(&key);
+            changed |= self.forget_keyed(&key);
         }
         changed | self.settle()
     }
