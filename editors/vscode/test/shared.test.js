@@ -100,6 +100,29 @@ test("a process is written into the list in place of its label, with no password
   assert.deepStrictEqual(JSON.parse(two), { note: "kept", processes: [{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "x", host: "y", port: 2 }] });
 });
 
+test("sharing a process again keeps what was written into its entry by hand (#3107)", () => {
+  const file = JSON.stringify({
+    team: "fx",
+    processes: [
+      { label: "rdb", host: "old", port: 1, user: "was", comment: "kept by hand", tls: true, owner: "desk", timeout: 9, password: "hunter2", notes: { on: ["call"] } },
+      { label: "hdb", host: "h", port: 3, owner: "desk" },
+    ],
+  });
+  const text = withShared(file, { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1" });
+  assert.deepStrictEqual(JSON.parse(text), {
+    team: "fx",
+    processes: [
+      // The process's own fields are the process's: no user, tls or timeout it has not.
+      { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1", comment: "kept by hand", owner: "desk", notes: { on: ["call"] } },
+      { label: "hdb", host: "h", port: 3, owner: "desk" },
+    ],
+  });
+  assert.deepStrictEqual(Object.keys(JSON.parse(text).processes[0]), ["label", "host", "port", "tags", "init", "comment", "owner", "notes"]);
+  assert.ok(!text.includes("hunter2"));
+  // Read back, it is the process shared.
+  assert.deepStrictEqual(readSharedFile(text, true).processes[0], { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1" });
+});
+
 test("a file whose processes is not a list is not written over, and a file with no list keeps its other fields (#1886)", () => {
   const gw = { label: "gw", host: "h", port: 1, tags: [] };
   for (const text of ['{"processes":{"rdb":{"host":"a","port":1},"hdb":{"host":"b","port":2}},"note":"desk list"}', '{"processes":"rdb"}', '{"processes":null}', '"rdb"', "42", "null", "true"]) {

@@ -28,6 +28,10 @@ export function readShared(get: <T>(key: string, fallback: T) => T): { enabled: 
 /// The fields a shared entry may not hold, ignoring case.
 const SECRET = /^(password|passwd|pwd|pass|secret|token|apikey|api_key|credentials?)$/i;
 
+/// The fields of an entry that are a process's: what Add to Shared Process
+/// List writes, and writes over.
+const READ = new Set<string>(["label", "host", "port", "user", "tags", "tls", "server", "init", "initFile", "ssh", "gateway", "launch", "credentialCommand", "timeout", "evaluation"]);
+
 export interface SharedList {
   processes: Process[];
   /// What was wrong with the entries skipped, and what was dropped.
@@ -142,8 +146,8 @@ export function secretsWarning(labels: string[]): string {
 }
 
 /// The list's text with `process` in it, in place of an entry of its label
-/// or after the rest, written as an export writes one: a saved process holds
-/// no password. `text` undefined: a new file. Throws a SyntaxError when the
+/// (whose other fields it keeps) or after the rest, written as an export
+/// writes one: a saved process holds no password. `text` undefined: a new file. Throws a SyntaxError when the
 /// text there is not JSON, and an Error when it is JSON that holds no list
 /// to add to - a `processes` that is not a list, or no object at all - so
 /// what the file does hold is not written over (#1886). An object with no
@@ -163,7 +167,12 @@ export function withShared(text: string | undefined, process: Process): string {
     return typeof label === "string" && label.trim() === process.label;
   });
   if (at >= 0) {
-    holder.processes[at] = entry;
+    // What the entry holds that is no part of a process stays in it: the
+    // file is kept by hand, and a `comment` or an `owner` written into the
+    // entry was gone with the entry written anew (#3107). In the order the
+    // entry had them, after the process's own; a secret is not kept.
+    const kept = Object.entries(holder.processes[at] as Record<string, unknown>).filter(([k]) => !READ.has(k) && !SECRET.test(k));
+    holder.processes[at] = { ...entry, ...Object.fromEntries(kept) };
   } else {
     holder.processes.push(entry);
   }
