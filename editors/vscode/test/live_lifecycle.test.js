@@ -709,3 +709,31 @@ test("a query sent while a watched query's run is out waits for that run (#3029)
   await watching;
   await stub.commands.get("q-lint.stopWatchingQuery")();
 });
+
+// A query run with no connection connects first, and that connect was
+// nobody's wait: no timeout ended it, the bar said "not connected", and
+// Abort said no query was running while one waited to be sent.
+test("the connect a query starts is its wait: shown waiting, stopped by Abort, ended at q-lint.query.timeout (#3019)", async (t) => {
+  const a = await fakeQ(() => 1, 1500);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.timeout": 1 });
+  stub.picks.push((options) => options.items[0]);
+  let started = Date.now();
+  const first = live.run("1+1");
+  await until(() => a.logins.length === 1);
+  assert.match(live.api().statusText(), /a waiting/);
+  await stub.commands.get("q-lint.abortQuery")();
+  await first;
+  assert.ok(Date.now() - started < 900, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the query waiting to be sent to a; it was not run."]]);
+  assert.doesNotMatch(live.api().statusText(), /waiting/);
+  // A file's bound process, connected to for its query, as well.
+  stub.messages.length = 0;
+  started = Date.now();
+  await live.runOnProcess("2+2", "a", { what: "query" });
+  assert.ok(Date.now() - started < 1400, `settled after ${Date.now() - started} ms`);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: the query timed out after 1 s (q-lint.query.timeout) waiting to be sent to a; it was not run."]]);
+  assert.strictEqual(live.activeLabel(), undefined, "the connect was stopped with the query");
+  await sleep(50);
+  assert.deepStrictEqual(live.history(), []);
+});

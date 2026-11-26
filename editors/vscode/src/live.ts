@@ -1227,7 +1227,7 @@ export class Live {
       );
       return false;
     }
-    return this.connectTo(bound);
+    return this.connectForQuery(bound);
   }
 
   /// Whether Toggle Unlimited Query is on: a pane that runs code asks too (#2362).
@@ -2289,6 +2289,15 @@ export class Live {
   // --- connections
 
   async connectTo(row?: ProcessArg): Promise<boolean> {
+    const process = await this.toConnect(row);
+    return process !== undefined && this.openChosen(process);
+  }
+
+  /// The process `connectTo` connects to: `row`, or the one picked, its
+  /// password asked for when it has none. Undefined when the user gave
+  /// neither. The part of a connect that is the user's own time, which no
+  /// query's timeout counts (#3019).
+  private async toConnect(row?: ProcessArg): Promise<Process | undefined> {
     const process = await this.chosen(row, "Connect to which q process?", true);
     // A connect the user asks for stops an automatic reconnect, and the
     // tries after its next drop start again.
@@ -2297,7 +2306,7 @@ export class Live {
       this.reconnectTries = undefined;
     }
     if (process === undefined) {
-      return false;
+      return undefined;
     }
     // A discovered process's user has no password stored until asked for one.
     const saved = process.server === undefined;
@@ -2310,12 +2319,19 @@ export class Live {
         prompt: "Kept in VS Code's secret storage.",
       });
       if (password === undefined) {
-        return false;
+        return undefined;
       }
       await this.context.secrets.store(this.passwordKey(process), password);
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
+    return process;
+  }
+
+  /// Connect to `process`, one `toConnect` gave. Whether it connected.
+  private async openChosen(process: Process): Promise<boolean> {
+    const saved = process.server === undefined;
+    const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     const outcome: { refused?: boolean } = {};
     const connected = await this.open(process, false, false, this.disconnects, outcome);
     // A discovered process cannot be edited, so a password that was refused
@@ -2935,7 +2951,7 @@ export class Live {
         );
         return;
       }
-      if (!(await this.connectTo(bound))) {
+      if (!(await this.connectForQuery(bound))) {
         return;
       }
     }
@@ -3216,6 +3232,20 @@ export class Live {
   /// caller's wait alone (#2560); `waited` is how long it was. `own`: the
   /// call is the run others wait for (`yielding`), not one waiting for it.
   private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal, own = false): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+    const waiting = this.waiting(seconds, source, signal);
+    try {
+      const ready = await this.readyAfter(waiting.wait, own);
+      return ready === undefined ? undefined : { ...ready, waited: waiting.waited() };
+    } finally {
+      waiting.done();
+    }
+  }
+
+  /// A query's wait before it is sent: `wait` waits for what is in its way
+  /// - whether that settled, rather than the wait being stopped, which is
+  /// said - shown in the status bar, bounded by `seconds` over all of its
+  /// calls and ended by Abort or `signal`; `done` ends it.
+  private waiting(seconds: number, source: string, signal?: AbortSignal): { wait: (what: Promise<unknown> | undefined) => Promise<boolean>; waited: () => number; done: () => void } {
     const waiter = { started: 0, stop: new AbortController() };
     const stop = (): void => waiter.stop.abort();
     signal?.addEventListener("abort", stop, { once: true });
@@ -3252,16 +3282,51 @@ export class Live {
       }
       return settled;
     };
-    try {
-      const ready = await this.readyAfter(wait, own);
-      return ready === undefined ? undefined : { ...ready, waited: waiter.started === 0 ? 0 : Date.now() - waiter.started };
-    } finally {
-      disarm();
-      signal?.removeEventListener("abort", stop);
-      if (this.waiters.delete(waiter)) {
-        this.showStatus();
-      }
+    return {
+      wait,
+      waited: () => (waiter.started === 0 ? 0 : Date.now() - waiter.started),
+      done: () => {
+        disarm();
+        signal?.removeEventListener("abort", stop);
+        if (this.waiters.delete(waiter)) {
+          this.showStatus();
+        }
+      },
+    };
+  }
+
+  /// Connect to `row`, or the process picked, as the first step of a query:
+  /// once the process is chosen the connect is the query's wait, shown in
+  /// the status bar, ended at the query's timeout and stopped by Abort,
+  /// where it was nobody's and Abort said no query was running (#3019).
+  private async connectForQuery(row?: ProcessArg): Promise<boolean> {
+    const process = await this.toConnect(row);
+    if (process === undefined) {
+      return false;
     }
+    const on = this.setting(readAdmin).processTimeout;
+    const waiting = this.waiting(effectiveTimeout(process, this.controls.settings().timeout, on), timeoutSource(process, on));
+    try {
+      return await this.openWaited(process, waiting.wait);
+    } finally {
+      waiting.done();
+    }
+  }
+
+  /// Connect to `process` under a query's `wait`: a wait that is stopped
+  /// stops the connect, which is the query's own.
+  private async openWaited(process: Process, wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<boolean> {
+    const connect = this.openChosen(process);
+    if (await wait(connect)) {
+      return connect;
+    }
+    if (this.connecting !== undefined && this.connectingTo === this.passwordKey(process)) {
+      this.reconnectStopped = true;
+      this.stopConnect?.abort();
+      // One running its connect script, which may never answer.
+      this.opening?.abort();
+    }
+    return false;
   }
 
   private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>, own: boolean): Promise<{ connection: QConnection; process: Process } | undefined> {
@@ -3274,8 +3339,12 @@ export class Live {
     if (this.connection === undefined && this.connecting !== undefined && !(await wait(this.connecting))) {
       return undefined;
     }
-    if (this.connection === undefined && !(await this.connectTo())) {
-      return undefined;
+    if (this.connection === undefined) {
+      // The connect is this query's wait too (#3019).
+      const process = await this.toConnect();
+      if (process === undefined || !(await this.openWaited(process, wait))) {
+        return undefined;
+      }
     }
     const before = this.connection;
     // Each read out in turn, and a run of q-lint's own: another may have
@@ -4051,7 +4120,7 @@ export class Live {
         void window.showInformationMessage(plainMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`));
         return;
       }
-      if (!(await this.connectTo(label))) {
+      if (!(await this.connectForQuery(label))) {
         return;
       }
     }
