@@ -1501,6 +1501,13 @@ f:{s:`a; "a\"b"=s}
 f:{n:1 2; "",n}
 g:{c:"a"; "b"=c}
 
+=== clean | an underscore straight after the first backtick is drop, and the local no symbol (#2889; q 5: f[] is 'a, where a is undefined, not 'type)
+f:{n:`_a; n+1}
+
+=== QT035 | while a later symbol of a vector, or the first, may start with one or with a digit (#2889; q 5: each is 'type)
+g:{n:`a`_b; n+1}
+h:{n:`1a; n+1}
+
 === QF022 | a local a `::` multiple assignment writes is no longer typed by its first literal (#2119; q 5: a[] is 3, b[] is 1b, c[] is 3, and no global s after any)
 a:{s:`a; (s;n)::(1;2); s+n}
 b:{s:`a; (s;n)::(1;2); s=1}

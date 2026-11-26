@@ -116,7 +116,9 @@ fn string_length(text: &str) -> Option<usize> {
 /// How many symbols `` `a`b `` writes, when `text` is only backticks and
 /// the characters a symbol literal continues with. A `/` continues one only
 /// after a `:` in it: KDB-X's `` `:a/b `` is a symbol, `` `a/ `` a derived
-/// function and `` `.a/b `` an error (#1245).
+/// function and `` `.a/b `` an error (#1245). An underscore straight after
+/// the first backtick is drop, not a name's: KDB-X parses `` `_a `` as
+/// `` ` _ a `` and raises 'a, though `` `a`_b `` is two symbols.
 fn symbols(text: &str) -> Option<usize> {
     let mut colon = false;
     text.chars()
@@ -140,6 +142,9 @@ fn single(token: &str) -> Option<i16> {
         && bits.bytes().all(|b| b == b'0' || b == b'1')
     {
         return Some(if bits.len() == 1 { -1 } else { 1 });
+    if text.starts_with("`_") {
+        return None;
+    }
     }
     if let Some(hex) = token.strip_prefix("0x") {
         if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
