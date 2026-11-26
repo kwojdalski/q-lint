@@ -11,7 +11,10 @@
 // of the file in the directory the database was loaded from. Only the
 // newest `lim` partitions' counts are sent; the totals cover them all. A
 // table missing from a partition fails `.Q.cn`: its counts are null, and
-// so is its total, not the 0 `sum` makes of nulls (#1566).
+// so is its total, not the 0 `sum` makes of nulls (#1566). Under a
+// `.Q.view`, `.Q.pv` and `.Q.cn` hold only the viewed partitions: the
+// partitions on disk are `.Q.PV`, and the browser says the figures are the
+// view's, N of M partitions, rather than give them as the database (#2532).
 //
 // A process with no partitions and no partitioned tables has loaded no
 // partitioned database - kdb+ has no `.Q.pv` then, PeachQ an empty one - and
@@ -28,11 +31,11 @@ export const HDB = [
   " c:{[n;t]@[{\"f\"$.Q.cn get x};t;{[n;e]n#0n}n]}[count pv]each pt;",
   " o:(tables`.)except pt;",
   " o:o where{@[{0b~.Q.qp get x};x;0b]}each o;",
-  " `hdb`pf`root`segments`symbytes`npart`parts`tables`counts`totals`others`otherrows!(",
+  " `hdb`pf`root`segments`symbytes`npart`allpart`parts`tables`counts`totals`others`otherrows!(",
   "  1b;string .Q.pf;system\"cd\";",
   "  @[{string distinct .Q.PD};::;()];",
   "  \"f\"$@[hcount;`:sym;0n];",
-  "  \"f\"$count pv;string(neg m)sublist pv;",
+  "  \"f\"$count pv;\"f\"$count$[`PV in key`.Q;.Q.PV;.Q.pv];string(neg m)sublist pv;",
   "  string pt;(neg m)sublist'c;{$[all null x;0n;sum x]}each c;",
   "  string o;\"f\"${@[{count get x};x;0n]}each o)}",
 ].join("\n");
@@ -49,6 +52,8 @@ export type Hdb =
       segments: string[];
       symBytes: number | null;
       partitionCount: number;
+      /// Partitions on disk (`.Q.PV`): more than `partitionCount` under a `.Q.view`.
+      allPartitions?: number;
       /// The newest partitions, oldest first, and per table their rows in
       /// each of them; `totals` is over every partition.
       partitions: string[];
@@ -83,6 +88,7 @@ export function readHdb(raw: unknown): Hdb {
     segments: strings(r.segments),
     symBytes: number(r.symbytes),
     partitionCount: number(r.npart) ?? 0,
+    allPartitions: Math.max(number(r.allpart) ?? 0, number(r.npart) ?? 0),
     partitions: strings(r.parts),
     tables: names.map((name, i) => ({ name, counts: numbers(counts[i]), total: totals[i] ?? null })),
     splayed: others.map((name, i) => ({ name, rows: otherRows[i] ?? null })),
@@ -108,6 +114,9 @@ export function hdbTree(h: Hdb, process: string): InfoNode[] {
   const first = h.partitions[0];
   const last = h.partitions[h.partitions.length - 1];
   const shown = h.partitions.length;
+  const all = h.allPartitions ?? h.partitionCount;
+  const viewed = all > h.partitionCount;
+  const partitionText = viewed ? `${h.partitionCount.toLocaleString("en-US")} of ${count(all, "partition")} (.Q.view)` : count(h.partitionCount, "partition");
   const range = shown === 0 ? "no partitions" : shown === h.partitionCount ? `${first} – ${last}` : `… ${last}`;
   const database: InfoNode = {
     label: "Database",
@@ -116,7 +125,17 @@ export function hdbTree(h: Hdb, process: string): InfoNode[] {
     children: [
       { label: "partition field", description: h.field },
       { label: "root", description: h.root, tooltip: h.root },
-      { label: "partitions", description: count(h.partitionCount, "partition") },
+      { label: "partitions", description: partitionText },
+      ...(viewed
+        ? [
+            {
+              label: ".Q.view",
+              description: `${count(h.partitionCount, "partition")} in view of ${all.toLocaleString("en-US")}`,
+              tooltip: "A .Q.view is in force: the partitions, rows and totals shown are the viewed ones only. .Q.view[] clears it.",
+              icon: "warning",
+            },
+          ]
+        : []),
       ...(shown > 0 && shown === h.partitionCount ? [{ label: "range", description: `${first} – ${last}` }] : []),
       { label: "sym file", description: h.symBytes === null ? "none in the root" : bytes(h.symBytes) },
       ...(h.segments.length > 1 || (h.segments.length === 1 && h.segments[0] !== ":.")
@@ -127,7 +146,7 @@ export function hdbTree(h: Hdb, process: string): InfoNode[] {
   const newest = [...h.partitions.keys()].reverse();
   const partitions: InfoNode = {
     label: "Partitions",
-    description: `${count(h.partitionCount, "partition")} · ${range}`,
+    description: `${partitionText} · ${range}`,
     icon: "calendar",
     children: [
       ...newest.map((i): InfoNode => {
@@ -146,7 +165,7 @@ export function hdbTree(h: Hdb, process: string): InfoNode[] {
         const empty = t.counts.filter((n) => n === 0).length;
         return {
           label: t.name,
-          description: `partitioned · ${rows(t.total)}${empty > 0 ? ` · empty in ${count(empty, "partition")} shown` : ""}`,
+          description: `partitioned · ${rows(t.total)}${viewed ? " in view" : ""}${empty > 0 ? ` · empty in ${count(empty, "partition")} shown` : ""}`,
           icon: "table",
         };
       }),

@@ -156,6 +156,47 @@ test("a process that does not answer is given up at q-lint.query.timeout, and Ca
   assert.deepStrictEqual(cancelled.map((o) => [o.process, "found" in o ? "found" : o.error]), [["rdb", "found"], ["hung", "cancelled before it answered"]]);
 });
 
+// A process still connecting when the search was cancelled finished its
+// handshake later, and was sent the search all the same (#2554).
+test("cancelled while a process is still connecting, the search is never sent to it", async (t) => {
+  const net = require("node:net");
+  const { serialize, deserialize } = require("node-q/lib/c.js");
+  const sent = [];
+  const sockets = new Set();
+  const slow = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let shook = false;
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        setTimeout(() => socket.destroyed || socket.write(Buffer.from([3])), 600);
+        return;
+      }
+      sent.push(deserialize(chunk));
+      const out = serialize(null);
+      out.writeUInt8(2, 1);
+      socket.write(out);
+    });
+  });
+  await new Promise((r) => slow.listen(0, "127.0.0.1", r));
+  t.after(() => (sockets.forEach((s) => s.destroy()), slow.close()));
+  await setUp(t, { tags: ["eu"], answer, register: registerFindInProcesses, config: { "query.timeout": 0 }, more: [{ label: "busy", port: slow.address().port, tags: ["eu"] }] });
+  const { vscode } = require("./vscode_stub.js");
+  const shown = vscode.window.withProgress;
+  t.after(() => (vscode.window.withProgress = shown));
+  vscode.window.withProgress = async (o, task) => {
+    const listeners = [];
+    const token = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+    setTimeout(() => ((token.isCancellationRequested = true), listeners.forEach((f) => f())), 200);
+    return task({ report() {} }, token);
+  };
+  const outcomes = await stub.commands.get(PROCESS_TOOL_COMMANDS.findInProcesses)("eu", "trade", false);
+  assert.deepStrictEqual(outcomes.map((o) => [o.process, "found" in o ? "found" : o.error]), [["rdb", "found"], ["busy", "cancelled before it answered"]]);
+  await new Promise((r) => setTimeout(r, 900));
+  assert.deepStrictEqual(sent.map((m) => (Array.isArray(m) ? m[0] : m)).filter((h) => h === SEARCH), []);
+});
+
 // q's lower changes A to Z only: "ünï" found nothing in "Ünï", and the box
 // said the search ignored case.
 test("the text box says only A to Z are matched in either case, as q's lower does (#2166)", async (t) => {

@@ -16,7 +16,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { serialize, deserialize } = require("node-q/lib/c.js");
 const { Live } = require("../out/live.js");
-const { registerDbTools } = require("../out/dbtoolsview.js");
+const { registerDbTools, TABLES } = require("../out/dbtoolsview.js");
 const { Dashboards, tileContent } = require("../out/dashboardview.js");
 const { TickerplantLog } = require("../out/tplogview.js");
 const { DB_COMMANDS, DB_SETTINGS } = require("../out/dbfeatures.js");
@@ -163,6 +163,33 @@ test("off, every database command refuses, says how to turn it on, and sends not
   assert.strictEqual(opened.length, 0);
   assert.strictEqual(dashboards.timerCount(), 0);
   assert.strictEqual(log.port, undefined);
+});
+
+// Each checks its switch again after every pick: turned off while one is
+// open, it goes no further and sends nothing more (#2420).
+test("a database command turned off while its pick is open sends nothing more", async (t) => {
+  const { opened } = capture();
+  const { q, live } = await setUp(t);
+  answering.set(TABLES, [["trade"], ["partitioned"]]);
+  t.after(() => answering.delete(TABLES));
+  await live.connectTo("hdb");
+  const cases = [
+    [DB_COMMANDS.document, "databaseDocumenter.enable", "Markdown"],
+    [DB_COMMANDS.checkPartitions, "hdbBrowser.partitionCheck.enable", "Quick check"],
+    [DB_COMMANDS.adviseAttributes, "processExplorer.attributeAdvisor.enable", "trade"],
+    [DB_COMMANDS.manageColumn, "hdbBrowser.columnManager.enable", "trade"],
+    [DB_COMMANDS.migrateSchema, "schemaMigration.enable", "trade"],
+    [DB_COMMANDS.testData, "testDataGenerator.enable", "trade"],
+  ];
+  for (const [command, key, answer] of cases) {
+    stub.config.user[key] = true;
+    stub.picks.push(() => ((stub.config.user[key] = false), answer));
+    const before = q.sent.length;
+    const said = await stub.commands.get(command)();
+    assert.match(String(said), /turned off/, command);
+    assert.deepStrictEqual(q.sent.slice(before).map((m) => (Array.isArray(m) ? m[0] : m)).filter((l) => l !== TABLES), [], command);
+  }
+  assert.strictEqual(opened.length, 0);
 });
 
 test("on, the documenter reads the process once and opens its document", async (t) => {

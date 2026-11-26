@@ -5,11 +5,12 @@
 // Free of any `vscode` import, so node tests it; `dbtoolsview.ts` asks the
 // process and opens the document.
 //
-// One read, defining nothing: `meta` of each table in the root (a
+// One read, defining nothing: `meta` of each table in the root and in every
+// namespace that is not q's own (a
 // partitioned one's reads its last partition's schema), its rows counted as
 // the explorer counts them (`.Q.cn` for a partitioned table), and the
 // functions of the root and of every namespace that is not q's own (KDB-X's
-// SQL `.s` among them, #1576), at most
+// SQL `.s` among them, #1576), nested ones too (#2413), at most
 // `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
 // projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
@@ -20,7 +21,14 @@ import { blockDepth } from "./statements";
 export const DOCUMENT = [
   "{[lim]",
   " m:\"j\"$lim;",
-  " ts:m sublist tables`.;",
+  " ns:` sv'`,'asc(key`)except``q`Q`h`j`o`s`z`m`qlint;",
+  " ns:ns where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each ns;",
+  // Namespaces however deep: a child is a dictionary whose first key is
+  // the null symbol, as Find in Processes walks them (#2413).
+  " todo:ns;ns:`$();",
+  " while[count todo;n:first todo;todo:1_todo;ns,:n;d:get n;k:(key d)except`;",
+  "  todo,:` sv'n,'k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  " ts:m sublist(tables`.),raze{@[{` sv'x,'tables x};x;`$()]}each ns;",
   " one:{[t] v:get t;p:.Q.qp v;part:1b~p;disk:part|0b~p;mt:0!meta v;",
   "  `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;",
   "   string$[part;`partitioned;disk;`splayed;99h=type v;`keyed;`table];",
@@ -30,14 +38,11 @@ export const DOCUMENT = [
   // A table `meta` refuses - its enumeration domain gone, say - is an entry
   // with q's error, as SCHEMA's is, and not the end of the document (#1868).
   " bad:{[t;e] `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;\"\";0n;();();();();();$[10h=type e;e;string e])};",
-  " ns:(key`)except`q`Q`h`j`o`s`z`m`qlint;",
-  " ns:ns where not null ns;ns:ns where{99h=type get` sv`,x}each ns;",
-  // A dictionary held at a dotted name is listed among the namespaces, and
-  // `\f` of one that is no context signals: it has no functions (#1867).
-  " fs:m sublist(system\"f\"),raze{@[{` sv'(` sv`,x),/:system\"f \",string` sv`,x};x;`$()]}each ns;",
-  " `pf`parts`tables`fnames`fparams`ftexts!(",
+  // `\f` of a namespace that is no context signals: it has no functions (#1867).
+  " fs:m sublist(system\"f\"),raze{@[{` sv'x,/:system\"f \",string x};x;`$()]}each ns;",
+  " `pf`parts`allparts`tables`fnames`fparams`ftexts!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
-  "  \"f\"$@[{count .Q.pv};::;0];",
+  "  \"f\"$@[{count .Q.pv};::;0];\"f\"$@[{count$[`PV in key`.Q;.Q.PV;.Q.pv]};::;0];",
   "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
   "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs;",
   `  {@[{f:get x;$[100h=type f;${SLOT_TEXT} f;""]};x;""]}each fs)}`,
@@ -59,6 +64,8 @@ export interface DocTable {
 export interface DbDoc {
   field: string;
   partitions: number;
+  /// Partitions on disk (`.Q.PV`): more than `partitions` under a `.Q.view` (#2532).
+  allPartitions?: number;
   tables: DocTable[];
   functions: { name: string; params: string[] }[];
 }
@@ -98,6 +105,7 @@ export function readDoc(raw: unknown): DbDoc {
   return {
     field: strings(r.pf).join(""),
     partitions: number(r.parts) ?? 0,
+    allPartitions: Math.max(number(r.allparts) ?? 0, number(r.parts) ?? 0),
     tables,
     functions: fnames.map((name, i) => ({
       name,
@@ -157,11 +165,18 @@ const md = (s: string) => s.replace(/([\\`*_{}[\]<>|#])/g, "\\$1");
 const html = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const rowsText = (n: number | null) => (n === null ? "not counted" : n.toLocaleString("en-US"));
 
+/// The partitions, and under a `.Q.view` that the figures are the view's:
+/// `.Q.pv` and `.Q.cn` hold only the viewed partitions (#2532).
+const partitionsText = (doc: DbDoc): string =>
+  (doc.allPartitions ?? doc.partitions) > doc.partitions
+    ? `${doc.partitions.toLocaleString("en-US")} of ${(doc.allPartitions ?? 0).toLocaleString("en-US")} partitions in view (.Q.view): a partitioned table's rows are those of the viewed partitions`
+    : `${doc.partitions.toLocaleString("en-US")} partitions`;
+
 /// The document as Markdown. `docs`: each function's qDoc, by name.
 export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<string, string> = new Map()): string {
   const out = [`# ${md(process)}`, "", `Documented by q-lint on ${md(at)}.`, ""];
   if (doc.field !== "") {
-    out.push(`A partitioned database by ${md(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.`, "");
+    out.push(`A partitioned database by ${md(doc.field)}, ${partitionsText(doc)}.`, "");
   }
   out.push("## Tables", "");
   if (doc.tables.length === 0) out.push("No tables.", "");
@@ -198,7 +213,7 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
     `<p>Documented by q-lint on ${html(at)}.</p>`,
   ];
   if (doc.field !== "") {
-    out.push(`<p>A partitioned database by ${html(doc.field)}, ${doc.partitions.toLocaleString("en-US")} partitions.</p>`);
+    out.push(`<p>A partitioned database by ${html(doc.field)}, ${html(partitionsText(doc))}.</p>`);
   }
   out.push("<h2>Tables</h2>");
   if (doc.tables.length === 0) out.push("<p>No tables.</p>");

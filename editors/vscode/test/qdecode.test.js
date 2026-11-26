@@ -243,3 +243,23 @@ test("a whole message is checked and given back uncompressed (#2136)", () => {
   assert.throws(() => decode(message([0x0b, 0x00, 0x03, 0, 0, 0], "ab\0c\0")), /a message shorter than its list/);
   assert.throws(() => checkedBody(message([0x07, 0x00, 0x02, 0, 0, 0], Buffer.alloc(15))), /a message shorter than its list/);
 });
+
+// A dictionary's key in -3!'s parentheses: an empty or one-item vector, a
+// table or a dictionary, but not a general list. `symbol$()!() is read by
+// q as `symbol$(()!()) (#2573). Each expected text is KDB-X's -3!.
+test("a dictionary's key is put in parentheses where -3! puts them (#2573)", () => {
+  const { oneLine } = require("../out/qformat.js");
+  const vec = (t, v) => ({ kind: "vector", t, attr: 0, v });
+  const list = (v) => ({ kind: "list", attr: 0, v });
+  const dict = (k, v) => ({ kind: "dict", sorted: false, k, v });
+  const cases = [
+    [dict(vec(11, []), list([])), "(`symbol$())!()"],
+    [dict(vec(7, []), vec(7, [])), "(`long$())!`long$()"],
+    [dict(vec(6, []), vec(9, [])), "(`int$())!`float$()"],
+    [dict(list([vec(7, [1n, 2n])]), vec(7, [3n])), ",1 2!,3"],
+    [dict(vec(7, [1n]), vec(7, [2n])), "(,1)!,2"],
+    [dict(vec(11, ["a"]), vec(7, [1n])), "(,`a)!,1"],
+    [dict(list([]), list([])), "()!()"],
+  ];
+  for (const [q, text] of cases) assert.strictEqual(oneLine(q), text);
+});

@@ -560,10 +560,12 @@ export function oneLine(q: QValue): string {
     case "list":
       return q.v.length === 1 ? `,${oneLine(q.v[0])}` : `(${q.v.map(oneLine).join(";")})`;
     case "dict": {
-      // A key of one item, a table or a dictionary is put in parentheses.
+      // A key that is an empty or one-item vector, a table or a dictionary is
+      // put in parentheses, as `-3!` puts them: `` `symbol$()!() `` is read as
+      // `` `symbol$(()!()) ``. A general list's `,1 2` or `()` needs none (#2573).
       const k = oneLine(q.k);
-      const one = (q.k.kind === "list" || q.k.kind === "vector") && q.k.v.length === 1;
-      return `${attrText(q.sorted ? 1 : 0)}${one || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v)}`;
+      const short = (q.k.kind === "vector" || q.k.kind === "chars") && q.k.v.length <= 1;
+      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v)}`;
     }
     case "table":
       return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } })}`;

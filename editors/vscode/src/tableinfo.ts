@@ -8,7 +8,8 @@
 // explorer counts it, and its `meta` reads the last partition's schema; a
 // splayed table is counted by `count`, which maps one column. Neither gets
 // `-22!`, which would walk its columns: it says so instead. At most `lim`
-// columns are sent. Works on kdb+ (KDB-X) and PeachQ; held there by
+// columns are sent. Under a `.Q.view` the rows and partitions are the
+// view's, and the hover says so beside the partitions on disk (#2532). Works on kdb+ (KDB-X) and PeachQ; held there by
 // funcsource_q.test.js.
 import { markdownText } from "./history";
 
@@ -19,11 +20,11 @@ export const TABLE_INFO = [
   " if[not .Q.qt t;'\"not a table\"];",
   " p:.Q.qp t;part:1b~p;disk:part|0b~p;",
   " m:(\"j\"$lim)sublist 0!meta t;",
-  " `kind`rows`bytes`partitions`keys`ncols`cols`types`fkeys`attrs!(",
+  " `kind`rows`bytes`partitions`allpartitions`keys`ncols`cols`types`fkeys`attrs!(",
   "  $[part;`partitioned;disk;`splayed;99h=type t;`keyed;`table];",
   "  \"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
   "  \"f\"$$[disk;0n;@[-22!;t;0n]];",
-  "  \"f\"$$[part;count .Q.pv;0n];",
+  "  \"f\"$$[part;count .Q.pv;0n];\"f\"$$[part;count$[`PV in key`.Q;.Q.PV;.Q.pv];0n];",
   "  $[99h=type t;(),keys t;`$()];",
   "  \"f\"$count cols t;",
   "  (),m`c;{$[null x;\"\";enlist x]}each m`t;string m`f;string m`a)}",
@@ -37,6 +38,8 @@ export interface TableInfo {
   rows: number | null;
   bytes: number | null;
   partitions: number | null;
+  /// Partitions on disk (`.Q.PV`): more than `partitions` under a `.Q.view` (#2532).
+  allPartitions?: number | null;
   keys: string[];
   ncols: number;
   columns: { name: string; type: string; fkey: string; attr: string }[];
@@ -61,6 +64,7 @@ export function readTableInfo(raw: unknown): TableInfo {
     rows: number(r.rows),
     bytes: number(r.bytes),
     partitions: number(r.partitions),
+    allPartitions: number(r.allpartitions),
     keys: strings(r.keys),
     ncols: number(r.ncols) ?? names.length,
     columns: names.map((name, i) => ({ name, type: (types[i] ?? "").trim(), fkey: fkeys[i] ?? "", attr: attrs[i] ?? "" })),
@@ -89,10 +93,14 @@ const count = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString(
 /// is escaped.
 export function tableMarkdown(name: string, process: string, info: TableInfo, limit = HOVER_COLUMNS): string {
   const kind = { table: "table", keyed: "keyed table", splayed: "splayed table", partitioned: "partitioned table" }[info.kind];
+  // Under a `.Q.view`, `.Q.pv` and `.Q.cn` hold only the viewed partitions (#2532).
+  const viewed = info.partitions !== null && (info.allPartitions ?? 0) > info.partitions;
   const facts = [
-    info.rows === null ? "rows not counted" : count(info.rows, "row"),
+    (info.rows === null ? "rows not counted" : count(info.rows, "row")) + (viewed ? " in view" : ""),
     count(info.ncols, "column"),
-    ...(info.partitions !== null ? [count(info.partitions, "partition")] : []),
+    ...(info.partitions !== null
+      ? [viewed ? `${info.partitions.toLocaleString("en-US")} of ${count(info.allPartitions!, "partition")} (.Q.view)` : count(info.partitions, "partition")]
+      : []),
     info.bytes !== null ? `${bytes(info.bytes)} in memory (-22!)` : info.kind === "splayed" || info.kind === "partitioned" ? "on disk, not measured" : "",
   ].filter((f) => f !== "");
   // markdownText escapes `|` too, which a Markdown table cell needs.
