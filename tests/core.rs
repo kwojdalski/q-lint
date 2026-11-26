@@ -2036,3 +2036,24 @@ fn navigation_over_many_implicit_lambdas_is_linear() {
         "4000 lambdas took {small:?} and 32000 {large:?}"
     );
 }
+/// QS007 asked, for each `@param`, whether its run documents some other
+/// lambda, and read every lambda in the file to answer: a file documented a
+/// function at a time was quadratic in its length (#2865).
+#[test]
+fn many_documented_functions_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("/ @param a x\nf{i}:{{[a] a}}\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 documented functions took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 documented functions took {small:?} and 8000 {large:?}"
+    );
+}

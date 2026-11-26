@@ -9200,6 +9200,17 @@ fn lint_rules(
     // than code because `code` has it blanked at the same offsets. `[ \t]`,
     // not `\s`: a match that starts on a blank line above the block reads
     // its run of `@param` lines as empty (#674).
+    // The parameter lists of the named lambdas with no `@param` block of
+    // their own above them, read once, at the first `@param`: read again for
+    // each, a file documented a function at a time took time quadratic in
+    // its length (#2865). By the set of names where a list repeats none,
+    // which is how a run is compared with it; as it is written where one
+    // does.
+    type Undocumented<'a> = (
+        std::collections::HashSet<std::collections::BTreeSet<&'a str>>,
+        Vec<Vec<&'a str>>,
+    );
+    let mut undocumented: Option<Undocumented> = None;
     for m in re!(r"(?m)^[ \t]*/+[ \t]*@param[ \t]+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
         let name = m.get(1).unwrap();
         if !code[name.start()..name.end()].trim().is_empty() {
@@ -9255,19 +9266,32 @@ fn lint_rules(
         // whose documentation is elsewhere - here. Lambdas sharing a
         // parameter list are common (KX ml's many `[config]` functions), and
         // each documented in place is not what a stray run describes.
-        let documents_another = code.match_indices('{').any(|(b, _)| {
-            let other = signature(code, source, b);
-            let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
-            let documented = source[..at]
-                .lines()
-                .rev()
-                .take_while(|l| l.trim_start().starts_with('/'))
-                .any(|l| re!(r"@param\b").is_match(l));
-            other.named
-                && !documented
-                && other.slots.len() == run.len()
-                && other.slots.iter().all(|p| run.contains(p))
+        let (sets, repeating) = undocumented.get_or_insert_with(|| {
+            let mut found = Undocumented::default();
+            for (b, _) in code.match_indices('{') {
+                let other = signature(code, source, b);
+                let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
+                let documented = source[..at]
+                    .lines()
+                    .rev()
+                    .take_while(|l| l.trim_start().starts_with('/'))
+                    .any(|l| re!(r"@param\b").is_match(l));
+                if !other.named || documented {
+                    continue;
+                }
+                let set: std::collections::BTreeSet<&str> = other.slots.iter().copied().collect();
+                if set.len() == other.slots.len() {
+                    found.0.insert(set);
+                } else {
+                    found.1.push(other.slots);
+                }
+            }
+            found
         });
+        let documents_another = sets.contains(&run)
+            || repeating
+                .iter()
+                .any(|slots| slots.len() == run.len() && slots.iter().all(|p| run.contains(p)));
         if documents_another {
             continue;
         }
