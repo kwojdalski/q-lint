@@ -1611,6 +1611,20 @@ b:{x+y} over y
 c:"x + each y"
 d:max over y
 
+=== clean profile: general | a string or a symbol between the two is the iterator's own left operand (q 5 parses each line; #2771)
+a:"x" , "abc" each 0 2
+b:`a , `b`c each 0 1
+c:"ab" ~ "ab" each 0 1
+d:`a`b cross `c`d each 0 1
+e:1 2 ,
+  "abc" each 0 1
+
+=== QE011 profile: general | a two-character comparison is one glyph (q 5: parse "x <= each y" is ' ) (#2772)
+x:1 2 3;y:2 3 4
+a:x <= each y
+b:x >= each y
+c:x <> each y
+
 === QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
 a:hopen -1.5
 b:hopen 1e3
