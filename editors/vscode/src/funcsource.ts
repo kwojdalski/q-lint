@@ -4,7 +4,9 @@
 // around it.
 //
 // Each call is one lambda sent with its arguments, as the explorer's is, and
-// only Redefine changes the process - by the one `set` the user confirmed.
+// only Redefine changes the process - by the one `set` the user confirmed,
+// and for a KDB-X module's function the two that put it in what the module
+// exports (`EXPORTED`), which the question names.
 // Names arrive as strings and are made symbols there: a string starting with
 // a backtick would reach q as a symbol, and one of a single character as a
 // char atom, so each is `(),`'d first.
@@ -270,10 +272,13 @@ export function redefineConfirmation(name: string, target: Process, guarded: str
       : isProduction(target)
         ? `${target.label} is a production process (tagged ${target.tags.join(", ")}). `
         : "";
+  // A module's function is assigned in more than its name (#2972), and
+  // the question says so.
+  const exported = /(^|[\s,])\.m\.[A-Za-z]/.test(name) ? "A KDB-X module's function is replaced in the module's export too, and in the globals holding what the module exported. " : "";
   return {
     message: guarded.length > 0 ? `Redefine ${name} on the read-only process ${target.label}?` : `Redefine ${name} on ${target.label}?`,
     detail:
-      `${warning}The edited text replaces ${name} on ${target.label} for every caller, parsed in the namespace it was defined in. ` +
+      `${warning}The edited text replaces ${name} on ${target.label} for every caller, parsed in the namespace it was defined in. ${exported}` +
       "Nothing is saved to a file: a restart of the process brings back the old definition.",
   };
 }

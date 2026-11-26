@@ -17,9 +17,24 @@ test("only Redefine assigns on the process, and only by the one set it was asked
     assert.ok(!/\bset\b/.test(code), code);
     assert.ok(code.startsWith("{[") && code.endsWith("}"), code);
   }
-  assert.strictEqual(fs.REDEFINE.match(/\bset\b/g).length, 1);
+  // The name is assigned once. A KDB-X module's function is assigned in
+  // what the module exports too - its `export`, and the globals holding
+  // it - or its `use` handles would go on calling the old one (#2972):
+  // two more, both past the test that the name is `.m.<module>.<name>` and
+  // that the module exports what the name held.
+  assert.strictEqual(fs.REDEFINE.match(/\bnm set\b/g).length, 1);
+  assert.strictEqual(fs.REDEFINE.match(/\bset\b/g).length, 3);
+  const exported = fs.REDEFINE.indexOf("if[0=count i;:(::)]");
+  assert.ok(fs.REDEFINE.indexOf("if[not(3<count p)&`m~p 1;:(::)]") > 0 && exported > 0);
+  assert.deepStrictEqual([...fs.REDEFINE.matchAll(/\bset\b/g)].map((m) => m.index > exported), [false, true, true]);
   // The process's own context is put back before the assignment.
   assert.ok(fs.REDEFINE.indexOf('system"d ",string d') < fs.REDEFINE.indexOf("nm set"));
+  // And the question says what else is assigned, for a module's function alone.
+  const process = { label: "rdb", host: "h", port: 1, tags: ["dev"] };
+  assert.match(fs.redefineConfirmation(".m.mymod.f", process).detail, /replaced in the module's export too, and in the globals holding what the module exported/);
+  assert.match(fs.redefineConfirmation("g and .m.pkg.0sub.k", process).detail, /the module's export too/);
+  assert.ok(!/module/.test(fs.redefineConfirmation(".ns.m.f", process).detail));
+  assert.ok(!/module/.test(fs.redefineConfirmation("f", process).detail));
 });
 
 test("a source and callers are read, and anything else is refused", () => {
