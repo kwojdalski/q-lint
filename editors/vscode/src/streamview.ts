@@ -7,7 +7,7 @@
 // stream closes and its connection with it, which the tickerplant sees as
 // the subscriber gone.
 import { randomBytes } from "node:crypto";
-import { Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
+import { ProgressLocation, Uri, ViewColumn, commands, window, workspace, type ExtensionContext, type Webview, type WebviewPanel } from "vscode";
 import { isProduction } from "./agent";
 import { guardedBy, readGuard } from "./guard";
 import type { Live, ProcessArg } from "./live";
@@ -102,9 +102,12 @@ export class TableStreams {
     }
     let connection: QConnection;
     try {
-      connection = await window.withProgress({ location: { viewId: "q-lint.processes" }, title: `Connecting to ${process.label}` }, () =>
-        this.live.openSeparate(process),
-      );
+      // A notification, whose Cancel gives up a connect script that blocks (#2567).
+      connection = await window.withProgress({ location: ProgressLocation.Notification, title: `q-lint: connecting to ${process.label} to stream`, cancellable: true }, (_progress, token) => {
+        const cancel = new AbortController();
+        token?.onCancellationRequested(() => cancel.abort());
+        return this.live.openSeparate(process, cancel.signal);
+      });
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not connect to ${process.label}: ${shownError(error)}`));
       return;
