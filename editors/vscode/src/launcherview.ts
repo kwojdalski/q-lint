@@ -20,6 +20,10 @@ import { groupAlive, lifeline, signalGroup } from "./lifeline";
 /// How long a process has to end after SIGTERM before it is killed.
 const STOP_GRACE_MS = 3000;
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 interface Started {
   child: ChildProcess;
   channel: OutputChannel;
@@ -46,6 +50,11 @@ export class Launcher {
   private readonly starting = new Set<string>();
   /// Set when VS Code closes: a Start still on its way spawns nothing.
   private disposed = false;
+  /// What is being stopped from here: ended, it did not fail to start.
+  private readonly ending = new WeakSet<ChildProcess>();
+  /// How long Start Process waits for what it started to listen on its
+  /// port before it says it does not yet.
+  startWaitMs = 5000;
 
   constructor(
     context: ExtensionContext,
@@ -129,17 +138,37 @@ export class Launcher {
       return;
     }
     this.starting.add(process.label);
-    let problem: string | undefined;
+    let child: ChildProcess | string;
     try {
-      problem = await this.launch(process);
+      child = await this.launch(process);
     } finally {
       this.starting.delete(process.label);
     }
-    if (problem !== undefined) {
-      void window.showErrorMessage(plainMessage(`q-lint: ${problem}`));
+    if (typeof child === "string") {
+      void window.showErrorMessage(plainMessage(`q-lint: ${child}`));
       return;
     }
-    void window.showInformationMessage(plainMessage(`q-lint: started ${process.label} (pid ${this.started.get(process.label)?.child.pid ?? "?"}) on port ${process.port}.`));
+    // "started ... on port" once it listens there, as Restart waits: said as
+    // soon as it was spawned, it was said of a q that ended at once - no
+    // licence, an argument it does not take, a port it cannot bind (#3103).
+    const until = Date.now() + this.startWaitMs;
+    while (!(await listening(process.port, process.host))) {
+      // A wrapper may end and leave its q starting in its group (#1744).
+      if ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child)) {
+        // Stopped from here meanwhile, it is as it was asked to be.
+        if (!this.ending.has(child)) {
+          const how = child.signalCode !== null ? `stopped by ${child.signalCode}` : `exit code ${child.exitCode}`;
+          void window.showErrorMessage(plainMessage(`q-lint: ${process.label} ended as soon as it started (${how}), before it listened on port ${process.port}: its output is in the "q: ${process.label}" output channel.`));
+        }
+        return;
+      }
+      if (Date.now() > until) {
+        void window.showWarningMessage(plainMessage(`q-lint: started ${process.label} (pid ${child.pid ?? "?"}), which does not listen on port ${process.port} yet: its output is in the "q: ${process.label}" output channel.`));
+        return;
+      }
+      await sleep(50);
+    }
+    void window.showInformationMessage(plainMessage(`q-lint: started ${process.label} (pid ${child.pid ?? "?"}) on port ${process.port}.`));
   }
 
   /// Stop `label`, which was started from here, start it again from its
@@ -158,36 +187,35 @@ export class Launcher {
       return `${label} is already being started.`;
     }
     this.starting.add(label);
-    let problem: string | undefined;
+    let child: ChildProcess | string;
     try {
       // Closed first, as Stop Process closes it: not a drop to reconnect
       // after (#2564).
       await this.live.stopping(label, this.started.get(label)!.port);
       await this.end(label);
-      problem = await this.launch(process);
+      child = await this.launch(process);
     } finally {
       this.starting.delete(label);
     }
-    if (problem !== undefined) {
-      return problem;
+    if (typeof child === "string") {
+      return child;
     }
-    const child = this.started.get(label)?.child;
     const until = Date.now() + timeoutMs;
     while (!(await listening(process.port, process.host))) {
-      if (child === undefined || child.exitCode !== null || child.signalCode !== null || this.started.get(label)?.child !== child) {
+      if (child.exitCode !== null || child.signalCode !== null || this.started.get(label)?.child !== child) {
         return `${label} ended before it listened on port ${process.port}: its output is in the "q: ${label}" output channel.`;
       }
       if (Date.now() > until) {
         return `${label} did not listen on port ${process.port} within ${timeoutMs / 1000} s.`;
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await sleep(100);
     }
     return undefined;
   }
 
   /// Start `process` from its launch definition. Why it could not, or
-  /// undefined once it is spawned.
-  private async launch(process: Process): Promise<string | undefined> {
+  /// what was spawned.
+  private async launch(process: Process): Promise<ChildProcess | string> {
     // The first folder on disk: a virtual one is no directory to start in (#1843).
     const first = workspace.workspaceFolders?.filter((f) => f.uri.scheme === "file")[0]?.uri;
     const configuration = workspace.getConfiguration("q-lint", first);
@@ -295,7 +323,7 @@ export class Launcher {
       this.live.refreshProcesses();
     });
     this.live.refreshProcesses();
-    return undefined;
+    return child;
   }
 
   private async stop(row?: ProcessArg): Promise<void> {
@@ -335,6 +363,7 @@ export class Launcher {
       return Promise.resolve();
     }
     const { child } = started;
+    this.ending.add(child);
     return new Promise((resolve) => {
       // An exited wrapper may have left its q in its group (#1744).
       if ((child.exitCode !== null || child.signalCode !== null) && !groupAlive(child)) {

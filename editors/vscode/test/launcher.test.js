@@ -576,6 +576,40 @@ test("a working directory that does not exist is what the error names, and ${wor
   assert.strictEqual(fromWorkspace({ cwd: "${workspaceFolder}/torq" }, "/home/me"), true);
 });
 
+test("a program that ends at once is an error, never 'started ... on port' (#3103)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  // As q with no licence does: a line, and exit code 1.
+  fs.writeFileSync(path.join(dir, "nolic.js"), "console.log(\"'k4.lic\");\nprocess.exit(1);\n");
+  fs.writeFileSync(path.join(dir, "idle.js"), "setInterval(() => {}, 1000);\n");
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const [a, b, c] = [await freePort(), await freePort(), await freePort()];
+  const node = { command: process.execPath, cwd: dir };
+  const { launcher, output } = await setUp(t, [proc("nolic", a, { ...node, script: "nolic.js" }), proc("idle", b, { ...node, script: "idle.js" }), proc("fake", c, { ...node, script: "fake.js" })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("nolic");
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: nolic ended as soon as it started (exit code 1), before it listened on port ${a}: its output is in the "q: nolic" output channel.`]]);
+  await until(() => output("nolic").includes("ended"), "ended in nolic's output");
+  assert.match(output("nolic"), /'k4\.lic\n\[nolic ended: exit code 1\]\n$/);
+  assert.deepStrictEqual(launcher.running(), []);
+  // Started is said once it listens: by then it does.
+  await stub.commands.get(LAUNCH_COMMANDS.start)("fake");
+  assert.match(stub.messages.at(-1)[1], new RegExp(`^q-lint: started fake \\(pid \\d+\\) on port ${c}\\.$`));
+  assert.strictEqual(await accepts(c), true);
+  // Running, and not listening after a while: said as that, not as on its port.
+  launcher.startWaitMs = 300;
+  await stub.commands.get(LAUNCH_COMMANDS.start)("idle");
+  assert.strictEqual(stub.messages.at(-1)[0], "warning");
+  assert.match(stub.messages.at(-1)[1], new RegExp(`^q-lint: started idle \\(pid \\d+\\), which does not listen on port ${b} yet: its output is in the "q: idle" output channel\\.$`));
+  // Stopped from here while Start waits for it, it did not fail.
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("idle");
+  launcher.startWaitMs = 20_000;
+  const said = stub.messages.length;
+  const starting = stub.commands.get(LAUNCH_COMMANDS.start)("idle");
+  await until(() => launcher.running().some((r) => r.label === "idle"), "idle running");
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("idle");
+  await starting;
+  assert.deepStrictEqual(stub.messages.slice(said), []);
+});
+
 test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {
   const port = await freePort();
   const { launcher, output } = await setUp(t, [proc("gone", port, { command: path.join(os.tmpdir(), "no-such-q-1679") })]);
