@@ -7533,7 +7533,22 @@ fn lint_rules(
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
     // silently where a boolean was wanted - except in a where phrase, which
     // wants booleans and raises 'type on it.
-    for m in re!(concat!(r"\blike", blank!(), r"*`[A-Za-z0-9_.:]*")).find_iter(code) {
+    // So is a symbol in parentheses, after `enlist`, or under an iterator:
+    // q 5 `` s like (`a) ``, `` s like enlist `a `` and `` s like' `a`b `` are
+    // each 'type (#2699).
+    for m in re!(concat!(
+        r"\blike(?:'|\\:|/:)?",
+        blank!(),
+        r"*(?:\(",
+        blank!(),
+        r"*(?:`[A-Za-z0-9_.:]*)+",
+        blank!(),
+        r"*\)|(?:enlist",
+        blank!(),
+        r"+)?`[A-Za-z0-9_.:]*)"
+    ))
+    .find_iter(code)
+    {
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
@@ -8610,6 +8625,8 @@ fn lint_rules(
         blank!(),
         r"*(?:=|<>)",
         blank!(),
+        r"*\(?",
+        blank!(),
         r"*type\b"
     ))
     .find_iter(code)
@@ -8618,6 +8635,31 @@ fn lint_rules(
         // `` type[1]=`a`b?`a `` compares a short with a long.
         // So does a parenthesised one: q 5 `(type 1)=`long` is 'type.
         if !m.as_str().starts_with('`') && !operand_ends(code, &v.comments, m.end()) {
+            continue;
+        }
+        add(
+            m.start(),
+            "QB013",
+            "`type` returns a short (7h, 11h, ...); comparing it to a symbol is a 'type error"
+                .into(),
+        );
+    }
+    // The symbol may be cast from a string on the right: q 5
+    // `` (type 1)=`$"long" `` is 'type too (#2698). Read where strings are
+    // kept, with `type` code at the same offset.
+    for m in re!(concat!(
+        r#"(?:\btype\s*\[[^\]]*\]|\(\s*type\b[^()]*\))"#,
+        blank!(),
+        r#"*(?:=|<>)"#,
+        blank!(),
+        r#"*`\$[ \t]*"(?:[^"\\]|\\.)*""#
+    ))
+    .find_iter(&v.comments)
+    {
+        if !boundary(code, m.start())
+            || !code[m.start()..].starts_with(['t', '('])
+            || !operand_ends(code, &v.comments, m.end())
+        {
             continue;
         }
         add(

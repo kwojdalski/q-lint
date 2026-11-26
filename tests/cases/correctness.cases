@@ -239,6 +239,18 @@ r:x like "a*"
 r:"abc" like
   `abc
 
+=== QB007 | a symbol pattern in parentheses, after enlist, or under an iterator (q 5: each is 'type, #2699)
+s:`a`b
+a:s like (`a)
+b:s like enlist `a
+c:s like' `a`b
+d:s like/: `a`b
+
+=== clean | string patterns in those forms (#2699)
+s:("ab";"cd")
+a:s like ("a*")
+b:s like' ("a*";"c*")
+
 === QB008 | equality against a vector literal
 select from t where px=1 2
 
@@ -469,6 +481,12 @@ a:(type x) in 7 6h
 
 === QB013 | symbol on the left
 if[`long=type x;1]
+
+=== QB013 profile: general | type parenthesised on the right, or a symbol cast from a string (q 5: `long=(type 1) and (type 1)=`$"long" are 'type, #2698)
+x:1
+a:`long=(type x)
+b:(type x)=`$"long"
+c:type[x]=`$"long"
 
 === clean profile: general | a name that starts with type is not the keyword (q 5: f`count is 1, typeX=`a is 1b)
 f:{[typeTerminal] $[typeTerminal=`count;1;0]}
