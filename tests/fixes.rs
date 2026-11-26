@@ -802,6 +802,13 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+    // A symbol that runs on over `/` takes the colon too (#2886).
+    (
+        "QT029",
+        "h:hopen `unix://5000",
+        "h:hopen `:unix://5000",
+        false,
+    ),
     // Each look-alike becomes its ASCII; the one in the string stays.
     ("QE012", "r:1\u{a0}2", "r:1 2", true),
     (
@@ -938,6 +945,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT029", "h:hopen 1.5"), // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
+        ("QT029", "h:hopen `a`b"), // nor a vector with a colon (#2887)
+        ("QT029", "h:hopen 0N"),
         ("QE012", "s:\u{201c}hi"),            // no close on the line
         ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
         ("QE012", "a:`\u{e9}"),               // no ASCII it stands for

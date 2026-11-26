@@ -94,6 +94,75 @@ z:f[`a%]
 w:`b-
 u:`a mod
 
+=== QT003 profile: general | but a string after the operator is an operand, and the sum 'type (#2881; q 5: each is 'type)
+r:`a+"a"
+r2:`a-""
+r3:(`a*"ab";2)
+r4:`a mod
+  "a"
+
+=== clean profile: general | while a string on the next line at column 0 is a statement of its own, and an operator after the string composes (#2881; q 5: +[`a], then "a"; +[`a]+["a"])
+x:`a+
+"a"
+y:`a+"a"+
+
+=== QT003 profile: general | a word operator ending its line, the operand indented under it (#2881; q 5: 'type)
+r:`a mod
+  "a"
+
+=== QT003 profile: general | and a number there, past a comment line (#2881; q 5: 'type)
+r:`a xbar
+  / the widths
+  1 2
+
+=== QT003 profile: general | as with a comment after the operator (#2881; q 5: 'type)
+r:`a mod / of the string
+  "a"
+
+=== clean profile: general | while the empty list or a projection on the indented line runs, and a column-0 string is its own statement (#2881; q 5: (), mod[`a]+[2], (), +[`a]+[2], mod[`a])
+r1:`a mod
+  ()
+r2:`a mod
+  2+
+r3:`a+
+  ()
+r4:`a+
+  2+
+r5:`a mod
+"a"
+
+=== clean profile: general | a symbol atom beside the empty list is the empty list, and beside a dictionary of them that dictionary (#2880; q 5: () each, `x`y!(();()) for the last two)
+r:`a+()
+r1:()*`a
+r2:`a mod ( )
+r3:() xexp `a
+r4:+[`a;()]
+r5:&[();`a]
+r6:`a+`x`y!()
+r7:`a - `x`y ! ( )
+
+=== QT003 profile: general | but a vector beside it is 'length, and xlog, a minus with the list on its left, or a list that only starts empty, 'type (#2880; q 5: 'length, 'length, 'type each after)
+r:`a`b+()
+r1:()+`a`b
+r2:`a xlog ()
+r3:() xlog `a
+r4:()-`a
+r5:-[();`a]
+r6:`a+(),1
+r7:xlog[`a;()]
+
+=== QT003 profile: general | xbar is arithmetic too, infix or applied with brackets (#2882; q 5: each is 'type)
+r:`a xbar 1 2
+r2:2 xbar `a
+r3:xbar[2;`a]
+r4:xbar[`a;2]
+
+=== QT006 profile: general | and its bracket form checks lengths first (#2882; q 5: 'length)
+r:xbar[1 2 3;4 5]
+
+=== clean profile: general | while xbar in a parse tree is an item of a list (#2882)
+r:(xbar;5;`time)
+
 === clean | a char meets a float, or sits right of minus, or is divided: q 5 runs all three
 r1:1.5+"a"
 r2:"ab"%2
@@ -484,6 +553,18 @@ r:til 1.5
 === QT010 | a numeric aggregate over symbols, juxtaposed
 r:sum `a`b
 
+=== QT010 profile: general | a product of times, dates or timespans (#2902; q 5: each 'type)
+r1:prd 12:00 13:00
+r2:prds 2024.01.01 2024.01.02
+r3:prd 0D01 0D02
+r4:prd[12:00:00 13:00:00]
+
+=== clean profile: general | while an atom passes through, and a sum of them is one (#2902; q 5: 2024.01m, 12:00, 25:00, 2024.01.01 2048.01.02)
+r1:prd 2024.01m
+r2:prds 12:00
+r3:sum 12:00 13:00
+r4:sums 2024.01.01 2024.01.02
+
 === QT011 | sorting an atom, juxtaposed
 r:asc 1
 
@@ -544,6 +625,17 @@ r:1 in `a`b
 
 === QT015 | and a symbol in numbers
 r:`a in 1 2
+
+=== QT015 profile: general | within is a comparison too, the symbol as value or as bounds, against numbers or a string (#2883; q 5: each is 'type)
+r:`a within 1 2
+r2:1 within `a`c
+r3:`a`b within 1 2
+r4:"abc" within `a`c
+r5:`a within "ac"
+
+=== clean profile: general | while symbol bounds take a symbol, and a longer right operand is not read (#2883; q 5: `b within `a`c is 1b)
+r:`b within `a`c
+r2:`a within 2 sublist s
 
 === clean | the number is the start of a longer right operand: sublist builds symbols
 r:`a in 2 sublist `a`b`c
@@ -1199,6 +1291,26 @@ same:`a=
 match:`x=
   1 2 3
 
+=== QT027 profile: general | one value for a table of two columns (#2895; q 5: each 'length)
+t:([]a:1 2 3;b:`x`y`z)
+`t insert 4
+`t insert `a
+insert[`t;4]
+`t upsert 4f
+r:t upsert -4
+
+=== clean profile: general | which a table of one column takes; a keyed table, a symbol vector and a joined row are not counted (#2895; q 5: the first three run, then 'type, and two more run)
+u:([]a:1 2 3)
+`u insert 4
+`u upsert 4
+r:u upsert 4
+k:([a:1 2]c:10 20)
+`k insert 4
+s:([]a:`x`y;b:`p`q)
+`s insert `a`b
+t:([]a:1 2 3;b:`x`y`z)
+`t insert 4,`w
+
 === clean | a b suffix does not continue a numeric run: `1 0b` is 1 applied to 0b (#496)
 r1:1 2 3+1 0b
 r2:1 2 3=1 0b
@@ -1288,6 +1400,35 @@ b:(1 2 3)+4 5
 c:1 2 3+(4 5)
 d:(`a`b`c)=`a`b
 
+=== QT006 profile: general | a vector of times, a literal or beside a name (#2899; q 5: each 'length)
+a:1 2 3
+r1:12:00 13:00+1 2 3
+r2:1 2 3+12:00:00 13:00:00
+r3:a+12:00 13:00
+r4:2024.01.01D12:00 2024.01.02D12:00+1 2 3
+a1:12:00 13:00+1 2 3
+
+=== clean profile: general | times of the same count, and a time atom (#2899; q 5: each runs)
+a:1 2 3
+r1:12:00 13:00+1 2
+r2:a+12:00 13:00 14:00
+r3:a+12:00
+
+=== QT006 profile: general | a boolean or a byte vector written as one token (#2900; q 5: each 'length)
+a:1 2 3
+r1:101b+1 2
+r2:1 2+101b
+r3:a+10b
+r4:10b-a
+r5:a+0x0102
+
+=== clean profile: general | which pairs with a vector of its own count, and an atom with any (#2900; q 5: each runs)
+a:1 2 3
+r1:101b+1 2 3
+r2:a+101b
+r3:a+1b
+r4:a+0x01
+
 === clean profile: general | a parenthesised atom pairs with any vector (q 5: 5 6, 2 3 4)
 a:(1)+4 5
 b:1 2 3+(1)
@@ -1331,6 +1472,34 @@ e:a each 0 1
 f:a`b
 g:a(0)
 
+=== QT022 profile: general | a local bound to an atom earlier in its lambda is indexed the same way (#2892; q 5: each call is 'type, and the last 'Cannot write to handle 5)
+f:{a:2.5; a 0}
+g:{d:2024.01.01; d[0]}
+h:{c:"c"; c@0}
+i:{d:2024.01.01; d each 0 1}
+j:{a:5; a 0}
+
+=== clean profile: general | but not a symbol, which names a function, a local set under a condition or bound again, a parameter, or a handle given a string (#2892; q 5: 'x, (), 1, and the rest depend on the call)
+f:{a:`x; a 0}
+g:{[c] if[c;a:2.5]; a 0}
+h:{a:2.5; a:1 2; a 0}
+i:{[a] a:2.5; a 0}
+j:{a:5; a "hi"}
+k:{a:2.5; a+0}
+
+=== QT022 profile: general | an integer applied an item at a time is still a handle given a number (#2893; q 5: each 'Cannot write to handle 5, and b peach 'type)
+a:5
+r:a each 0
+r2:a peach 0 1
+r3:a'[0]
+b:2.5
+r4:b peach 0 1
+
+=== clean profile: general | and one given names or strings an item at a time may write (#2893)
+a:5
+r:a each x
+r2:a each ("hi";"there")
+
 === clean profile: general | a protected call catches the error, and a vector indexes
 a:2.5
 b:@[a;0;{x}]
@@ -1343,6 +1512,36 @@ a:"a"+0N
 b:"a"*0W
 c:"a"+0Ni
 d:"a"-0Wh
+
+=== QT023 profile: general | mod and xexp refuse a char as + does, the first beside anything integral and the second beside anything (#2884; q 5: each is 'type)
+r:"a" mod 2
+r2:2 mod "a"
+r3:"a" xexp 2
+r4:2.5 xexp "a"
+r5:"a" xexp 2.5
+c:"a"
+r6:c mod 2
+r7:c xexp 2
+r8:"a" mod "b"
+r9:"a" mod 1e
+r10:"a"mod 0x02
+r11:mod["a";2]
+r12:xexp[2.5;"a"]
+
+=== clean profile: general | while mod takes a char beside a float, or on the right of a real, and div and xlog take one anyway (#2884; q 5: 17f, 1f, 2.5, 48i, 0.1515172, 17f, 97f)
+a:"a" mod 2.5
+b:1e mod "a"
+c:2.5 mod "a"
+d:"a" div 2
+e:"a" xlog 2
+f:mod["a";2.5]
+g:"a" mod 1e3
+
+=== clean profile: general | and a name that ends in mod is no operator (#2884)
+amod:{x}
+c:"a"
+r:amod 2
+r2:amod c
 
 === clean profile: general | a float null or infinity takes a char (q 5: 0n, 0w)
 a:"a"+0n
@@ -1379,6 +1578,23 @@ t:([]a:1 2)
 s:([]a:1 2;b:3 4)
 r1:t lj (s)
 r2:(lj)[t;s]
+
+=== QT026 profile: general | a keyed table unkeyed where it is joined (#2894; q 5: each 'type)
+k:([a:1 2]c:10 20)
+t:([]a:1 2 3)
+r1:t lj 0!k
+r2:t lj value k
+r3:t ij key k
+r4:t lj () xkey k
+r5:lj[t;0!k]
+
+=== clean profile: general | but not one keyed again, an unknown name, or under uj, which takes any (#2894; q 5: each runs)
+k:([a:1 2]c:10 20)
+t:([]a:1 2 3)
+r1:t lj 1!0!k
+r2:t lj `a xkey 0!k
+r3:t uj 0!k
+r4:{[x] t lj 0!x}
 
 === clean profile: general | the same joins on a keyed right table
 t:([]a:1 2)
@@ -1443,8 +1659,7 @@ h:{[cb] {[x] string cb}[1]; cb set 2}
 
 === QT036 | null of getenv tests each character (q 5: null getenv`UNSET is `boolean$(), and if on it is 'type; #1143)
 a:{$[null getenv`HOME;1;0]}
-b:null getenv`X
-c:null[getenv`X]
+b:{if[null[getenv`X]; :0]; 1}
 d:{if[null getenv x; :0]; 1}
 
 === QT036 | null of a local that getenv alone assigns, as a condition (q 5: 'type from each, the variable set or not; #2744)
@@ -1465,6 +1680,35 @@ a:""~getenv`X
 b:0=count getenv`X
 c:all null getenv`X
 d:any null getenv`X
+
+=== clean | all and any reduce it in brackets, in parentheses, with @ and as .q.all too (#2896; q 5: each runs)
+a:{if[all[null getenv`X]; :0]; 1}
+b:{if[all (null getenv`X); :0]; 1}
+c:{if[all@null getenv`X; :0]; 1}
+d:{if[.q.all null getenv`X; :0]; 1}
+e:{if[any[null getenv`X]; :0]; 1}
+
+=== clean | and a vector nothing tests is a vector: assigned, reduced by another word, or a branch's value (#2897; q 5: each runs)
+a:null getenv`X
+b:sum null getenv`X
+c:count where null getenv`X
+d:max null getenv`X
+e:{if[0<sum null getenv`X; :0]; 1}
+f:$[1b;null getenv`X;2]
+g:$[0b;1;null getenv`X]
+h:?[null getenv`X;1;2]
+i:{if[x; :null getenv`X]; 1}
+
+=== QT036 | while every condition is tested: a while, a do, a later test of $[...], and under not or beside and (#2897; q 5: each 'type)
+a:{while[null getenv`X; :0]; 1}
+b:{do[null getenv`X; :0]; 1}
+c:$[0b;1;null getenv`X;2;3]
+d:{if[not null getenv`X; :0]; 1}
+e:{if[x and (null getenv`X); :0]; 1}
+
+=== QT036 | null applied with @ is the same null (#2898; q 5: 'type)
+a:{if[null@getenv`X; :0]; 1}
+b:{$[null @ getenv`X;1;0]}
 
 === clean | an empty string joined to a typed list takes that list's type, either side (#2118; q 5: each is the simple list - 7h, 11h, 9h, 1h, 4h, 14h, 17h, 6h, 7h)
 a:{s:""; s,1 2}
@@ -1501,6 +1745,38 @@ b:{s:"ab"; 1 2,s}
 c:{n:1 2; n,"ab"}
 d:{s:"ab"; n:1 2; s,n}
 e:{v:`a`b; w:"ab"; v,w}
+
+=== QT033 QT034 QT035 | a string on the left of a typed local is read as one on its right is (#2877; q 5: f and h are 'type, g is 0h)
+f:{s:`a; "a"=s}
+g:{n:1 2; "ab",n}
+h:{s:`a; "ab"+s}
+
+=== QT033 | a string holding an escaped quote is one string still (#2877; q 5: 'type)
+f:{s:`a; "a\"b"=s}
+
+=== clean | and the empty string there, or a char beside a char, is not reported (#2877; q 5: f is 1 2 and 7h, g is 0b)
+f:{n:1 2; "",n}
+g:{c:"a"; "b"=c}
+
+=== clean | a symbol atom beside the empty list is the empty list (#2878; q 5: each is ())
+f:{s:`a; s+()}
+g:{s:`a; e:(); s+e}
+h:{s:`a; s*( )}
+
+=== QT035 | but a symbol vector beside it is 'length, and an atom beside a list that only starts with it 'type (#2878; q 5: 'length, 'type)
+f:{s:`a`b; s+()}
+g:{s:`a; s+(),1}
+
+=== QT035 | an operand holding a bracket is one operand (#2879; q 5: 'type, with g:{x+y})
+f:{[g] s:`a; s+g[1;2]}
+h:{s:`a; s*count(1;2)}
+
+=== clean | an underscore straight after the first backtick is drop, and the local no symbol (#2889; q 5: f[] is 'a, where a is undefined, not 'type)
+f:{n:`_a; n+1}
+
+=== QT035 | while a later symbol of a vector, or the first, may start with one or with a digit (#2889; q 5: each is 'type)
+g:{n:`a`_b; n+1}
+h:{n:`1a; n+1}
 
 === QF022 | a local a `::` multiple assignment writes is no longer typed by its first literal (#2119; q 5: a[] is 3, b[] is 1b, c[] is 3, and no global s after any)
 a:{s:`a; (s;n)::(1;2); s+n}

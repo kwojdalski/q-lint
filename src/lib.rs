@@ -2878,8 +2878,13 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // call is 'type and the new one connects - a different program, so
         // only in the editor.
         "QT029" => {
-            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.]").find(source.get(start..)?)?;
-            let old = &source[start..start + m.end() - 1];
+            let m = re!(r"^hopen[ \t]*(?:\[\s*)?`[A-Za-z0-9_.][A-Za-z0-9_.:/]*")
+                .find(source.get(start..)?)?;
+            // A vector of symbols is no handle with a colon either (#2887).
+            if source[start + m.end()..].starts_with('`') {
+                return None;
+            }
+            let old = &source[start..start + m.as_str().find('`')? + 1];
             (
                 old,
                 format!("{old}:").into(),
@@ -7431,17 +7436,24 @@ fn lint_rules(
     // but an indented line continues it, on either side of the operator and
     // past blank and comment lines (#224, #688).
     // `&` and `|` are min and max, and 'type on a symbol too, as are the
-    // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
-    // symbol fills a symbol list (`none^s).
+    // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a, and `a xbar 1 2
+    // and 2 xbar `a, #2882). Not `^`: a symbol fills a symbol list
+    // (`none^s).
     // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
     // So is a name that starts with `.` or holds a `:` past its first
     // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
+    // After a word operator, one of the statement's blanks, which a line
+    // break into an indented line is: `` `a mod `` and then an indented `2`
+    // or `"a"` is 'type as on one line, with or without a comment after the
+    // `mod` (KDB-X, #2881).
     let arithmetic = re!(concat!(
         r"(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+(?:",
         blank!(),
         r"*[+\-*%&|]|",
         blank!(),
-        r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
+        r"+(?:mod|div|xexp|xlog|xbar|and|or)",
+        blank!(),
+        r")|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|xbar|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
     ));
     // Searched one match at a time: a symbol rejected as the right operand
     // may still be the left one of the operator after it - `` 1+`a+1 `` is
@@ -7450,6 +7462,9 @@ fn lint_rules(
     while let Some(m) = arithmetic.find_at(code, from) {
         from = m.end();
         let at = m.start();
+        // Where the operator ends, short of the blank a word one is read
+        // with: the same place however the line after it is laid out.
+        let after = at + m.as_str().trim_end().len();
         // `like `a*` is a glob, not a product; QB007 owns that one.
         if code[..at].trim_end().ends_with("like") {
             continue;
@@ -7457,7 +7472,7 @@ fn lint_rules(
         // `` `long$x `` is a cast, and the symbol names the type rather than
         // being an operand: `` `long$x-`long$y `` is subtraction of two longs,
         // which q is perfectly happy to evaluate.
-        if code[m.end()..].starts_with('$') {
+        if code[after..].starts_with('$') {
             continue;
         }
         // `` `a -1 ``: a space before the minus and a digit straight after it
@@ -7492,13 +7507,48 @@ fn lint_rules(
         // `+[`]%[n]`, no error - as a template's `` `%name%] `` reads.
         // Nothing on its right at all is a projection too: `` `a+ ``,
         // `` (`a*;1) `` and `` f[`a%] `` build `+[`a]` and run (q 5, #599).
-        if m.as_str().starts_with('`') && operand_ends(code, &v.comments, m.end()) {
+        // A string there is an operand, though blank in `code`: `` `a+"a" ``
+        // and `` `a-"" `` are 'type (KDB-X, #2881).
+        if m.as_str().starts_with('`')
+            && operand_ends(code, &v.comments, after)
+            && !v.comments[past_blanks(&v.comments, after)..].starts_with('"')
+        {
             continue;
         }
+        // A symbol atom beside the empty list makes the empty list, and
+        // beside a dictionary of them that dictionary: `` `a+() ``,
+        // `` ()*`a `` and `` `a+`x`y!() `` run (KDB-X, #2880). Not for a
+        // vector, which is 'length, nor for `xlog`, nor for `` ()-`a ``, the
+        // one glyph that is 'type with the list on its left.
+        // What is on the right is read from where it starts, which may be
+        // the indented line after the operator: `` `a+ `` and then `  ()`
+        // or `  2+` run as `` `a+() `` and `` `a+2+ `` do (KDB-X).
+        let right = past_blanks(&v.comments, after);
+        let empty = re!(r"^(?:\([ \t]*\)|(?:`[A-Za-z][A-Za-z0-9_.]*){2,}[ \t]*![ \t]*\([ \t]*\))$");
+        let glyph = |c: char| c.is_whitespace() || "+-*%&|".contains(c);
         if m.as_str().starts_with('`') {
-            let end = phrase_end(code, m.end());
-            let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
-            if code[m.end()..end]
+            let (symbol, operator) = m.as_str().split_at(m.as_str().find(glyph).unwrap());
+            let end = phrase_end(code, right);
+            let end = code[right..end].find('\n').map_or(end, |n| right + n);
+            if symbol.matches('`').count() == 1
+                && operator.trim() != "xlog"
+                && empty.is_match(code[right..end].trim())
+            {
+                continue;
+            }
+        } else {
+            let (operator, symbol) = m.as_str().split_at(m.as_str().find('`').unwrap());
+            if symbol.matches('`').count() == 1
+                && !["-", "xlog"].contains(&operator.trim())
+                && re!(r"\([ \t]*\)[ \t]*$").is_match(&code[..at])
+            {
+                continue;
+            }
+        }
+        if m.as_str().starts_with('`') {
+            let end = phrase_end(code, right);
+            let end = code[right..end].find('\n').map_or(end, |n| right + n);
+            if code[right..end]
                 .trim_end()
                 .ends_with(['+', '-', '*', '%', '&', '|'])
             {
@@ -7525,7 +7575,9 @@ fn lint_rules(
         let num =
             r"-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
-        let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
+        // `within` is 'type against a non-symbol too, bounds or value: q 5
+        // `` `a within 1 2 `` and `` 1 within `a`c `` (#2883).
+        let op = r"(?:<=|>=|<>|<|>|=|\bin\b|\bwithin\b)";
         // A string literal is blanks by the time `code` is built, so the
         // string half of this reads `v.comments`, which keeps strings and
         // blanks comments. A quote there is not necessarily one that opens a
