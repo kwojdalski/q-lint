@@ -153,6 +153,50 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] each[neg;a]}\ng:{[a] 1+extracted[a]}\n",
         "g 1 2",
     ),
+    // `$[` is the conditional, a value wherever it stands (#2780).
+    (
+        "g:{[a] b:a*2; $[b>1;b;0]}\n",
+        "$[b>1;b;0]",
+        "extracted:{[b] $[b>1;b;0]}\ng:{[a] b:a*2; extracted[b]}\n",
+        "g 3",
+    ),
+    (
+        "g:{[a] 1+$[a>1;a;0]*2}\n",
+        "$[a>1;a;0]",
+        "extracted:{[a] $[a>1;a;0]}\ng:{[a] 1+extracted[a]*2}\n",
+        "g 3",
+    ),
+    // A column's name assigns nothing: a table literal's, a query's (#2780).
+    (
+        "g:{[a] ([] c:a)}\n",
+        "([] c:a)",
+        "extracted:{[a] ([] c:a)}\ng:{[a] extracted[a]}\n",
+        "g 1 2",
+    ),
+    (
+        "g:{[a] ([k:a] c:a; d:2*a)}\n",
+        "([k:a] c:a; d:2*a)",
+        "extracted:{[a] ([k:a] c:a; d:2*a)}\ng:{[a] extracted[a]}\n",
+        "g 1 2",
+    ),
+    (
+        "g:{[a] select c:a from ([]b:1 2)}\n",
+        "select c:a from ([]b:1 2)",
+        "extracted:{[a] select c:a from ([]b:1 2)}\ng:{[a] extracted[a]}\n",
+        "g 3 4",
+    ),
+    (
+        "g:{[a] select[1] c:a, d:b by e:b from ([]b:1 2)}\n",
+        "select[1] c:a, d:b by e:b from ([]b:1 2)",
+        "extracted:{[a] select[1] c:a, d:b by e:b from ([]b:1 2)}\ng:{[a] extracted[a]}\n",
+        "g 3 4",
+    ),
+    (
+        "g:{[a] 0!update c:a from ([]b:1 2)}\n",
+        "update c:a from ([]b:1 2)",
+        "extracted:{[a] update c:a from ([]b:1 2)}\ng:{[a] 0!extracted[a]}\n",
+        "g 3 4",
+    ),
 ];
 
 #[test]
@@ -212,6 +256,22 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
         ("g:{[n] n f/0}\n", "f/0", "adverb"),
         ("g:{[a;b] a {x,y}'b}\n", "{x,y}'b", "adverb"),
         ("g:{[l] count {x+y}/l}\n", "{x+y}/l", "adverb"),
+        // A column's name assigns nothing, but what a column holds may
+        // (#2780).
+        ("g:{[a] ([] c:(b:a))}\n", "([] c:(b:a))", "assigns"),
+        ("g:{[a] ([] c:a; b:a):1}\n", "([] c:a; b:a)", "assigned"),
+        (
+            "g:{[a] select c:a, d:(e:a) from ([]b:1 2)}\n",
+            "select c:a, d:(e:a) from ([]b:1 2)",
+            "assigns",
+        ),
+        (
+            "g:{[a;t] select c:a from t where b>d:1}\n",
+            "select c:a from t where b>d:1",
+            "assigns",
+        ),
+        ("g:{[a] $[a;b:1;2]}\n", "$[a;b:1;2]", "assigns"),
+        ("g:{[a] `select c:a}\n", "`select c:a", "assigns"),
         (
             "g:{[a;b;c;d;e;f;h;i] a+b+c+d+e+f+h+i}\n",
             "a+b+c+d+e+f+h+i",

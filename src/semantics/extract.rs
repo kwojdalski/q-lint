@@ -98,6 +98,7 @@ pub fn extract(
         return Err("a system command is not an expression".into());
     }
     let text = &code[start..end];
+    let columns = column_colons(text);
     // Brackets that close inside it, a statement, an assignment, a return.
     let mut depth = 0i32;
     let mut nested = 0i32;
@@ -121,7 +122,7 @@ pub fn extract(
             b';' if depth == 0 => {
                 return Err("the selection holds more than one expression".into());
             }
-            b':' if nested == 0 && !allowed_colon(text, i) => {
+            b':' if nested == 0 && !allowed_colon(text, i) && !columns.contains(&i) => {
                 return Err(
                     "the selection assigns or returns, which the new lambda would do for itself"
                         .into(),
@@ -146,10 +147,12 @@ pub fn extract(
             "the selection names .z.s, which in the new lambda would be that lambda".into(),
         );
     }
-    // Where it starts: a noun, between tokens.
+    // Where it starts: a noun, between tokens. `$[` is the conditional, a
+    // value whatever stands before it: `f$[c;a;b]` applies `f` to it (#2780).
     let first = raw[start..].chars().next().unwrap_or(' ');
     let noun_start = first.is_ascii_alphanumeric()
         || "`\"({".contains(first)
+        || raw[start..].starts_with("$[")
         || (first == '.' && raw[start + 1..].starts_with(|c: char| c.is_ascii_alphanumeric()));
     if !noun_start {
         return Err("the selection starts with an operator: select a whole expression".into());
@@ -312,6 +315,106 @@ fn allowed_colon(text: &str, i: usize) -> bool {
     })
 }
 
+/// The `:` of `text` that name a column where they stand, and assign
+/// nothing: after a column of a table literal, `([k:a] c:b)`, or one a
+/// qSQL phrase names, `select c:a by d:b from t` (#2780).
+fn column_colons(text: &str) -> Vec<usize> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Open {
+        Table,
+        Keys,
+        Limit,
+        Other,
+    }
+    let b = text.as_bytes();
+    // Each open bracket, and whether a query's columns are being read in it.
+    let mut stack = vec![(Open::Other, false)];
+    // Whether a column's name may be the next token, and whether that
+    // token follows a query's lead word, whose `[...]` is its limit.
+    let (mut slot, mut led) = (false, false);
+    let mut out = vec![];
+    let mut i = 0;
+    while i < b.len() {
+        let top = stack.len() - 1;
+        match b[i] {
+            b' ' | b'\t' | b'\r' | b'\n' => {}
+            b'(' => {
+                let table = text[i + 1..].trim_start().starts_with('[');
+                stack.push((if table { Open::Table } else { Open::Other }, false));
+                (slot, led) = (false, false);
+            }
+            b'[' => {
+                let keys = stack[top].0 == Open::Table && text[..i].trim_end().ends_with('(');
+                let kind = match (keys, led) {
+                    (true, _) => Open::Keys,
+                    (_, true) => Open::Limit,
+                    _ => Open::Other,
+                };
+                stack.push((kind, false));
+                (slot, led) = (keys, false);
+            }
+            b'{' => {
+                stack.push((Open::Other, false));
+                (slot, led) = (false, false);
+            }
+            b')' | b']' | b'}' => {
+                let closed = if top > 0 {
+                    stack.pop().map(|(kind, _)| kind)
+                } else {
+                    None
+                };
+                slot = matches!(closed, Some(Open::Keys | Open::Limit));
+                led = false;
+            }
+            b';' => {
+                stack[top].1 = false;
+                (slot, led) = (matches!(stack[top].0, Open::Table | Open::Keys), false);
+            }
+            b',' => (slot, led) = (stack[top].1, false),
+            b'`' => {
+                while b
+                    .get(i + 1)
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || b"_.:/".contains(c))
+                {
+                    i += 1;
+                }
+                (slot, led) = (false, false);
+            }
+            c if c.is_ascii_alphabetic() || c == b'.' => {
+                let mut end = i + 1;
+                while end < b.len()
+                    && (b[end].is_ascii_alphanumeric() || matches!(b[end], b'_' | b'.'))
+                {
+                    end += 1;
+                }
+                match &text[i..end] {
+                    "select" | "exec" | "update" => {
+                        stack[top].1 = true;
+                        (slot, led) = (true, true);
+                    }
+                    "by" | "distinct" if stack[top].1 => (slot, led) = (true, false),
+                    "from" | "where" | "delete" => {
+                        stack[top].1 = false;
+                        (slot, led) = (false, false);
+                    }
+                    _ => {
+                        let rest = text[end..].trim_start_matches([' ', '\t']);
+                        if slot && rest.starts_with(':') && !rest.starts_with("::") {
+                            out.push(text.len() - rest.len());
+                        }
+                        (slot, led) = (false, false);
+                    }
+                }
+                i = end;
+                continue;
+            }
+            _ => (slot, led) = (false, false),
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Whether the expression the selection ending at `end` is in ends there:
 /// at a `;`, a closing bracket, or the end of the statement.
 fn ends_expression(code: &str, raw: &str, end: usize) -> bool {
@@ -366,6 +469,7 @@ fn term_end(code: &str, raw: &str, comments: &str, start: usize, end: usize) -> 
     let numeric = |c: u8| c.is_ascii_alphanumeric() || c == b'.' || c == b':';
     match b[i] {
         b'(' | b'{' => i = close(i)?,
+        b'$' if b.get(i + 1) == Some(&b'[') => i = close(i + 1)?,
         b'"' => {
             while i < end && (in_string(i) || b[i] == b'"') {
                 i += 1;
