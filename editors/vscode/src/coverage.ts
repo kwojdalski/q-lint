@@ -18,6 +18,9 @@ export interface SourceFile {
   /// The file's URI, as a string.
   uri: string;
   text: string;
+  /// Its path in the workspace (`modulePathOf`), which names a KDB-X
+  /// module's functions where the process holds them (#2917).
+  path?: string;
 }
 
 /// One counted statement: where it is, and the function it is in.
@@ -42,7 +45,7 @@ export interface CoveragePlan {
 
 /// The names each file defines, in order, each once.
 export function definedNames(files: SourceFile[]): string[] {
-  return [...new Set(files.flatMap((f) => definitions(f.text).map((d) => d.name)))];
+  return [...new Set(files.flatMap((f) => definitions(f.text, f.path).map((d) => d.name)))];
 }
 
 /// Where the lambda of the definition on lines `first` to `last` opens: the
@@ -65,7 +68,7 @@ export function coveragePlan(files: SourceFile[], states: Map<string, ProcessSta
   const skipped = new Map<string, "missing" | "changed">();
   for (const file of files) {
     const lines = file.text.split("\n");
-    for (const def of definitions(file.text)) {
+    for (const def of definitions(file.text, file.path)) {
       if (seen.has(def.name)) {
         continue;
       }

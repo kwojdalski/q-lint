@@ -20,6 +20,7 @@ import { CHART_KINDS, chartFromGrid, gridFromFile, type ChartKind } from "./char
 import { CAST_TYPES, COLUMN_DIRS, RUN_SCRIPT, columnScript, columnsOf, opProblem, opText, readColumnDirs, readRun, type ColumnOp } from "./colmanager";
 import { DB_COMMANDS, dbOff, dbOn, type DbFeature } from "./dbfeatures";
 import { DOCUMENT, DOCUMENT_LIMIT, docHtml, docMarkdown, readDoc, workspaceDocs } from "./dbdoc";
+import { modulePathOf } from "./definitions";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
 import { migrationScript, sameSchema, schemaDiff } from "./migrate";
@@ -180,7 +181,11 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (got === undefined) return "not read";
     // No workspace: the functions go undocumented.
     const files = await Promise.resolve(workspace.findFiles("**/*.q", "**/node_modules/**", 2000)).catch(() => []);
-    const docs = await workspaceDocs(files, async (uri) => new TextDecoder().decode(await workspace.fs.readFile(uri)));
+    const docs = await workspaceDocs(
+      files,
+      async (uri) => new TextDecoder().decode(await workspace.fs.readFile(uri)),
+      (uri) => modulePathOf(uri.fsPath, workspace.asRelativePath?.(uri, false)),
+    );
     try {
       const doc = readDoc(got.value);
       const at = new Date().toISOString().replace("T", " ").slice(0, 16);

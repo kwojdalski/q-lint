@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, isBlankLine, contextAfter, contextSwitch, inContext } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextLeft, contextSwitch, inContext, scriptInContext } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -126,6 +126,25 @@ test("the context a text leaves is the one the next runs in (#2286)", () => {
   assert.deepStrictEqual(inContext(["a:1"], "."), ["a:1"]);
 });
 
+// q's statement keeps a block comment in a lambda as `/` lines (KDB-X holds
+// "{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}" from this script), which read as
+// a script again open one over the rest of the lambda.
+test("code kept behind a \\d is a script that cuts to the statements it ran as (#3162)", () => {
+  const lambda = "rp:{[x]\n  a:x+1;\n/\n  a:a*100;\n\\\n  a}";
+  const [cut] = statements(lambda);
+  assert.strictEqual(cut, "rp:{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}");
+  assert.deepStrictEqual(statements(cut), ["rp:{[x]\n  a:x+1;"]);
+  assert.strictEqual(scriptInContext(lambda, ".ns"), `\\d .ns\n${lambda}`);
+  assert.deepStrictEqual(statements(scriptInContext(lambda, ".ns")), ["\\d .ns", cut]);
+  // A piece of a statement, as a selection is: its first line does not continue the \d.
+  for (const code of ["  a:1;\n  b:2", "/ note\n\n  f:{\n  x}\ng:2\n/ after", `/\nblock\n\\\n${lambda}\nh:3`]) {
+    assert.deepStrictEqual(statements(scriptInContext(code, ".ns")), inContext(statements(code), ".ns"), code);
+  }
+  // The root needs none, and no code none either.
+  assert.strictEqual(scriptInContext(lambda, "."), lambda);
+  assert.strictEqual(scriptInContext("/ only a comment", ".ns"), "/ only a comment");
+});
+
 test("a \\d with a trailing comment, or after q), switches the context as q does (#2785)", () => {
   assert.strictEqual(contextSwitch("\\d .a / analytics"), ".a");
   assert.strictEqual(contextSwitch("q)\\d .a"), ".a");
@@ -133,4 +152,53 @@ test("a \\d with a trailing comment, or after q), switches the context as q does
   assert.strictEqual(contextAfter("q)\\d .a\nf:1"), ".a");
   // A slash with no blank before it is no comment: not a name.
   assert.strictEqual(contextSwitch("\\d .a/b"), undefined);
+});
+
+// Each of these switches the context on KDB-X, and was read as switching
+// none: the cell, REPL entry or statement after it ran in the root.
+test("system[\"d .ns\"], a switch beside other code on its line, and a name that starts with a digit switch the context (#2916)", () => {
+  assert.strictEqual(contextSwitch('system["d .ns"]'), ".ns");
+  assert.strictEqual(contextSwitch('system[ "d .ns" ] / the library\'s'), ".ns");
+  assert.strictEqual(contextSwitch("\\d .1a"), ".1a");
+  assert.strictEqual(contextSwitch("\\d .a._b / c"), ".a._b");
+  assert.strictEqual(contextSwitch('system "d ._a"'), "._a");
+  // Beside other code it is no switch alone, and leaves its context.
+  for (const [statement, left] of [
+    ['a:1;system "d .ns"', ".ns"],
+    ['system "d .ns";a:1', ".ns"],
+    ['r:system "d .ns" / kept', ".ns"],
+    ['system "d .a";system["d .b"]', ".b"],
+    ['system "d .a";system "d ."', "."],
+    ['a:1;\n system "d .m"\n/ system "d .c"\n ;b:2', ".m"],
+  ]) {
+    assert.strictEqual(contextSwitch(statement), undefined, statement);
+    assert.strictEqual(contextLeft(statement), left, statement);
+  }
+  // Not one that may not run, is computed, or is no code.
+  for (const none of ['f:{system "d .x"}', 'if[c;system "d .x"]', 'system "d .x",y', 's:"system \\"d .x\\""', 'a:1 / system "d .x"', 'mysystem "d .x"', '`system "d .x"', 'system "d foo"', '\\echo system "d .x"']) {
+    assert.strictEqual(contextLeft(none), undefined, none);
+  }
+  assert.strictEqual(contextLeft("\\d .a"), ".a");
+  assert.strictEqual(contextAfter('a:1;system "d .ns"\nf:{x+1}'), ".ns");
+  assert.strictEqual(contextAfter('system["d .nt"]\ng:{x+2}', ".ns"), ".nt");
+  assert.strictEqual(contextAfter("\\d .1a\nf:1"), ".1a");
+  // A definition under one is named in it.
+  assert.deepStrictEqual(definitions('f:{x}\na:1;system "d .ns"\ng:{x}\nsystem["d .1a"]\nh:{x}\n').map((d) => d.name), ["f", ".ns.g", ".1a.h"]);
+  // Behind `q)` prompts it switches as `\d` behind them does (#2785).
+  assert.strictEqual(contextSwitch('q)system "d .ns"'), ".ns");
+  assert.strictEqual(contextLeft('q)q)a:1;system["d .ns"]'), ".ns");
+  assert.strictEqual(contextLeft('k)system "d .ns"'), undefined);
+});
+
+test("the lines above tell whether a line is commented out, or starts inside a string (#2910)", () => {
+  const each = (lines) => lines.map((_, i) => lineContext(lines.slice(0, i + 1)));
+  const code = { commented: false, quoted: false };
+  const comment = { commented: true, quoted: false };
+  const string = { commented: false, quoted: true };
+  assert.deepStrictEqual(each(["a:1", "/", "x", "\\", "b:2", "\\", "c:3"]), [code, comment, comment, comment, code, comment, comment]);
+  // A string runs on over the indented lines under it, blank lines too,
+  // and no further than the statement.
+  assert.deepStrictEqual(each(['s:"a', "", '  b', '  c";t:"d', '  e"', "  f", 'u:"g', "v:1"]), [code, code, string, string, string, code, code, code]);
+  // A `/` and a no-break space is a line comment, which opens nothing.
+  assert.deepStrictEqual(each(["/\u00a0", "a:1", "\\\f", "b:2"]), [code, code, code, code]);
 });

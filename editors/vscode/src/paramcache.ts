@@ -22,7 +22,7 @@
 // and a scan by q's own script rules (those `statements.ts` cuts code by) is
 // all the question needs. It never runs the code.
 
-import { blockDepth, contextAfter } from "./statements";
+import { blockDepth, contextAfter, trimBlanks } from "./statements";
 
 /// The command, for `package.json`'s manifest test.
 export const PARAM_CACHE = {
@@ -65,7 +65,9 @@ export function codeMask(text: string): boolean[] {
     const nl = text.indexOf("\n", at);
     const end = nl === -1 ? text.length : nl;
     const raw = text.slice(at, end);
-    const line = raw.replace(/\s+$/, "");
+    // q's blanks: a `/` and a no-break space or a form feed is a line
+    // comment, not the opening of a block comment (#2905).
+    const line = trimBlanks(raw);
     if (inString) {
       // A string runs on until its closing quote, whatever the line holds.
     } else if (depth > 0 || line === "/") {

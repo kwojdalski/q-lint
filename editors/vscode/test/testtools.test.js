@@ -195,6 +195,17 @@ test("coverage plans only the functions the process holds as the file has them",
   assert.deepStrictEqual(coveragePlan(files, new Map()).skipped.map((s) => s.why), ["missing", "missing"]);
 });
 
+// A process that loaded mymod/init.q with `use` holds its f as .m.mymod.f.
+test("coverage asks for a KDB-X module's functions in the module's context (#2917)", () => {
+  const files = [{ uri: "file:///ws/mymod/init.q", text: "f:{x+1}\nexport:([f])\n", path: "mymod/init.q" }];
+  assert.deepStrictEqual(definedNames(files), [".m.mymod.f"]);
+  const plan = coveragePlan(files, new Map([[".m.mymod.f", { state: "lambda", text: "{x+1}" }]]));
+  assert.deepStrictEqual(plan.names, [".m.mymod.f"]);
+  assert.deepStrictEqual(plan.skipped, []);
+  // A file that exports nothing is a script: its names are the root's.
+  assert.deepStrictEqual(definedNames([{ uri: "file:///ws/mymod/init.q", text: "f:{x+1}\n", path: "mymod/init.q" }]), ["f"]);
+});
+
 test("coverage of a lambda that opens below its name is placed on the lambda's lines (#1900)", () => {
   const marked = (text) => {
     const lines = text.split("\n");

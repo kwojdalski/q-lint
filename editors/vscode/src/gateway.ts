@@ -15,7 +15,7 @@
 // what a lambda around it would answer is discarded: a gateway call is sent
 // as a plain string, never inside q-lint's lambda (#2584).
 import { qString } from "./qliteral";
-import { contextSwitch, statements } from "./statements";
+import { contextLeft, contextSwitch, lineKinds, statements, trimBlanks } from "./statements";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -57,13 +57,16 @@ export function symbols(types: string[]): string {
 /// `statements` as the one string a server `value`s to run them in order: a
 /// system command as `system`, as `\d .ns` cannot be followed by more on
 /// its line, and each after the first on a line of its own that starts
-/// `" ;"`, so a trailing comment ends before it. With a `\d` among them
+/// `" ;"`, so a trailing comment ends before it. One in another language,
+/// `k)a:1+!3`, is a string of its own, valued: the prefix is one only where
+/// a string starts, and makes all that follows it that language (#2912).
+/// With a `\d` among them
 /// each is a string of its own, valued in turn: q parses one string whole,
 /// so a function after `\d .ns` in it was bound to the root, and its call
 /// of a function beside it failed, or found the root's (#3057).
 export function joined(statements: string[]): string {
-  const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : s));
-  return each.length > 1 && statements.some((s) => contextSwitch(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
+  const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : /^[A-Za-z]\)/.test(s) ? `value ${qString(s)}` : s));
+  return each.length > 1 && statements.some((s) => contextLeft(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
 }
 
 /// The one statement that runs `statements` through the gateway on a server
@@ -252,10 +255,14 @@ export function gatewayStatements(cut: string[], types: string[]): string[] {
 /// is kept, for the query to be refused with its name, where the line cut
 /// at it sent the query to the types before it only (#3065).
 /// `/ @servertypes none` names no server, `[]`: the file's queries run on
-/// the gateway itself (#2588). Undefined when it names none.
+/// the gateway itself (#2588). Undefined when it names none. The line is a
+/// comment q reads past: one inside a block comment, or after the `\` that
+/// ends the script, is text nobody wrote for this file's queries (#2918).
 export function fileServerTypes(text: string): string[] | undefined {
-  const m = /^\/[ \t]*@servertypes[ \t]+(.+)$/m.exec(text);
-  if (m === null) {
+  const lines = text.split("\n");
+  const kinds = lineKinds(lines);
+  const m = lines.map((line, i) => (kinds[i] === "comment" ? /^\/[ \t]*@servertypes[ \t]+(.+)$/.exec(trimBlanks(line)) : null)).find((found) => found !== null);
+  if (m === null || m === undefined) {
     return undefined;
   }
   const words = m[1].split(/[\s,`]+/).filter((t) => t !== "");

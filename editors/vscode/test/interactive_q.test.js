@@ -127,6 +127,60 @@ test("cells and REPL entries run in the \\d the text before them left, as \\l an
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
 });
 
+// `\l` of the same file defines .ns.f and .nt.g: the cells defined both in
+// the root, where each `system` switch was read as none (#2916).
+test("a cell runs in the context a system[\"d .ns\"], or one beside other code, left above it (#2916)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { interactive, repl, editor } = await setUp(t, q.port);
+  editor('/ %% setup\na:1;system "d .ns"\n/ %% define\nf:{x+1}\n/ %% setup2\nsystem["d .nt"]\n/ %% define2\ng:{x+2}\n/ %% setup3\n\\d .1a\n/ %% define3\nh:{x+3}');
+  await stub.commands.get(C.runAllCells)();
+  assert.deepStrictEqual(interactive.entries().map((e) => e.ok), [true, true, true, true, true, true]);
+  assert.strictEqual(await repl.enter("(.ns.f 1;@[value;`f;`undefined];.nt.g 1;@[value;`g;`undefined];(` sv `.1a`h) 1;@[value;`h;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined", "3", "`undefined", "4", "`undefined"]);
+  // The REPL keeps one typed so, as q's console does.
+  assert.strictEqual(await repl.enter('b:2;system "d .zz7"'), "ran");
+  assert.strictEqual(await repl.enter("dd:4"), "ran");
+  assert.strictEqual(await repl.enter('system["d ."]'), "ran");
+  assert.strictEqual(await repl.enter("(.zz7.dd;@[value;`dd;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
+});
+
+// q's console, given the same lines, answers (4;`undefined): the \d ran.
+test("the REPL keeps the \\d of an entry whose later statement failed, as q's console does (#2913)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { repl } = await setUp(t, q.port);
+  for (const unlimited of [false, true]) {
+    const ns = unlimited ? ".zz5" : ".zz9";
+    assert.strictEqual(await repl.enter(`\\d ${ns}\nbad:1+\`a`), "ran");
+    assert.strictEqual(repl.entries().at(-1).ok, false);
+    assert.strictEqual(await repl.enter("dd:4"), "ran");
+    // One that fails with no \d of its own stays where it was, and one that
+    // fails before its \d does not take it.
+    assert.strictEqual(await repl.enter("bad:1+`a\n\\d .zz6"), "ran");
+    assert.strictEqual(await repl.enter("ee:5"), "ran");
+    assert.strictEqual(await repl.enter("\\d ."), "ran");
+    assert.strictEqual(await repl.enter(`(${ns}.dd;${ns}.ee;@[value;\`dd;\`undefined];@[value;\`.zz6.ee;\`undefined])`), "ran");
+    assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "5", "`undefined", "`undefined"]);
+    await stub.commands.get("q-lint.toggleUnlimitedQuery")();
+  }
+});
+
+test("Run Query Again runs a REPL entry in the \\d it ran in, not in the root (#2915)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { live, repl } = await setUp(t, q.port);
+  assert.strictEqual(await repl.enter("\\d .zz8"), "ran");
+  assert.strictEqual(await repl.enter("dd:{x+1}"), "ran");
+  assert.strictEqual(await repl.enter("\\d ."), "ran");
+  const entry = live.history().find((e) => e.code.endsWith("dd:{x+1}"));
+  await stub.commands.get("q-lint.rerunQuery")(entry);
+  assert.deepStrictEqual(live.history()[0].code, "\\d .zz8\ndd:{x+1}");
+  assert.strictEqual(await repl.enter("(.zz8.dd 1;@[value;`dd;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined"]);
+});
+
 test("code Smart Send gives the REPL runs as the editor has it, a block comment in a lambda no code (#2284)", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());
@@ -135,6 +189,25 @@ test("code Smart Send gives the REPL runs as the editor has it, a block comment 
   assert.strictEqual(repl.entries().at(-1).ok, true);
   assert.strictEqual(await repl.enter("rp 1"), "ran");
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["2"]);
+});
+
+test("a lambda that holds a block comment runs under a \\d too, from the REPL and from Run Query Again (#3162)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { live, repl } = await setUp(t, q.port);
+  const lambda = "rq:{[x]\n  a:x+1;\n/\n  a:a*100;\n\\\n  a}";
+  assert.strictEqual(await repl.enter("\\d .zz9"), "ran");
+  await repl.runFromEditor(lambda, vscode.Uri.file("/w/a.q"));
+  assert.strictEqual(repl.entries().at(-1).ok, true);
+  assert.strictEqual(await repl.enter("\\d ."), "ran");
+  // Kept as the script it is, which Run Query Again reads as it was run.
+  const entry = live.history().find((e) => e.code.includes("rq:"));
+  assert.strictEqual(entry.code, `\\d .zz9\n${lambda}`);
+  await repl.enter("delete rq from `.zz9");
+  await stub.commands.get("q-lint.rerunQuery")(entry);
+  assert.strictEqual(live.history()[0].outcome, "ok");
+  assert.strictEqual(await repl.enter("(.zz9.rq 1;@[value;`rq;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined"]);
 });
 
 test(".qlint.view and .qlint.plot, defined on the process, open what a query passes them", { skip }, async (t) => {

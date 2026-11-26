@@ -75,6 +75,21 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(parseProcesses([{ label: "gw", host: "h", port: 1, gateway: ["rdb"] }]).processes[0].gateway, ["rdb"]);
 });
 
+test("a `/ @servertypes` line in a block comment, or after the script's end, names nothing (#2918)", () => {
+  // The live line under a commented-out one is the file's.
+  assert.deepStrictEqual(fileServerTypes("/\nold setup:\n/ @servertypes hdb\n\\\n/ @servertypes rdb\nselect from trade\n"), ["rdb"]);
+  assert.strictEqual(fileServerTypes("/\n/ @servertypes hdb\n\\\nselect from trade\n"), undefined);
+  // q reads nothing after a lone `\`.
+  assert.strictEqual(fileServerTypes("select from trade\n\\\n/ @servertypes hdb\n"), undefined);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb\nselect from trade\n\\\n/ @servertypes hdb\n"), ["rdb"]);
+  // A line comment anywhere q reads still names them, between a
+  // statement's lines too, and with Windows line ends.
+  assert.deepStrictEqual(fileServerTypes("f:{\n/ @servertypes hdb\n  x}\n"), ["hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/\r\nnote\r\n\\\r\n/ @servertypes rdb hdb\r\nselect from t\r\n"), ["rdb", "hdb"]);
+  // `/` and a no-break space is a line comment, which hides nothing.
+  assert.deepStrictEqual(fileServerTypes("/\u00a0\n/ @servertypes rdb\nselect from t"), ["rdb"]);
+});
+
 // `rdb hdb-eu` in the box, or `rdb 2hdb` on a file's line, was read as
 // `rdb` alone and nothing said: the HDB named was never queried (#3065).
 test("a server type that is no q name is named, not dropped (#3065)", () => {
@@ -340,6 +355,8 @@ test("statements that switch the context are strings valued one by one, each in 
   assert.strictEqual(gatewayStatement(["\\d .x", "f 1"], ["hdb"]), '.gw.syncexec["last value each (\\"system \\\\\\"d .x\\\\\\"\\";\\"f 1\\")";enlist `hdb]');
   // The call is still one string with its types, so it is read back.
   assert.deepStrictEqual(gatewayParts(gatewayStatement(["\\d .x", "f 1"], ["hdb"])), { query: 'last value each ("system \\"d .x\\"";"f 1")', types: ["hdb"] });
+  // A switch beside other code on its line is one too (#2916).
+  assert.strictEqual(joined(['a:1;system "d .x"', "f:{x}"]), 'last value each ("a:1;system \\"d .x\\"";"f:{x}")');
   // One statement, and statements that switch no context, go as they did.
   assert.strictEqual(joined(["\\d .x"]), 'system "d .x"');
   assert.strictEqual(joined(["a:1", "\\c 20 200", "a"]), 'a:1\n ;system "c 20 200"\n ;a');
@@ -362,6 +379,25 @@ test("functions defined after a \\d through a gateway are bound to its context, 
   lines.length = 0;
   await live.run("string system \"d\"");
   assert.deepStrictEqual(lines.slice(1), ['".."']);
+});
+
+// `k)` is a prefix only where a string starts: joined second it was read as
+// q, ')', and joined first it made the q after it k, 'til (#2912).
+test("a k) statement among several goes through a gateway as a string of its own, valued (#2912)", { skip }, async (t) => {
+  assert.strictEqual(joined(["a:1", "k)b:2+!3", "b"]), 'a:1\n ;value "k)b:2+!3"\n ;b');
+  assert.strictEqual(joined(["k)a:1+!3", "b:til 3"]), 'value "k)a:1+!3"\n ;b:til 3');
+  // Alone it is the string itself, and no prefix after a space.
+  assert.strictEqual(gatewayStatement(["k)!3"], ["hdb"]), '.gw.syncexec["k)!3";enlist `hdb]');
+  assert.strictEqual(joined(["a:1", "b:(a+1\n k)"]), "a:1\n ;b:(a+1\n k)");
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  // Each server's last value, joined.
+  await live.run("a:1\nk)b:a+!3\nb");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["1 2 3 1 2 3"]]);
+  lines.length = 0;
+  await live.run("k)c:1+!3\nd:til 3\n\\d .kq\nk)e:{x+1}\ne 1 3 5");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["2 4 6 2 4 6"]]);
 });
 
 // One `.gw.` name anywhere made the whole selection the gateway's own, so

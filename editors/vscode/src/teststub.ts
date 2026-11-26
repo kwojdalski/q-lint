@@ -17,6 +17,7 @@
 import { definitions } from "./definitions";
 import { globLiteral } from "./globliteral";
 import { argumentNames, codeMask, lambdas } from "./paramcache";
+import { blockDepth, contextAfter, scriptCode, statements, trimBlanks } from "./statements";
 
 export const TEST_STUB_COMMAND = "q-lint.generateTestStub";
 
@@ -27,9 +28,10 @@ export interface Target {
 }
 
 /// The function whose definition holds 0-based `line` of `text`, when that
-/// is a function definition and not itself a test.
-export function functionAt(text: string, line: number): Target | undefined {
-  const def = definitions(text).find((d) => d.line <= line && line <= d.endLine);
+/// is a function definition and not itself a test. `path`, the file's in
+/// its workspace, names a KDB-X module's function in its context (#2917).
+export function functionAt(text: string, line: number, path?: string): Target | undefined {
+  const def = definitions(text, path).find((d) => d.line <= line && line <= d.endLine);
   if (def === undefined) {
     return undefined;
   }
@@ -51,8 +53,11 @@ export interface Style {
   qunitAsserts: boolean;
 }
 
-/// The style of a test file's text.
-export function detectStyle(text: string): Style {
+/// The style of a test file's text: of the statements q runs of it, so a
+/// test commented out, in a block comment or after the script's end, sets
+/// none (#2909).
+export function detectStyle(file: string): Style {
+  const text = statements(scriptCode(file)).join("\n");
   const qunitAsserts = /\.qunit\.assert/.test(text);
   const qt = /^(\.qt(?:\.[A-Za-z][A-Za-z0-9_]*)+)\.test_[A-Za-z0-9_]*\s*:/m.exec(text);
   if (qt !== null) {
@@ -107,13 +112,30 @@ export function stubText(target: Target, name: string, style: Style, context = "
   return `${lines.join("\n")}\n`;
 }
 
-/// The context a script's text ends in: its last `\d .ns`, or `.`.
+/// The context a script's text ends in: its last `\d .ns`, or `.`. As q
+/// runs it, so a `\d` in a block comment or after the script's end is none,
+/// and a `system "d .ns"` is one (#2909).
 export function endContext(text: string): string {
-  let context = ".";
-  for (const m of text.matchAll(/^\\d[ \t]+(\S+)[ \t]*$/gm)) {
-    context = m[1];
+  return contextAfter(scriptCode(text));
+}
+
+/// The 0-based line of `text`, a test file's, from which q reads none of
+/// it: the `\` alone that ends the script, or the `/` alone that opens a
+/// block comment nothing closes. A test added there, at the file's end, is
+/// never defined, so it goes before that line (#2908). Undefined when q
+/// reads the text to its end.
+export function unreadFrom(text: string): number | undefined {
+  let depth = 0;
+  let opened = 0;
+  for (const [i, raw] of text.split("\n").entries()) {
+    const line = trimBlanks(raw);
+    if (depth === 0 && line === "\\") {
+      return i;
+    }
+    opened = depth === 0 ? i : opened;
+    depth = blockDepth(depth, line);
   }
-  return context;
+  return depth > 0 ? opened : undefined;
 }
 
 /// Where a new test file for `source` (a path) goes: `tests/test_<name>.q`

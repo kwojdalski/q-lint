@@ -124,6 +124,20 @@ test("the exported script puts the root back after an entry that left it behind 
   }
 });
 
+test("a / and a no-break space or a form feed in an entry is a line comment in the exported script: no \\ is added that would end it (#2907)", () => {
+  const { statements } = require("../out/statements.js");
+  const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
+  for (const blank of ["\u00a0", "\f"]) {
+    // Newest first, as kept.
+    const script = historyScript([entry("c:3"), entry(`a:1\n/${blank}\nb:2`)]);
+    assert.doesNotMatch(script, /^\\$/m);
+    assert.deepStrictEqual(statements(script), ["a:1", "b:2", "c:3"]);
+  }
+  // And a `\` and one is a system command, not the end of the entry: the
+  // lines under it are not commented out.
+  assert.match(historyScript([entry("a:1\n\\\u00a0\nb:2")]), /^a:1\n\\\u00a0\nb:2$/m);
+});
+
 test("the filter is on the view's title bar, and Clear Filter only while filtered", () => {
   const title = pkg.contributes.menus["view/title"];
   const on = (command) => title.filter((m) => m.command === command).map((m) => m.when);

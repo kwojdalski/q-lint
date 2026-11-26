@@ -8,7 +8,7 @@ import { fileServerTypes } from "./gateway";
 import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
-import { inContext, statements } from "./statements";
+import { contextSwitch, inContext, scriptInContext, statements } from "./statements";
 import { plainMessage } from "./history";
 import { UNLIMITED, UNLIMITED_READ_ONLY, limits, readUnlimited, runUnwrapped } from "./querycontrols";
 
@@ -42,6 +42,10 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     return undefined;
   }
   const cut = statements(code);
+  // Kept behind the `\d` it ran in, so Run Query Again and the history's
+  // script run it there too and not in the root (#2915); a `\d` of its own
+  // needs none.
+  const kept = contextSwitch(cut[0]) !== undefined ? code : scriptInContext(code, context);
   if (!(await live.toFileBinding(uri))) {
     return undefined;
   }
@@ -82,7 +86,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     const outcome = error instanceof Stopped ? error.outcome : "error";
     const said = outcome === "aborted" ? "aborted" : message;
     const answer: Answer = { ok: false, error: said, trace: "" };
-    await live.record({ process, code, at: new Date(started).toISOString(), millis: Date.now() - started, outcome, error: said });
+    await live.record({ process, code: kept, at: new Date(started).toISOString(), millis: Date.now() - started, outcome, error: said });
     return { process, code, millis: Date.now() - started, answer };
   }
   if (ran === undefined) {
@@ -92,7 +96,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
   const answer = ran.value;
   await live.record({
     process: ran.process,
-    code,
+    code: kept,
     at: new Date(started).toISOString(),
     millis,
     outcome: answer.ok ? "ok" : "error",

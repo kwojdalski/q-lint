@@ -5,9 +5,17 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, endContext, TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { functionAt, detectStyle, testName, stubText, newTestPath, testFilePatterns, endContext, unreadFrom, TEST_STUB_COMMAND } = require("../out/teststub.js");
+const { statements } = require("../out/statements.js");
 
 const SRC = ["/ lib", "\\d .fx", "mid:{[bid;ask]", "  (bid+ask)%2}", "\\d .", "sq:{x*x}", "now:{[] .z.p}", "test_x:{[] 1b}", ""].join("\n");
+
+test("the function at the cursor in a KDB-X module is named in the module's context (#2917)", () => {
+  const module = "f:{[a] a+1}\nexport:([f])\n";
+  assert.deepStrictEqual(functionAt(module, 0, "mymod/init.q"), { name: ".m.mymod.f", params: ["a"] });
+  assert.deepStrictEqual(functionAt(module, 0, "pkg\\sub\\init.q"), { name: ".m.pkg.0sub.f", params: ["a"] });
+  assert.deepStrictEqual(functionAt("f:{[a] a+1}\n", 0, "mymod/init.q"), { name: "f", params: ["a"] });
+});
 
 test("the function at the cursor, with its parameters; a test is not one", () => {
   assert.deepStrictEqual(functionAt(SRC, 3), { name: ".fx.mid", params: ["bid", "ask"] });
@@ -226,6 +234,41 @@ test("the stub goes at the end of the open test file, unsaved edits included (#1
   assert.strictEqual(files["/ws/tests/test_lib.q"], "a:1\nb:{[]\n  2}\nc:3\n\ntest_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n");
 });
 
+// At the file's end it went after a `\` that ends the script, or into a
+// block comment left open: q never defined the test, and nothing said so.
+test("the stub goes before the text q does not read: the script's end, an unclosed block comment (#2908)", async () => {
+  assert.strictEqual(unreadFrom("a:1\n\\\nnotes\n"), 1);
+  assert.strictEqual(unreadFrom("a:1\n/\nscratch\n/\nmore\n\\\n"), 1);
+  assert.strictEqual(unreadFrom("a:1\r\n\\ \r\nnotes\r\n"), 1);
+  // A block comment that is closed, a line comment, and a `\` that is not
+  // alone on its line leave the end where it is.
+  for (const read of ["", "a:1\n", "/\nnote\n\\\na:1\n", "a:1\n/ note\n", "a:1\n\\l lib.q\n", "a:1\n \\\n", "a:1\n\\\u00a0\n"]) {
+    assert.strictEqual(unreadFrom(read), undefined, JSON.stringify(read));
+  }
+  const stubbed = "test_now:{[]\n  expected:(::); / TODO: what now[] should give\n  now[]~expected}\n";
+  for (const [before, after] of [
+    ["test_old:{[] 1~1}\n\\\nnotes: run with q test_lib.q\n", `test_old:{[] 1~1}\n\n${stubbed}\n\\\nnotes: run with q test_lib.q\n`],
+    ["test_old:{[] 1~1}\n\n/\nscratch, kept for later\n", `test_old:{[] 1~1}\n\n${stubbed}\n/\nscratch, kept for later\n`],
+    ["\\\nnotes", `${stubbed}\n\\\nnotes`],
+  ]) {
+    const files = { "/ws/src/lib.q": SRC, "/ws/tests/test_lib.q": before };
+    setup(files);
+    let shown;
+    vscode.window.showTextDocument = async () => (shown = { revealRange() {} });
+    vscode.Selection = class {
+      constructor(anchor, active) {
+        Object.assign(this, { anchor, active });
+      }
+    };
+    stub.picks.push("Add Test");
+    assert.strictEqual(await stub.commands.get(TEST_STUB_COMMAND)(vscode.Uri.file("/ws/src/lib.q"), 6), true);
+    assert.strictEqual(files["/ws/tests/test_lib.q"], after);
+    // q runs it, and the cursor is put on it.
+    assert.ok(statements(after).some((s) => s.startsWith("test_now:")), after);
+    assert.strictEqual(after.split("\n")[shown.selection.active.line], "test_now:{[]");
+  }
+});
+
 test("a parameter named expected is not overwritten by the expected value (#1601)", () => {
   const target = functionAt("g:{[actual;expected] actual~expected}\n", 0);
   assert.strictEqual(
@@ -256,6 +299,23 @@ test("a stub appended under a trailing \\d calls a root function at the root (#1
   // A qualified one, or under the root, as before.
   assert.match(stubText(f, "testF", detectStyle(file), "."), /assertEquals\[f\[a;b\]/);
   assert.match(stubText({ name: ".fx.mid", params: [] }, "testMid", detectStyle(file), ".tests"), /assertEquals\[\.fx\.mid\[\]/);
+});
+
+test("a \\d or a test q does not read - in a block comment, after the script's end - sets no context and no style (#2909)", () => {
+  assert.strictEqual(endContext("\\d .foo\nx:1\n/\n\\d .bar\n\\\n"), ".foo");
+  assert.strictEqual(endContext("\\d .foo\nx:1\n\\\n\\d .bar\n"), ".foo");
+  assert.strictEqual(endContext("/\r\n\\d .bar\r\n\\\r\n\\d .foo\r\nx:1\r\n"), ".foo");
+  // `system "d .ns"` switches as `\d .ns` does.
+  assert.strictEqual(endContext('system "d .tests"\ntestA:{[] 1b}\n'), ".tests");
+  const f = functionAt("f:{[a;b] a+b}\n", 0);
+  const file = "\\d .foo\ntest_a:{[] 1b}\n/\n\\d .\n\\\n";
+  assert.match(stubText(f, "test_f", detectStyle(file), endContext(file)), /\n  `\.\[`f\]\[a;b\]~expected\}/);
+  // A commented-out suite, or assertion, is not the file's style.
+  const plain = { naming: { kind: "plain" }, qunitAsserts: false };
+  assert.deepStrictEqual(detectStyle('/\n.qt.old.test_a:{[] .qunit.assertEquals[1;1;"a"]}\n\\\ntest_b:{[] 1b}\n'), plain);
+  assert.deepStrictEqual(detectStyle('test_b:{[] 1b}\n\\\ntestOld:{ .qunit.assertEquals[1;1;"a"] }\n'), plain);
+  assert.deepStrictEqual(detectStyle('/ .qt.old.test_a:{[] .qunit.assertEquals[1;1;"a"]}\ntest_b:{[] 1b}\n'), plain);
+  assert.deepStrictEqual(detectStyle("/\nnote\n\\\n.qt.lib.test_a:{[] 1b}\n").naming, { kind: "qt", suite: ".qt.lib" });
 });
 
 test("an untitled editor is offered no stub, and the command writes none at the filesystem's root (#1600)", async () => {
