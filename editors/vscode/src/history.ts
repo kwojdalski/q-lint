@@ -1,6 +1,7 @@
 // How the query history shows an entry: its row's label and its tooltip.
 // Free of any `vscode` import, so node tests it; `live.ts` is the VS Code
 // around it.
+import { contextSwitch } from "./statements";
 
 /// `text` as Markdown that shows it as written: every character Markdown
 /// could read as syntax is escaped.
@@ -95,9 +96,11 @@ export function clearedStamp(stored: unknown, at: string, now: Date): string | u
 
 /// A query's label: its first line that is not blank, without the CR of a
 /// CRLF file, cut to `LABEL_LIMIT` characters - never inside a surrogate
-/// pair, which would show a replacement character.
+/// pair, which would show a replacement character. The `\d` a query is
+/// kept behind is not the query: its label is the line after (#2915).
 export function historyLabel(code: string): string {
-  const first = code.split(/\r?\n/).find((line) => line.trim() !== "")?.trim() ?? "";
+  const lines = code.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const first = (lines.length > 1 && contextSwitch(lines[0]) !== undefined ? lines[1] : (lines[0] ?? "")).trim();
   const chars = Array.from(first);
   return chars.length > LABEL_LIMIT ? `${chars.slice(0, LABEL_LIMIT - 1).join("")}…` : first;
 }
