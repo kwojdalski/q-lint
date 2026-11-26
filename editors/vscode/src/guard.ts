@@ -434,6 +434,10 @@ function formatIn(t: Token[], from: number, to: number): boolean {
   }
   const [s, e] = t[from]?.text === "(" && t[from].kind === "open" && items(t, from).length > 1 && items(t, from).at(-1)?.[1] === to - 1 ? items(t, from)[0] : [from, to];
   const part = t.slice(s, e);
+  // `csv` is q's `","`, a format too (#2643).
+  if (part.length === 1 && part[0].kind === "name" && (part[0].text === "csv" || part[0].text === ".q.csv")) {
+    return true;
+  }
   return part.some((k) => k.kind === "str") && part.every((k) => k.kind !== "sym" && (k.kind !== "name" || k.text === "enlist"));
 }
 

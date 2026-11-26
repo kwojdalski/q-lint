@@ -2035,3 +2035,11 @@ test("an assignment call after an operator applied infix, and a lambda iterated 
   assert.deepStrictEqual(writes("enlist {update v:77 from x} each enlist {`e}[]"), ["updates what ({`e}[]) names in place"]);
   assert.deepStrictEqual(writes("count{x+1}'[1 2]"), []);
 });
+
+test("csv, q's own \",\", is a format on the left of 0: - text prepared, no file written (#2643)", () => {
+  for (const code of ["csv 0: t", ".q.csv 0: t", "(csv) 0: t", "-1 csv 0: t"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("`:f.csv 0: csv 0: t"), ["writes the file `:f.csv with 0:"]);
+  assert.deepStrictEqual(writes("h 0: t"), ["writes a file with 0:"]);
+});
