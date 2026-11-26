@@ -1600,6 +1600,16 @@ fn performance(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// Never for `update` or `delete`: q refuses both on a partitioned table
 /// (`'par` in KDB-X), so the table they filter is in memory and the order
 /// costs nothing the rule claims.
+///
+/// A constraint is read through one pair of parentheses around the whole of
+/// it, `(date=d)`, which q reads as it does the bare one. One with the
+/// column on the right, `d=date`, is reported too and says so: q narrows the
+/// partitions only for a constraint that starts with the column, so moved
+/// first as it is written it is slower still - over 12 date partitions of
+/// 300k rows, 50 runs each: `where date=d, sym=s` 6 ms, `where sym=s,
+/// d=date` 45 ms, `where d=date, sym=s` 89 ms (#2741). Not where the file
+/// has a local or a parameter of the column's name, which is then what the
+/// right of the comparison may be.
 fn partition_filter_late(
     path: &str,
     source: &str,
@@ -1610,6 +1620,8 @@ fn partition_filter_late(
     let mut strings = InString::new(code);
     // `select ... from select ... where` finds the inner where from both.
     let mut reported = std::collections::HashSet::new();
+    // Which of `PARTITION_COLUMNS` the file also has as a local, if asked.
+    let locals = std::cell::OnceCell::new();
     let mut froms = vec![];
     for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
         if !crate::boundary(code, q.start())
@@ -1649,12 +1661,51 @@ fn partition_filter_late(
             None => phrase,
         };
         let constraints = items(phrase);
-        fn tests_partition(c: &str) -> Option<&str> {
-            re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)")
-                .captures(c)
-                .map(|m| m.get(1).unwrap().as_str())
-        }
-        let Some((late, column)) = constraints
+        // Each without the parentheses around the whole of it, if it has them.
+        let bare: Vec<&str> = constraints
+            .iter()
+            .map(|c| {
+                let t = c.trim();
+                let closes_last = t.starts_with('(')
+                    && t.ends_with(')')
+                    && t.bytes()
+                        .scan(0i32, |depth, b| {
+                            *depth += i32::from(b == b'(') - i32::from(b == b')');
+                            Some(*depth)
+                        })
+                        .position(|depth| depth == 0)
+                        == Some(t.len() - 1);
+                if closes_last { &t[1..t.len() - 1] } else { c }
+            })
+            .collect();
+        // The column a constraint tests, and whether from the right.
+        let tests_partition = |c: &str| -> Option<(&'static str, bool)> {
+            let column = |name: &str| PARTITION_COLUMNS.iter().position(|p| *p == name);
+            if let Some(m) =
+                re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)").captures(c)
+            {
+                return Some((PARTITION_COLUMNS[column(&m[1])?], false));
+            }
+            let i = column(
+                &re!(concat!(
+                    r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?[0-9][0-9A-Za-z.:]*)\s*",
+                    r"(?:=|<>|<=|>=|<|>)\s*(date|month|year|int)\s*$"
+                ))
+                .captures(c)?[1],
+            )?;
+            let local = locals.get_or_init(|| {
+                PARTITION_COLUMNS.map(|p| {
+                    re!(r"\b(date|month|year|int)\s*:|\{\s*\[([^\]]*)\]")
+                        .captures_iter(code)
+                        .any(|m| match m.get(2) {
+                            Some(slots) => slots.as_str().split(';').any(|s| s.trim() == p),
+                            None => &m[1] == p,
+                        })
+                })
+            });
+            (!local[i]).then_some((PARTITION_COLUMNS[i], true))
+        };
+        let Some((late, (column, flipped))) = bare
             .iter()
             .enumerate()
             .skip(1)
@@ -1663,7 +1714,7 @@ fn partition_filter_late(
             continue;
         };
         let offset = |c: &str| c.as_ptr() as usize - code.as_ptr() as usize;
-        let plain = constraints[..late].iter().all(|c| {
+        let plain = bare[..late].iter().all(|c| {
             let at = offset(c);
             let kept = &comments[at..at + c.len()];
             !PARTITION_COLUMNS.iter().any(|p| {
@@ -1676,6 +1727,11 @@ fn partition_filter_late(
             continue;
         }
         let first = constraints[0].trim();
+        let advice = if flipped {
+            format!("write the constraint with `{column}` on the left and put it first")
+        } else {
+            format!("put the `{column}` constraint first")
+        };
         out.push(Finding::at(
             path,
             source,
@@ -1683,8 +1739,7 @@ fn partition_filter_late(
             "QV001",
             format!(
                 "`{column}` is constrained after `{first}`: on a table partitioned by {column} \
-                 q applies `{first}` in every partition before it narrows them - put the \
-                 `{column}` constraint first"
+                 q applies `{first}` in every partition before it narrows them - {advice}"
             ),
         ));
     }

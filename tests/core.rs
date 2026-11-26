@@ -998,6 +998,32 @@ fn string_equality_in_a_filter_names_the_row_count() {
     }
 }
 
+/// QV001 says more than "put it first" of a constraint with the column on the
+/// right: q 5 narrows the partitions only for one that starts with the
+/// column, and `where d=date, sym=s` measured slower than either order of
+/// `date=d` (#2741).
+#[test]
+fn a_partition_constraint_read_from_the_right_is_told_to_turn_round() {
+    for (source, advice) in [
+        (
+            "r:select from t where sym=`a, d=date",
+            "write the constraint with `date` on the left and put it first",
+        ),
+        (
+            "r:select from t where sym=`a, (date=d)",
+            "put the `date` constraint first",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QV001" && f.detail.ends_with(advice)),
+            "{source:?}: QV001 should end {advice}: {found:?}"
+        );
+    }
+}
+
 /// QR001 does not call the two the same outright: both sorts are stable,
 /// so with d:`a`b`c!1 1 2 q 5 gives `c`b`a for `key reverse asc d` and
 /// `c`a`b for `key desc d`, and 0b for `(reverse desc d)~asc d` (#2739).
