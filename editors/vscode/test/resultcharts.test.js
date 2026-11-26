@@ -253,3 +253,21 @@ test("a book is drawn as depth by itself only where its rows are one book; rows 
   assert.strictEqual(M.unsidedText(1), "1 row has a side that is neither buy nor sell");
   assert.strictEqual(M.depthData(book, all(book)).unsided, 0);
 });
+
+test("a linked pane marks a value with nulls either side with a point, on screen and in its SVG (#3129)", () => {
+  // A price set only on the rows that traded.
+  const g = grid([["t", 7, ["1", "2", "3", "4", "5", "6"]], ["bid", 9, ["1", "2", "3", "4", "5", "6"]], ["price", 9, ["", "", "1.05", "", "", "1.25"]]]);
+  const d = M.linkedData(g, all(g), [1, 2]);
+  const radius = (pane) => {
+    const set = M.linkedConfig(g, d, pane, "#ff0000", look, { range: null }, true).data.datasets[0];
+    return set.data.map((_, i) => set.pointRadius({ dataset: set, dataIndex: i }));
+  };
+  assert.deepStrictEqual(radius(d.panes[1]), [0, 0, 2, 0, 0, 2]);
+  assert.deepStrictEqual(radius(d.panes[0]), [0, 0, 0, 0, 0, 0], "a line's values are its segments");
+  const svg = M.linkedSvg(g, d, look, ["#ff0000", "#00ff00"], {});
+  assert.strictEqual((svg.match(/<circle [^>]*fill="#00ff00"/g) || []).length, 2);
+  assert.strictEqual((svg.match(/<circle [^>]*fill="#ff0000"/g) || []).length, 0);
+  // One row is one point.
+  const one = grid([["t", 7, ["1"]], ["a", 9, ["5"]]]);
+  assert.strictEqual((M.linkedSvg(one, M.linkedData(one, [0], [1]), look, ["#ff0000"], {}).match(/<circle /g) || []).length, 1);
+});

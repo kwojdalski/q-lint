@@ -576,9 +576,18 @@
         }
       },
     };
+    // A value with a null (a gap) either side has no segment, and gets a
+    // point, as a line chart's does: a price set only on the rows that
+    // traded drew an empty pane (#3129).
+    const gap = function (p) { return !p || p.y === null; };
+    const isolated = function (ctx) {
+      const d = ctx.dataset.data;
+      const i = ctx.dataIndex;
+      return !gap(d[i]) && gap(d[i - 1]) && gap(d[i + 1]) ? 2 : 0;
+    };
     return {
       type: "line",
-      data: { datasets: [{ label: pane.label, column: pane.column, data: pane.data, borderColor: colour, backgroundColor: colour, pointRadius: 0, borderWidth: 1.5, spanGaps: false }] },
+      data: { datasets: [{ label: pane.label, column: pane.column, data: pane.data, borderColor: colour, backgroundColor: colour, pointRadius: isolated, borderWidth: 1.5, spanGaps: false }] },
       plugins: [crosshair],
       options: {
         animation: false,
@@ -727,6 +736,10 @@
           out.push('<path d="' + d + " V" + base + " H" + f(pts[0][0]) + ' Z" fill="' + colour + '" fill-opacity="0.3" stroke="none"/>');
         }
         out.push('<path d="' + d + '" fill="none" stroke="' + colour + '" stroke-width="1.5"/>');
+        // A value alone between nulls is a point: its path is a move (#3129).
+        if (pts.length === 1) {
+          out.push('<circle cx="' + f(pts[0][0]) + '" cy="' + f(pts[0][1]) + '" r="2" fill="' + colour + '"/>');
+        }
       });
     });
     out.push("</g>");
