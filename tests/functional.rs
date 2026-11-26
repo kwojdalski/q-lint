@@ -875,6 +875,61 @@ fn a_query_is_said_in_words() {
 }
 
 #[test]
+fn a_query_q_refuses_is_said_to_be_refused() {
+    // #2781: `update from t` was "Sets  on every row", `exec by sym from
+    // t` "Returns the last row" and `delete by sym from t` "Removes every
+    // row". KDB-X refuses each, whatever the table holds.
+    for (qsql, error) in [
+        ("update from t", "type"),
+        ("update by sym from t", "type"),
+        ("update from t where px>2", "type"),
+        ("exec by sym from t", "nyi"),
+        ("exec by sym from t where px>2", "nyi"),
+        ("delete by sym from t", "by"),
+        ("delete px by sym from t", "by"),
+        ("delete px from t where size>20", "nyi"),
+    ] {
+        let words = q_lint_rs::explain_qsql(&format!("r:{qsql}\n"), 3).unwrap();
+        assert!(
+            words.starts_with(&format!(
+                "**In words.** q refuses this query with '{error}: "
+            )),
+            "{qsql}: {words}"
+        );
+        assert!(!words.contains("\n1. "), "{qsql}: {words}");
+        if let Some(said) = q_says(qsql) {
+            assert_eq!(said, error, "{qsql}");
+        }
+    }
+    // Their neighbours run, and are described: a group that is named, or
+    // more than one, keys an exec of no column by a table.
+    for (qsql, says) in [
+        (
+            "exec by s:sym from t",
+            "Returns the last row of each group.",
+        ),
+        (
+            "exec by sym, flag from t",
+            "Returns the last row of each group.",
+        ),
+        (
+            "exec from t where px>2",
+            "Returns the last row, as a dictionary",
+        ),
+        ("select by sym from t", "the last row of each group"),
+        ("delete from t where px>2", "Removes those rows."),
+        ("delete from t", "Removes every row"),
+        ("update px:0f by sym from t", "Sets `px`: `0f` on every row"),
+    ] {
+        let words = q_lint_rs::explain_qsql(&format!("r:{qsql}\n"), 3).unwrap();
+        assert!(words.contains(says), "{qsql}: {words}");
+        if let Some(said) = q_says(qsql) {
+            assert_eq!(said, "ran", "{qsql}");
+        }
+    }
+}
+
+#[test]
 fn a_functional_form_is_said_in_words_through_its_qsql() {
     let words = q_lint_rs::explain_qsql("r:?[t;enlist (>;`px;2);0b;()]\n", 3).unwrap();
     assert!(
