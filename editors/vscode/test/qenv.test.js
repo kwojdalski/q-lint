@@ -10,7 +10,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
-const { readDotenv, readEnvSettings, namesText, terminalEnv, mergeEnv } = require("../out/qenv.js");
+const { expandEnv, readDotenv, readEnvSettings, namesText, terminalEnv, mergeEnv } = require("../out/qenv.js");
 const { commandLine } = require("../out/terminal.js");
 
 const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
@@ -271,4 +271,38 @@ process.on("SIGTERM", () => process.exit(0));`,
   const seen = path.join(dir, "seen.json");
   for (let i = 0; i < 100 && !fs.existsSync(seen); i++) await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(seen, "utf8")), { FROM_ENV: "env", BOTH: "own" });
+});
+
+test("a launch definition's variable names the environment's as a shell and a task do: $PATH is the PATH, not the text (#3102)", () => {
+  const base = { PATH: "/usr/bin:/bin", HOME: "/home/me", EMPTY: "", GONE: undefined };
+  const own = {
+    PATH: "/opt/kx/bin:$PATH",
+    QHOME: "${env:HOME}/q",
+    LOGDIR: "~/logs",
+    HERE: "~",
+    BRACED: "${HOME}/x$HOME",
+    // The own ones before it, as they now are.
+    TWICE: "$QHOME:${PATH}",
+    // A $ of its own: no variable of that name, so as written.
+    SECRET: "pa$word$$1 $ ${} ${GONE} $EMPTY.",
+    NONE: "[${env:NOPE}]",
+    // A ~ only where the value starts, and only alone or before a separator.
+    TILDE: "a:~/b ~user",
+    USER2: "~user/x",
+  };
+  assert.deepStrictEqual(expandEnv(own, base, "/home/me", "linux"), {
+    PATH: "/opt/kx/bin:/usr/bin:/bin",
+    QHOME: "/home/me/q",
+    LOGDIR: "/home/me/logs",
+    HERE: "/home/me",
+    BRACED: "/home/me/x/home/me",
+    TWICE: "/home/me/q:/opt/kx/bin:/usr/bin:/bin",
+    SECRET: "pa$word$$1 $ ${} ${GONE} .",
+    NONE: "[]",
+    TILDE: "a:~/b ~user",
+    USER2: "~user/x",
+  });
+  // Windows' names are without case: its PATH is Path.
+  assert.deepStrictEqual(expandEnv({ PATH: "C:\\q;$PATH", B: "~\\q" }, { Path: "C:\\Windows" }, "C:\\Users\\me", "win32"), { PATH: "C:\\q;C:\\Windows", B: "C:\\Users\\me\\q" });
+  assert.deepStrictEqual(expandEnv({ PATH: "/q:$PATH" }, { Path: "x" }, "/h", "linux"), { PATH: "/q:$PATH" });
 });

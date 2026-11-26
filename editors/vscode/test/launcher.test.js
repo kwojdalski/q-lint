@@ -576,6 +576,17 @@ test("a working directory that does not exist is what the error names, and ${wor
   assert.strictEqual(fromWorkspace({ cwd: "${workspaceFolder}/torq" }, "/home/me"), true);
 });
 
+test("Start Process gives q the PATH its launch definition adds to, not the text $PATH (#3102)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "env.js"), FAKE.replace('" A=" + process.env.A', '" PATH=" + process.env.PATH + " QH=" + process.env.QH + " L=" + process.env.L + " W=" + process.env.W'));
+  const port = await freePort();
+  const env = { PATH: `/opt/kx/bin${path.delimiter}$PATH`, QH: "${env:HOME}/q", L: "~/logs", W: "pa$word" };
+  const { output } = await setUp(t, [proc("envs", port, { command: process.execPath, script: "env.js", cwd: dir, env })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("envs");
+  await until(() => output("envs").includes("listening"), "listening in envs' output");
+  assert.ok(output("envs").includes(` PATH=/opt/kx/bin${path.delimiter}${process.env.PATH} QH=${process.env.HOME ?? ""}/q L=${path.join(os.homedir(), "logs")} W=pa$word\n`), output("envs"));
+});
+
 test("a program that ends at once is an error, never 'started ... on port' (#3103)", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
   // As q with no licence does: a line, and exit code 1.

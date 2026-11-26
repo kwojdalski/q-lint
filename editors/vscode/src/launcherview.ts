@@ -10,7 +10,7 @@ import { commands, window, workspace, type ExtensionContext, type OutputChannel 
 import { LAUNCH_COMMANDS, argsFromText, argsText, commandText, fromWorkspace, isLocalHost, launchPlan, listenAddress, probeHost, readLauncher, spawnPlan } from "./launcher";
 import { readTerminal } from "./liveconfig";
 import { qBinaryFrom, relativeBinaryProblem } from "./terminal";
-import { mergeEnv } from "./qenv";
+import { expandEnv, mergeEnv } from "./qenv";
 import { dotenvFor, layoutEnvFor } from "./qenvironment";
 import type { Live, ProcessArg } from "./live";
 import { launchOf, withExtras, type Launch, type Process } from "./processes";
@@ -253,8 +253,10 @@ export class Launcher {
       return `something already listens on port ${process.port}; ${process.label} was not started.`;
     }
     // The binary's layout's variables, then the workspace's .env file's,
-    // then the definition's own; the output shows none of their values.
-    const env = mergeEnv(layoutEnvFor(plan.command, first), await dotenvFor(first), plan.env);
+    // then the definition's own, which may name the ones before them
+    // (#3102); the output shows none of their values.
+    const given = mergeEnv(layoutEnvFor(plan.command, first), await dotenvFor(first));
+    const env = mergeEnv(given, expandEnv(plan.env, { ...globalThis.process.env, ...given }, os.homedir()));
     // Turned off, or VS Code closing, while it waited: stopAll has run over
     // what was started, and would not stop this one (#1434).
     if (this.disposed || !this.enabled()) {
