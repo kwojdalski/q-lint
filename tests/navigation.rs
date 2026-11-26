@@ -64,6 +64,32 @@ fn a_string_a_comment_and_a_system_command_mention_nothing() {
 }
 
 #[test]
+fn the_command_word_of_a_timed_line_mentions_nothing() {
+    // KDB-X: with the `t` of `\t:10` renamed, `\tbl:10 count tbl` goes to
+    // the shell and is 'os (#2812). What follows the command is q.
+    let source =
+        "t:([]a:1 2)\n\\t:10 count t\n\\t count t\n\\t 100\nts:1\n\\ts ts+1\n\\ts:5 ts\nq)\\t t\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("t", "t".to_string(), 'w'),
+            ("t", "t".into(), 'r'),
+            ("t", "t".into(), 'r'),
+            ("ts", "ts".into(), 'w'),
+            ("ts", "ts".into(), 'r'),
+            ("ts", "ts".into(), 'r'),
+            ("t", "t".into(), 'r'),
+        ]
+    );
+    let reads: Vec<usize> = mentions(source)
+        .iter()
+        .filter(|m| m.definition.is_none())
+        .map(|m| m.at)
+        .collect();
+    assert_eq!(reads, [24, 35, 53, 64, 72]);
+}
+
+#[test]
 fn a_column_and_a_builtin_are_no_global() {
     // `a:` and `b:` in a table literal and `total:` in a query are written
     // as assignments and assign nothing; `count` and `til` are q's own.
