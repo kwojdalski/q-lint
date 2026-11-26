@@ -615,7 +615,36 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] {a+y}'[1 2;3 4]}",
-        "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
+        "f:{[a] {[unused;y;a] a+y}[;;a]'[1 2;3 4]}",
+        false,
+    ),
+    // An argument the lambda does not read is named for that, where `x`
+    // and `y` would be parameters QF016 reports (#2797).
+    (
+        "QF005",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {[unused1;unused2;z;a] a+z}[;;;a] . (1;2;3)}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] {x+a+z}[1;2;3]}",
+        "f:{[a] {[x;unused;z;a] x+a+z}[;;;a][1;2;3]}",
+        false,
+    ),
+    // `{[] b}` takes one argument: `{[;b]` would hold the empty slot QF009
+    // reports, and `{[b] b}[b]` is the call and no projection (#2797).
+    (
+        "QF005",
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[b] g:{[unused;b] b}[;b]; g[]}",
+        false,
+    ),
+    // `.z.s` in a lambda nested deeper is that lambda (#2796).
+    (
+        "QF005",
+        "f:{[a] {$[x>0;a+{.z.s x} x-1;0]} 3}",
+        "f:{[a] {[x;a] $[x>0;a+{.z.s x} x-1;0]}[;a] 3}",
         false,
     ),
     (
@@ -627,7 +656,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] g:{a}; g 1}",
-        "f:{[a] g:{[x;a] a}[;a]; g 1}",
+        "f:{[a] g:{[unused;a] a}[;a]; g 1}",
         false,
     ),
     (
@@ -872,6 +901,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QF005", "h:{a:{a+1};a}"),
         ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
         ("QF005", "f:{[a] {[c:a] c}}"), // a pattern, not a body to pass it into (#637)
+        // `.z.s` would be the lambda with one more parameter, and its call a
+        // projection (#2796)
+        ("QF005", "f:{[a] {$[x>0;a+.z.s x-1;0]} 3}"),
+        ("QF005", "f:{[a] {[n] $[n>0;a+.z.s[n-1];0]} 3}"),
+        // The body has `unused` for something else (#2797)
+        ("QF005", "f:{[a] g:{a+unused}; g 1}"),
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
@@ -1800,6 +1835,36 @@ fn qf005_fix_raises_no_qs008() {
             .filter(|f| f.code == "QS008")
             .collect();
         assert!(after.is_empty(), "{fixed}: {after:?}");
+    }
+}
+
+/// Nor does it write a parameter the linter's own rules then report: an
+/// empty slot (QF009) for `{[] b}`, or an `x` and `y` never read (QF016)
+/// before the `z` that is (#2797).
+#[test]
+fn qf005_fix_writes_no_parameter_another_rule_reports() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for source in [
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {a+y}'[1 2;3 4]}",
+        "f:{[a] g:{a}; g 1}",
+    ] {
+        for profile in [Profile::Style, Profile::StyleQ, Profile::Uqf] {
+            let finding = lint(source, "probe.q", profile)
+                .into_iter()
+                .find(|f| f.code == "QF005")
+                .expect("QF005");
+            let fix = fix_for(&finding, source).expect("a fix");
+            let fixed = format!(
+                "{}{}{}",
+                &source[..fix.start],
+                fix.replacement,
+                &source[fix.end..]
+            );
+            let after = lint(&fixed, "probe.q", profile);
+            assert!(after.is_empty(), "{fixed}: {after:?}");
+        }
     }
 }
 

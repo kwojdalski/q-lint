@@ -2327,6 +2327,24 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             if sig.named && sig.slots.len() >= 8 {
                 return None;
             }
+            // `.z.s` is the lambda itself, which the rewrite gives one more
+            // parameter: `.z.s x-1` would then be a projection, and adding
+            // to it 'type (#2796).
+            if re!(r"\.z\.s\b").is_match(&top_level(&v.code[sig.body..close - 1])) {
+                return None;
+            }
+            // An argument the lambda takes and does not read is named for
+            // that, where `x` would be a parameter QF016 reports as never
+            // read - and not when the body has that name for something else
+            // (#2797).
+            let spare = |n: usize| -> Option<Vec<String>> {
+                let names: Vec<String> = match n {
+                    1 => vec!["unused".into()],
+                    _ => (1..=n).map(|i| format!("unused{i}")).collect(),
+                };
+                let body = &v.code[sig.body..close - 1];
+                (!re!(r"\bunused[0-9]?\b").is_match(body)).then_some(names)
+            };
             // The local goes last and the projection fills only its slot:
             // first, it would push `x` to a position QS008 then reports (#772).
             let (header, slots) = if sig.named {
@@ -2334,15 +2352,35 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                 // the `[` (#323).
                 let bracket = v.code[brace + 1..].find('[')? + brace + 1;
                 let inner = &source[bracket + 1..sig.body - 1];
-                (format!("{{[{inner};{name}]"), sig.slots.len())
+                // `{[] b}` takes one argument, which `[]` passes: an empty
+                // slot before the local would be the one QF009 reports, and
+                // `{[b] b}[b]` no projection but the call (#2797).
+                if sig.slots.iter().all(|p| p.is_empty()) && sig.slots.len() == 1 {
+                    (format!("{{[{};{name}]", spare(1)?[0]), 1)
+                } else {
+                    (format!("{{[{inner};{name}]"), sig.slots.len())
+                }
             } else {
                 // Implicit arguments become explicit ones, as many as q
                 // gives the lambda - and at least `x`, or the projection
                 // would fill every slot and run on the spot. A column in a
                 // query is no argument: `{exec sum y from t}` takes one (#777).
                 let rank = lambda_rank(&v.code, source, brace, close - 1);
-                let params = ["x", "x;y", "x;y;z"][rank - 1];
-                (format!("{{[{params};{name}] "), rank)
+                let reads = implicit_reads(&v.code, sig.body, close - 1);
+                let unread = reads[..rank].iter().filter(|r| !**r).count();
+                let mut spare = if unread > 0 { spare(unread)? } else { vec![] }.into_iter();
+                let params: Vec<String> = ["x", "y", "z"][..rank]
+                    .iter()
+                    .zip(reads)
+                    .map(|(p, read)| {
+                        if read {
+                            p.to_string()
+                        } else {
+                            spare.next().unwrap_or_default()
+                        }
+                    })
+                    .collect();
+                (format!("{{[{};{name}] ", params.join(";")), rank)
             };
             // Passed in, the local is read where the lambda is written, so it
             // has to hold a value there: a parameter of the lambda around it,
@@ -5526,12 +5564,21 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
             sig.slots.len()
         };
     }
+    match implicit_reads(code, sig.body, end) {
+        [_, _, true] => 3,
+        [_, true, _] => 2,
+        _ => 1,
+    }
+}
+/// Which of `x`, `y` and `z` a lambda body, `start` to `end`, reads itself -
+/// what q counts its implicit arguments by.
+fn implicit_reads(code: &str, start: usize, end: usize) -> [bool; 3] {
     // A nested lambda reads its own arguments, so it is left out - as one
     // blank, jumped over from its brace's match: blanking it in a copy of
     // the whole body made a nest of lambdas quadratic (#704).
     let b = code.as_bytes();
     let mut body = vec![];
-    let mut i = sig.body;
+    let mut i = start;
     while i < end {
         if b[i] == b'{' {
             match matching(code, i, b'{', b'}') {
@@ -5563,13 +5610,7 @@ pub(crate) fn lambda_rank(code: &str, raw: &str, brace: usize, end: usize) -> us
                     .starts_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
         })
     };
-    if reads("z") {
-        3
-    } else if reads("y") {
-        2
-    } else {
-        1
-    }
+    [reads("x"), reads("y"), reads("z")]
 }
 /// `text` with the column names of each table literal blanked, `z` in
 /// `([]z:x)` and `([z:1]b:2)`: a column name reads nothing, while its value
