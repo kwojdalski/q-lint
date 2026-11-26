@@ -1774,7 +1774,10 @@
     const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
     state.view = "chart";
     setKind(preset.kind);
-    state.columns = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
+    // No series - a depth chart and a map keep none - is the kind's own
+    // choice of columns, not every box unticked (#3134).
+    const series = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
+    state.columns = series.length > 0 ? series : null;
     state.y2 = preset.y2 ? at(preset.y2) : -1;
     if (preset.bins) {
       state.bins = preset.bins;

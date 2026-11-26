@@ -275,6 +275,22 @@ test("a histogram of the first column only, then Line, draws the line's columns 
   assert.deepStrictEqual(boxes().map((b) => b.checked), [true, false]);
 });
 
+test("a preset kept from a depth chart or a map leaves the series ticked when the kind is changed (#3134)", () => {
+  FakeChart.made = [];
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const kind = () => page.body.all((e) => e.tagName === "SELECT")[0];
+  page.send(result("s.1", BOOK, { view: "chart", saved: "q1" }));
+  const preset = page.rendered().preset;
+  assert.deepStrictEqual([preset.kind, preset.series], ["depth", []]);
+  // Run again, the chart kept with the query drawn; then another kind.
+  page.send(result("s.2", BOOK, { look: { chart: preset }, saved: "q1" }));
+  assert.strictEqual(page.rendered().chart.kind, "depth");
+  kind().value = "line";
+  kind().fire("change");
+  assert.deepStrictEqual([page.rendered().chart.note, page.rendered().chart.datasets.map((d) => d.label)], [undefined, ["bidPx", "bidSize", "askPx", "askSize"]]);
+  assert.ok(page.body.all((e) => e.tagName === "INPUT" && e.type === "checkbox").every((b) => b.checked));
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });
