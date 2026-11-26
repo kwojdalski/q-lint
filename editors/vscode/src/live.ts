@@ -1390,15 +1390,30 @@ export class Live {
       this.sayNoReval(connection, process);
       return false;
     }
-    const on =
-      this.setting(readEnforce) &&
-      guardedBy(process, this.setting(readGuard)).length > 0 &&
-      (process.gateway === undefined || !this.setting(readGateway).enabled) &&
-      !isGatewayCall(guardText(code)) &&
-      this.guardRefuses(code, [process]) === undefined;
+    const on = this.revalHolds(process) && this.guardRefuses(code, [process]) === undefined;
     connection.readOnly = on;
     connection.refused = undefined;
     return on;
+  }
+
+  /// Whether code the guard reads as read-only goes to `process` under
+  /// `reval`: it is guarded, q-lint.processes.readOnlyGuard.enforce is on,
+  /// and it is not a TorQ gateway. Decided by the process, not by the
+  /// names the code holds: `.gw.` or `.dataaccess.` in code sent to a
+  /// process that is no gateway keeps `reval` on (#2637).
+  private revalHolds(process: Process): boolean {
+    return (
+      this.setting(readEnforce) &&
+      guardedBy(process, this.setting(readGuard)).length > 0 &&
+      (process.gateway === undefined || !this.setting(readGateway).enabled)
+    );
+  }
+
+  /// Whether `code` goes to `process` as plain strings, a gateway call
+  /// whose reply is deferred past any lambda of ours (#2584): only where
+  /// `reval` does not hold, so no name in the code drops it (#2637).
+  private plainGatewayCall(process: Process, code: string): boolean {
+    return isGatewayCall(code) && !this.revalHolds(process);
   }
 
   /// On a direct connection to a guarded process, said once: nothing of
@@ -2876,7 +2891,7 @@ export class Live {
       return { cut, plain: false };
     }
     const sent = this.throughGateway(cut.join("\n"), process);
-    return { cut: statements(sent), plain: isGatewayCall(sent) };
+    return { cut: statements(sent), plain: this.plainGatewayCall(process, sent) };
   }
 
   /// Whether Run sends `code` to the active process through `.gw.syncexec`:
@@ -3442,7 +3457,7 @@ export class Live {
       const sent = this.throughGateway(code, process, options.serverTypes);
       const cut = statements(sent);
       // A gateway call defers its reply, so it goes as plain strings (#2584).
-      if (connection.isDirect || isGatewayCall(sent)) {
+      if (connection.isDirect || this.plainGatewayCall(process, sent)) {
         this.sayNoReval(connection, process);
         return await runUnwrapped(connection, cut, { size: consoleSize, limit: gridLimit, unlimited, grid: true });
       }
@@ -3705,7 +3720,7 @@ export class Live {
       const readOnly = isProduction(process) || guardedBy(process, this.setting(readGuard)).length > 0;
       // A gateway call defers its reply past any lambda of ours, so it goes
       // as plain strings too (#2584).
-      const direct = connection.isDirect || isGatewayCall(code);
+      const direct = connection.isDirect || this.plainGatewayCall(process, code);
       const hold = !direct && settings.mode !== "console" && this.modes.wantsHold(readOnly);
       // This result's own, so a page is of it and no other (#2128).
       const token = hold ? randomBytes(16).toString("hex") : undefined;

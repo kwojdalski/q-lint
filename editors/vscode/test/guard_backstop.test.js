@@ -199,3 +199,24 @@ test("the connection evaluates as before after a backstopped send, refused or no
   assert.strictEqual(seen.readOnly, false);
   assert.strictEqual(seen.refused, undefined);
 });
+
+test("a .gw. or .dataaccess. name in code sent to a guarded process that is no gateway keeps reval (#2637)", async (t) => {
+  const { q, live, query } = await setUp(t, ["prod"]);
+  await live.connectTo("rdb");
+  await query("count .gw.servers");
+  await query("key .dataaccess.cfg");
+  assert.deepStrictEqual(q.queries(), [
+    ["RUN_READ_ONLY", "count .gw.servers"],
+    ["RUN_READ_ONLY", "key .dataaccess.cfg"],
+  ]);
+  // A REPL, a notebook cell or an agent is not told to send it plain.
+  assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, false);
+});
+
+test("on a process reval does not hold on, a gateway call still goes as a plain string (#2584, #2637)", async (t) => {
+  const { q, live, query } = await setUp(t, ["dev"]);
+  await live.connectTo("rdb");
+  await query("count .gw.servers");
+  assert.deepStrictEqual(q.queries(), []);
+  assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, true);
+});
