@@ -22,15 +22,26 @@ import {
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { CONVERT_TEMPORAL, convertText, hoverMarkdown, temporalAt } from "./temporal";
 import { plainMessage } from "./history";
+import { lineContext } from "./statements";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "temporalHover");
+
+/// The literal at `position` of `document`, or none in a comment or a
+/// string - a block comment's lines and a string open from a line above
+/// included, which only the lines above tell (#2919), as the examples hover
+/// reads them.
+function literalAt(document: TextDocument, position: { line: number; character: number }): ReturnType<typeof temporalAt> {
+  const above = Array.from({ length: position.line + 1 }, (_, i) => document.lineAt(i).text);
+  const { commented, quoted } = lineContext(above);
+  return commented ? undefined : temporalAt(above[position.line], position.character, quoted);
+}
 
 /// The hover for `position` of `document`, while the feature is on.
 export function temporalHover(document: TextDocument, position: Position): Hover | undefined {
   if (!on()) {
     return undefined;
   }
-  const found = temporalAt(document.lineAt(position.line).text, position.character);
+  const found = literalAt(document, position);
   if (found === undefined || found.conversions.length === 0) {
     return undefined;
   }
@@ -75,7 +86,7 @@ async function convert(target?: string): Promise<string | undefined> {
   let found: ReturnType<typeof convertText>;
   if (editor.selection.isEmpty) {
     const at = editor.selection.active;
-    const token = temporalAt(editor.document.lineAt(at.line).text, at.character);
+    const token = literalAt(editor.document, at);
     range = new Range(at.line, token?.start ?? at.character, at.line, token?.end ?? at.character);
     found = token;
   } else {
