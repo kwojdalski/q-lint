@@ -1054,6 +1054,10 @@
           rendered();
         });
         th.addEventListener("dragend", function () { dragFrom = null; });
+      }
+      // A width is kept by name: one of two columns of a name is not resized
+      // by itself, so neither is offered the edge to drag (#2508).
+      if (feature("columnLayout") && !LOOK.repeatedName(grid, i)) {
         const handle = el("span", "resize");
         handle.title = "Drag to resize the column";
         handle.addEventListener("mousedown", function (event) {

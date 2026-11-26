@@ -375,3 +375,14 @@ test("a formatted column's auto width fits the text its cells show, not q's (#16
   // -9,876,543.25 is 13 characters, 10000.0 bp 10: each and its padding.
   assert.deepStrictEqual(widths, ["15ch", "12ch"]);
 });
+
+test("two columns of one name offer no edge to resize, as a width is kept by name (#2508)", () => {
+  const page = loadPage(undefined);
+  page.send(result("s.1", [["sym", 11, ["a", "b"]], ["sym", 11, ["c", "d"]], ["px", 9, ["1", "2"]]]));
+  assert.deepStrictEqual(page.headers().map((h) => h.children.some((c) => c.className === "resize")), [false, false, true]);
+  // Dragged past the other sym, nothing moves: the order kept is the grid's.
+  page.headers()[1].fire("dragstart", {});
+  page.headers()[0].fire("drop", {});
+  assert.deepStrictEqual(page.posted.filter((m) => m.type === "look").at(-1).layout.order, ["sym", "sym", "px"]);
+  assert.deepStrictEqual(page.rows()[0].children.map((td) => td.textContent), ["a", "c", "1"]);
+});

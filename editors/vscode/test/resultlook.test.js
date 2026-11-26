@@ -146,10 +146,26 @@ test("the layout orders, hides and freezes columns by name, a name twice taking 
   assert.deepStrictEqual(L.displayColumns(g, { order: ["c", "a", "a"], hidden: ["b"] }), [3, 0, 2]);
   assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: [] }, 3, 0), ["c", "a", "b", "a"]);
   // Hidden columns keep their place after the ones moved.
-  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), ["a", "c", "a", "b"]);
-  assert.deepStrictEqual(L.displayColumns(g, { order: L.moveColumn(g, { order: [], hidden: ["b"] }, 0, 2), hidden: ["b"] }).map((i) => g.columns[i].name), ["a", "c", "a"]);
+  assert.deepStrictEqual(L.moveColumn(g, { order: [], hidden: ["b"] }, 2, 0), ["c", "a", "a", "b"]);
+  assert.deepStrictEqual(L.displayColumns(g, { order: L.moveColumn(g, { order: [], hidden: ["b"] }, 2, 0), hidden: ["b"] }), [3, 0, 2]);
   assert.deepStrictEqual(L.frozenOffsets(["10ch", "80px", "5ch"], 3), ["0px", "10ch", "calc(10ch + 80px)"]);
   assert.deepStrictEqual(L.frozenOffsets(["10ch"], 0), []);
+});
+
+test("a column is not moved past another of its name, and neither is resized by itself (#2508)", () => {
+  // `cols 0!kt` of a keyed table with key sym and value sym px.
+  const g = grid([["sym", 11, ["a"]], ["sym", 11, ["b"]], ["px", 9, ["1"]]]);
+  const at = (order) => L.displayColumns(g, { order, hidden: [] });
+  // The second sym to the front, or the first to the end: each would draw
+  // the other one there, so nothing moves.
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 1, 0)), [0, 1, 2]);
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 0, 2)), [0, 1, 2]);
+  // A move that keeps the two in their order is made, and draws as asked.
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 2, 0)), [2, 0, 1]);
+  assert.deepStrictEqual(at(L.moveColumn(g, { order: [], hidden: [] }, 1, 2)), [0, 2, 1]);
+  const f = grid([["sym", 11, ["a"]], ["px", 9, ["1"]], ["sym", 11, ["b"]]]);
+  assert.deepStrictEqual(L.displayColumns(f, { order: L.moveColumn(f, { order: [], hidden: [] }, 2, 0), hidden: [] }), [0, 1, 2]);
+  assert.deepStrictEqual([0, 1, 2].map((i) => L.repeatedName(f, i)), [true, false, true]);
 });
 
 test("a layout that would hide every column draws them all: a new run of only hidden columns is not a grid of none (#1652)", () => {
