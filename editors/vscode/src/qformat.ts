@@ -1015,7 +1015,17 @@ function qOrder(a: QValue, b: QValue): number {
     return itemOrder(a.v, b.v);
   }
   if (a.kind === "dict" && b.kind === "dict") {
-    return qOrder(a.v, b.v);
+    // Item by item, whatever the value lists' own types: q sorts
+    // `a`b!1 2 before `a`b!(1;`x) (#2575).
+    const xs = itemsOf(a.v);
+    const ys = itemsOf(b.v);
+    for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+      const order = qOrder(xs[i], ys[i]);
+      if (order !== 0) {
+        return order;
+      }
+    }
+    return xs.length - ys.length;
   }
   if (a.kind === "func" || b.kind === "func" || a.kind === "dict" || b.kind === "dict") {
     return 0;
@@ -1040,8 +1050,10 @@ function same(a: QValue, b: QValue): boolean {
   if (a.kind === "table" && b.kind === "table") {
     return a.cols.join("\u0000") === b.cols.join("\u0000") && a.data.every((c, i) => same(c, b.data[i]));
   }
+  // Two functions are one value when q writes them alike: (::) and (::)
+  // too, which has no text (#2576).
   if (a.kind === "func" && b.kind === "func") {
-    return a.text !== undefined && a.text === b.text;
+    return a.t === b.t && oneLine(a) === oneLine(b);
   }
   if (a.kind === "list" && b.kind === "list") {
     return a.v.every((x, i) => same(x, b.v[i]));
@@ -1061,8 +1073,11 @@ function listRanks(items: QValue[]): number[] {
   }
   const order = items.map((_, i) => i).sort((a, b) => qOrder(items[a], items[b]) || a - b);
   const rank = new Array<number>(items.length);
+  // (::) is ranked as a null is, as GRID ranks it (#2576).
   const empty = (q: QValue): boolean =>
-    q.kind === "atom"
+    q.kind === "func"
+      ? q.t === 101 && q.text === undefined
+      : q.kind === "atom"
       ? q.v === null || q.v === false || q.v === "" || (q.v === 0 && q.t === -4) || (q.v === 32 && q.t === -10)
       : q.kind === "list"
         ? q.v.every(empty)
