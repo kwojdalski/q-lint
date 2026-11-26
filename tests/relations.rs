@@ -892,12 +892,7 @@ fn a_function_two_files_define_is_prepared_as_both() {
 fn a_function_one_file_defines_twice_is_prepared_as_both() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);
-    let text = "f:{.z.ts[]}
-.z.ts:{h[x]}
-.z.ts:{g[x]}
-g:{x}
-h:{x}
-";
+    let text = "f:{.z.ts[]}\n.z.ts:{h[x]}\n.z.ts:{g[x]}\ng:{x}\nh:{x}\n";
     let uri = server.open(dir.path(), "timer.q", text);
     let lines = |items: &Value| -> Vec<u64> {
         let items = items.as_array().unwrap_or_else(|| panic!("{items}"));
@@ -947,11 +942,7 @@ h:{x}
 fn each_name_one_statement_gives_a_lambda_calls_what_the_lambda_does() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);
-    let text = "a:b:{f[x]}
-f:{x}
-g:{x}
-if[1b; c:{f[x]}; d:{g[x]}]
-";
+    let text = "a:b:{f[x]}\nf:{x}\ng:{x}\nif[1b; c:{f[x]}; d:{g[x]}]\n";
     let uri = server.open(dir.path(), "chain.q", text);
     let f = [call("f", FUNCTION, "chain.q", &[(0, 5, 6)])];
     for name in ["a:b", "b:{"] {
@@ -991,18 +982,8 @@ fn the_calls_out_of_a_file_of_many_functions_take_linear_time() {
     // tests/core.rs: a fixed bound measures the runner.
     let time = |n: usize| {
         let text: String = (0..n)
-            .map(|i| {
-                format!(
-                    "f{i}:{{x}}
-"
-                )
-            })
-            .chain((0..n).map(|i| {
-                format!(
-                    "f{i}[1]
-"
-                )
-            }))
+            .map(|i| format!("f{i}:{{x}}\n"))
+            .chain((0..n).map(|i| format!("f{i}[1]\n")))
             .collect();
         let dir = tempfile::tempdir().unwrap();
         let mut server = Server::start(dir.path(), &[("many.q", &text)]);

@@ -242,13 +242,7 @@ fn a_call_to_a_workspace_function_shows_its_parameter_names() {
 fn an_argument_in_the_range_is_hinted_though_its_call_began_above_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);
-    let main = "f:{[alpha;beta;gamma] alpha}
-r:f[
-  1;
-  2;
-  3]
-s:f[4;5;6]
-";
+    let main = "f:{[alpha;beta;gamma] alpha}\nr:f[\n  1;\n  2;\n  3]\ns:f[4;5;6]\n";
     let uri = server.open(dir.path(), "main.q", main);
     let mut over = |from: u64, to: u64| {
         let range = json!({"range": {"start": {"line": from, "character": 0},
@@ -318,11 +312,7 @@ fn a_string_argument_is_hinted_where_it_starts() {
 fn a_call_to_a_function_defined_on_a_k_line_shows_its_parameter_names() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);
-    let main = "k)kf:{[aa;bb] aa}
-k)kg:{x+y}
-r:kf[1;2]
-s:kg[1;2]
-";
+    let main = "k)kf:{[aa;bb] aa}\nk)kg:{x+y}\nr:kf[1;2]\ns:kg[1;2]\n";
     let uri = server.open(dir.path(), "main.q", main);
     let reply = server.whole("textDocument/inlayHint", &uri, everything());
     // `kg` declares no signature, as on a q line.
@@ -339,15 +329,7 @@ s:kg[1;2]
 fn a_call_whose_brackets_are_on_a_continuation_line_is_hinted() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[]);
-    let main = "cc:{[sym;px] px}
-                r:cc
-  [1;2]
-                s:cc / the call
-	[3;
-	 4]
-                t:cc
-[5;6]
-";
+    let main = "cc:{[sym;px] px}\nr:cc\n  [1;2]\ns:cc / the call\r\n\t[3;\r\n\t 4]\nt:cc\n[5;6]\n";
     let uri = server.open(dir.path(), "main.q", main);
     let reply = server.whole("textDocument/inlayHint", &uri, everything());
     assert_eq!(
@@ -2129,18 +2111,11 @@ fn a_function_assigned_inside_another_ends_no_statement() {
 #[test]
 fn a_change_to_a_lambda_two_names_hold_changes_both() {
     let dir = tempfile::tempdir().unwrap();
-    let lib = "a:b:{x}
-c:1+d:{x}
-";
-    let tests = "test_a:{a 1}
-test_b:{b 1}
-test_d:{d 1}
-";
+    let lib = "a:b:{x}\nc:1+d:{x}\n";
+    let tests = "test_a:{a 1}\ntest_b:{b 1}\ntest_d:{d 1}\n";
     let files = [("lib.q", lib), ("test_lib.q", tests)];
     let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
-    let now = "a:b:{x+1}
-c:1+d:{x}
-";
+    let now = "a:b:{x+1}\nc:1+d:{x}\n";
     let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, now);
     assert_eq!(
         (changed, tests),
@@ -2151,9 +2126,7 @@ c:1+d:{x}
         dir.path(),
         "lib.q",
         now,
-        "a:b:{x+1}
-c:1+d:{x+1}
-",
+        "a:b:{x+1}\nc:1+d:{x+1}\n",
     );
     assert_eq!((changed, tests), (json!(["d"]), vec!["test_d".into()]));
 }

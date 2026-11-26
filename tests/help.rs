@@ -416,15 +416,7 @@ fn a_column_named_y_or_z_is_not_an_implicit_parameter() {
 // takes `x`, and `(value kf)1` is `` `a`b ``.
 #[test]
 fn a_lambda_on_a_k_line_takes_what_one_on_a_q_line_does() {
-    let source = "k)kf:{[a;b] a}
-k)kg:{x+y}
-k)kh:{1}
-k)kn:{[] 1}
-k)kz:{x+{z}y}
-                  k)kp:{[a;b;c] b}[1;;3]
-k)kc:{([]z:1);y}
-k)kv:1
-";
+    let source = "k)kf:{[a;b] a}\nk)kg:{x+y}\nk)kh:{1}\nk)kn:{[] 1}\nk)kz:{x+{z}y}\nk)kp:{[a;b;c] b}[1;;3]\nk)kc:{([]z:1);y}\nk)kv:1\n";
     assert_eq!(
         parameters(source),
         [
@@ -1738,14 +1730,7 @@ fn signature_help_past_the_last_parameter_says_there_are_too_many() {
 #[test]
 fn signature_help_for_a_lambda_naming_no_parameter_takes_one_argument() {
     let dir = tempfile::tempdir().unwrap();
-    let text = "bare:{1}
-none:{[] 1}
-ctx:{.z.x}
-r:bare[
-s:none[
-t:none[1;
-u:bare[1;
-v:ctx";
+    let text = "bare:{1}\nnone:{[] 1}\nctx:{.z.x}\nr:bare[\ns:none[\nt:none[1;\nu:bare[1;\nv:ctx";
     let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
     let uri = server.open(dir.path(), "a.q", text);
     let mut help = |context: &str| {
@@ -1794,11 +1779,7 @@ v:ctx";
 #[test]
 fn signature_help_and_hover_read_a_lambda_on_a_k_line() {
     let dir = tempfile::tempdir().unwrap();
-    let text = "k)kf:{[aa;bb] aa}
-k)kg:{x+y}
-r:kf[1;
-s:kg[1;
-t:kg";
+    let text = "k)kf:{[aa;bb] aa}\nk)kg:{x+y}\nr:kf[1;\ns:kg[1;\nt:kg";
     let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
     let uri = server.open(dir.path(), "a.q", text);
     for (context, label) in [("r:kf[1;", "kf[aa;bb]"), ("s:kg[1;", "kg[x;y]")] {
