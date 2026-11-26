@@ -234,6 +234,7 @@ const TYPED: &[(&str, i16)] = &[
     ("{x}", 100),
     ("{[a;b] a+b}", 100),
     ("()", 0),
+    ("( )", 0),
 ];
 
 /// Text that is no literal, or one this does not read - nothing is shown.
@@ -260,10 +261,10 @@ const UNTYPED: &[&str] = &[
     "`a/",
     "`.a/b",
     "`a`b/",
-    "`a`b!1 2",
     // `_a is ` _ a, a drop from the null symbol: 'a in KDB-X (#2889).
     "`_a",
     "`_a`b",
+    "`a`b!1 2",
     "\"ab\" ,\"c\"",
     "\"\\q\"",
     "(1;2)",

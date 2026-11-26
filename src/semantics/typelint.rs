@@ -22,13 +22,14 @@
 //! less sure - a column in a query, a parameter, a global, an expression -
 //! is left alone, and so is a lambda of more than 64 locals, whose types
 //! cost a read of the lambda each. One pass over each typed local's reads.
-use super::infer::{Typed, literal_type, typed_locals_up_to};
+use super::infer::{Typed, literal_count, literal_type, typed_locals_up_to};
 use crate::Finding;
 use std::collections::HashMap;
 
-/// What an operand is known to be: its q type, and whether it can be `""`,
-/// a list of no items, which a join takes the other side's type from.
-type Operand = (i16, bool);
+/// What an operand is known to be: its q type, whether it can be `""`,
+/// a list of no items, which a join takes the other side's type from, and
+/// how many items it holds where it is a list of a known length.
+type Operand = (i16, bool, Option<usize>);
 
 /// The most locals a lambda may have for its types to be read here.
 const MOST_LOCALS: usize = 64;
@@ -48,7 +49,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str, comments: &str) -> Vec
     let mut at_place: HashMap<usize, Operand> = HashMap::new();
     for t in &typed {
         for p in &t.local.places {
-            at_place.insert(p.at, (t.kind, t.empty));
+            at_place.insert(p.at, (t.kind, t.empty, t.count));
         }
     }
     let mut out = vec![];
@@ -86,21 +87,44 @@ fn judge(
     let name = &t.local.name;
     let symbol = |k: i16| k.abs() == 11;
     let simple = |k: i16| k != 0 && k.abs() < 20;
+    // Two lists of different lengths: q checks the lengths before the
+    // types, and the error is 'length - `` `a`b=1 2 3 ``, `` `a`b+1 2 3 ``
+    // and `` `a`b+() `` (KDB-X).
+    let lengths = match (t.count, other) {
+        (Some(mine), Some((_, _, Some(theirs)))) if mine != theirs => Some((mine, theirs)),
+        _ => None,
+    };
     let (code, detail) = if ARITHMETIC.contains(&op) && symbol(t.kind) {
+        // An atom beside the empty list is the empty list, whatever the
+        // atom is: `s+()` is `()` for a symbol `s` (KDB-X).
+        if t.kind < 0 && other.is_some_and(|(o, ..)| o == 0) {
+            return;
+        }
         (
             "QT035",
-            format!(
-                "`{text}` is 'type: `{name}` is always a symbol here, and q does no arithmetic on one"
-            ),
+            match lengths {
+                Some((mine, theirs)) => format!(
+                    "`{text}` is 'length: `{name}` is always {mine} symbols here and the other side holds {theirs}, and q does no arithmetic on a symbol"
+                ),
+                None => format!(
+                    "`{text}` is 'type: `{name}` is always a symbol here, and q does no arithmetic on one"
+                ),
+            },
         )
-    } else if let Some((o, other_empty)) = other {
+    } else if let Some((o, other_empty, _)) = other {
         if COMPARE.contains(&op) && (symbol(t.kind) != symbol(o)) && simple(t.kind) && simple(o) {
             (
                 "QT033",
-                format!(
-                    "`{text}` is 'type: a symbol compares only with a symbol, and `{name}` is always {} here",
-                    kind_name(t.kind)
-                ),
+                match lengths {
+                    Some((mine, theirs)) => format!(
+                        "`{text}` is 'length: `{name}` is always {} of {mine} here and the other side holds {theirs}, and a symbol compares only with a symbol",
+                        kind_name(t.kind)
+                    ),
+                    None => format!(
+                        "`{text}` is 'type: a symbol compares only with a symbol, and `{name}` is always {} here",
+                        kind_name(t.kind)
+                    ),
+                },
             )
         } else if op == ","
             && simple(t.kind)
@@ -130,9 +154,10 @@ fn judge(
     out.push(Finding::at(path, source, start, code, detail));
 }
 
-/// The type of the literal `text`, and whether it is `""`, which has no items.
+/// The type of the literal `text`, whether it is `""`, which has no items,
+/// and how many it has where it is a list.
 fn literal(text: &str) -> Option<Operand> {
-    literal_type(text).map(|k| (k, text.trim() == "\"\""))
+    literal_type(text).map(|k| (k, text.trim() == "\"\"", literal_count(text)))
 }
 
 /// The words for a q type number.

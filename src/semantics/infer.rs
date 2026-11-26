@@ -23,7 +23,12 @@ pub fn literal_type(text: &str) -> Option<i16> {
     if text.is_empty() {
         return None;
     }
-    if text == "()" {
+    // Blanks between the parentheses are still the empty list: `( )`.
+    if text
+        .strip_prefix('(')
+        .and_then(|t| t.strip_suffix(')'))
+        .is_some_and(|t| t.trim().is_empty())
+    {
         return Some(0);
     }
     if text.starts_with('{') {
@@ -48,6 +53,23 @@ pub fn literal_type(text: &str) -> Option<i16> {
         return Some(atom(t));
     }
     numbers(&tokens).map(atom)
+}
+
+/// How many items the literal `text` holds, when `literal_type` reads it
+/// as a list: a simple vector, or `()`, which holds none.
+pub(crate) fn literal_count(text: &str) -> Option<usize> {
+    let kind = literal_type(text)?;
+    let text = text.trim_matches([' ', '\t', '\n', '\r']);
+    match kind {
+        0 => Some(0),
+        10 => string_length(text),
+        11 => symbols(text),
+        // A boolean or byte vector is one token, an item per digit or pair.
+        1 => Some(text.len() - 1),
+        4 => Some((text.len() - 2) / 2),
+        2..20 => Some(text.split_ascii_whitespace().count()),
+        _ => None,
+    }
 }
 
 /// A brace group that closes at the end of `text`: one lambda, not one
@@ -120,6 +142,9 @@ fn string_length(text: &str) -> Option<usize> {
 /// the first backtick is drop, not a name's: KDB-X parses `` `_a `` as
 /// `` ` _ a `` and raises 'a, though `` `a`_b `` is two symbols.
 fn symbols(text: &str) -> Option<usize> {
+    if text.starts_with("`_") {
+        return None;
+    }
     let mut colon = false;
     text.chars()
         .all(|c| {
@@ -142,9 +167,6 @@ fn single(token: &str) -> Option<i16> {
         && bits.bytes().all(|b| b == b'0' || b == b'1')
     {
         return Some(if bits.len() == 1 { -1 } else { 1 });
-    if text.starts_with("`_") {
-        return None;
-    }
     }
     if let Some(hex) = token.strip_prefix("0x") {
         if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -331,6 +353,9 @@ pub struct Typed {
     /// Whether some assignment is `""`, a vector of no items: q joins one
     /// to a list of any type into that list's type, `"",1 2` is 1 2 (7h).
     pub empty: bool,
+    /// How many items it holds, where it is a list and every assignment
+    /// gives it as many.
+    pub count: Option<usize>,
 }
 
 /// Each local in `raw` whose type its assignments settle. `code` is the
@@ -372,12 +397,13 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
                 continue;
             }
             let local = super::navigate::local_of(code, raw, &scopes, s, name);
-            if let Some((kind, end, empty)) = settled(code, comments, &local, &sigs) {
+            if let Some((kind, end, empty, count)) = settled(code, comments, &local, &sigs) {
                 out.push(Typed {
                     local,
                     kind,
                     end,
                     empty,
+                    count,
                 });
             }
         }
@@ -387,16 +413,17 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
 }
 
 /// The one type every write of `local` gives it, when each is a plain
-/// assignment of a literal, with where the first one's value ends and
-/// whether any is `""`.
+/// assignment of a literal, with where the first one's value ends,
+/// whether any is `""`, and the one count of items they all have.
 fn settled(
     code: &str,
     comments: &str,
     local: &Local,
     sigs: &[(usize, usize)],
-) -> Option<(i16, usize, bool)> {
+) -> Option<(i16, usize, bool, Option<usize>)> {
     let mut found: Option<(i16, usize)> = None;
     let mut empty = false;
+    let mut counts: Vec<Option<usize>> = vec![];
     for place in local.places.iter().filter(|p| p.write) {
         // A typed parameter, `{[a:`j] ...}` (q 4.1), is no assignment: `a`
         // is whatever the caller passes, checked to be a long.
@@ -407,13 +434,19 @@ fn settled(
         let text = &comments[value.clone()];
         let t = literal_type(text)?;
         empty |= text.trim() == "\"\"";
+        counts.push(literal_count(text));
         match found {
             Some((k, _)) if k != t => return None,
             Some(_) => {}
             None => found = Some((t, value.start + text.trim_end().len())),
         }
     }
-    found.map(|(t, end)| (t, end, empty))
+    let count = counts
+        .first()
+        .copied()
+        .flatten()
+        .filter(|_| counts.windows(2).all(|w| w[0] == w[1]));
+    found.map(|(t, end)| (t, end, empty, count))
 }
 
 /// Each lambda signature in `code`, `{[...]`, as the bytes between its

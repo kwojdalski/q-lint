@@ -1501,6 +1501,15 @@ f:{s:`a; "a\"b"=s}
 f:{n:1 2; "",n}
 g:{c:"a"; "b"=c}
 
+=== clean | a symbol atom beside the empty list is the empty list (#2878; q 5: each is ())
+f:{s:`a; s+()}
+g:{s:`a; e:(); s+e}
+h:{s:`a; s*( )}
+
+=== QT035 | but a symbol vector beside it is 'length, and an atom beside a list that only starts with it 'type (#2878; q 5: 'length, 'type)
+f:{s:`a`b; s+()}
+g:{s:`a; s+(),1}
+
 === QT035 | an operand holding a bracket is one operand (#2879; q 5: 'type, with g:{x+y})
 f:{[g] s:`a; s+g[1;2]}
 h:{s:`a; s*count(1;2)}
