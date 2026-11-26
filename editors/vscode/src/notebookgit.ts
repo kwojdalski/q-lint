@@ -228,6 +228,26 @@ export function setsFilter(text: string): boolean {
 /// repository's `.gitattributes`, committed for everyone who clones it.
 export type AttributesAt = "info" | "gitattributes";
 
+/// The `filter` git reads for a notebook at the top of the repository
+/// `top`: `qnb-strip`, another, `unset` or `unspecified`; undefined when
+/// git could not say.
+async function filterRead(top: string): Promise<string | undefined> {
+  const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], top);
+  return attr.code === 0 ? /: filter: (.*)$/.exec(attr.stdout.trim())?.[1] : undefined;
+}
+
+/// Why `*.qnb` does not go through the filter although the chosen file
+/// sends it there: the file git reads after it, by name, where it has a
+/// `*.qnb` line saying anything of `filter`.
+async function overridden(plan: FilterPlan): Promise<string> {
+  const read = (await filterRead(plan.top)) ?? "unknown";
+  const info = readText(plan.infoAttributes) ?? "";
+  const turnsOff = plan.attributes !== plan.infoAttributes && /^\s*\*\.qnb\s.*[-!]?filter(=|\s|$)/m.test(info);
+  return `${plan.attributes} sends *.qnb through the filter, but git reads filter ${read} for it${
+    turnsOff ? `: ${plan.infoAttributes}, which git reads after it, says otherwise` : ""
+  }. Notebooks are still committed with their outputs.`;
+}
+
 /// Run git in `cwd`: its exit code and output.
 function git(args: string[], cwd: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
@@ -267,7 +287,13 @@ export interface FilterPlan {
   clean: string;
   cleanSet: boolean;
   attributes: string;
+  /// Whether git reads `*.qnb` through the filter, and whether the chosen
+  /// file has the line: it can, and another file read after it turn it
+  /// off (#2386).
   attributeSet: boolean;
+  attributeInFile: boolean;
+  /// This clone's `info/attributes`, which git reads after `.gitattributes`.
+  infoAttributes: string;
   node: boolean;
 }
 
@@ -381,12 +407,13 @@ export class NotebookStrip {
         error: `filter.${FILTER}.clean is set already, to ${current}, and q-lint does not change it. To have q-lint set it, remove it first: git config --unset filter.${FILTER}.clean`,
       };
     }
-    const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
+    const infoAttributes = path.resolve(folder, info.stdout.trim());
+    const attributes = where === "info" ? infoAttributes : path.join(root, ".gitattributes");
     // The line is the chosen file's own to have (#1950): another file's -
     // this clone's, when the committed one is asked for, or a subfolder's -
     // says nothing of it. Then as git reads it from the top, its last
     // matching line winning (#1561): a later "*.qnb -filter" turns it off.
-    const attr = await git(["check-attr", "filter", "--", "notebook.qnb"], root);
+    const attributeInFile = setsFilter(readText(attributes) ?? "");
     return {
       top: root,
       script,
@@ -394,7 +421,9 @@ export class NotebookStrip {
       clean,
       cleanSet: current !== undefined,
       attributes,
-      attributeSet: setsFilter(readText(attributes) ?? "") && attr.code === 0 && attr.stdout.trim().endsWith(`: filter: ${FILTER}`),
+      attributeSet: attributeInFile && (await filterRead(root)) === FILTER,
+      attributeInFile,
+      infoAttributes,
       node: await nodeOnPath(),
     };
   }
@@ -445,11 +474,15 @@ export class NotebookStrip {
     if (!plan.cleanSet) {
       steps.push(`Run: git config --local filter.${FILTER}.clean '${plan.clean}'`);
     }
-    if (!plan.attributeSet) {
+    if (!plan.attributeInFile) {
       steps.push(`Add the line "${ATTRIBUTE_LINE}" at the end of ${plan.attributes}.`);
     }
     if (steps.length === 0) {
-      void window.showInformationMessage(plainMessage(`q-lint: ${plan.top} strips notebook outputs on commit already.`));
+      if (plan.attributeSet) {
+        void window.showInformationMessage(plainMessage(`q-lint: ${plan.top} strips notebook outputs on commit already.`));
+      } else {
+        void window.showErrorMessage(plainMessage(`q-lint: ${await overridden(plan)}`));
+      }
       return;
     }
     const warning = plan.node ? "" : "\n\nnode was not found on PATH. Until it is, git cannot run the filter, and commits notebooks as they are.";
@@ -473,13 +506,19 @@ export class NotebookStrip {
           throw new Error(set.stderr.trim());
         }
       }
-      if (!plan.attributeSet) {
+      if (!plan.attributeInFile) {
         const before = readText(plan.attributes) ?? "";
         fs.mkdirSync(path.dirname(plan.attributes), { recursive: true });
         fs.appendFileSync(plan.attributes, `${before === "" || before.endsWith("\n") ? "" : "\n"}${ATTRIBUTE_LINE}\n`);
       }
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not set up the filter: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
+    // Asked again: the line written is not the last word if a file git
+    // reads after it says otherwise.
+    if ((await filterRead(plan.top)) !== FILTER) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${await overridden(plan)}`));
       return;
     }
     void window.showInformationMessage(
