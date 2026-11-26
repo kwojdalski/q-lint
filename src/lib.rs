@@ -9819,7 +9819,7 @@ fn lint_rules(
     // QP008's copy of the file, made at its first candidate pair.
     let mut unparenthesised = None;
     // QB015's exception: a char column compared with a string as long (#754).
-    let char_columns = semantics::char_column_comparisons(code, &v.comments);
+    let char_columns = semantics::char_column_comparisons(code, &v.comments, source);
     // Where each group's top-level statement ends. Inside a bracket every
     // line is a group of its own, but a query there may go on over the next
     // lines - a newline in a lambda is whitespace - so the query rules read
