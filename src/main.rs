@@ -755,6 +755,11 @@ fn run(args: Args) -> Result<u8, String> {
     if args.add_noqa {
         return add_noqa(&mut sources, &disk, &lossy, &policy, &workspace, failed);
     }
+    // Before `--fix` writes anything: a qls that cannot start would leave
+    // the files rewritten and what is left in them unreported (#2871).
+    if args.fix && args.backend == "all" && !sources.is_empty() {
+        qls::startable(&args.qls_executable).map_err(|e| format!("{e}; nothing fixed"))?;
+    }
     if args.fix || args.diff {
         let mut fixed = 0;
         let mut changed_files = 0;
@@ -848,12 +853,20 @@ fn run(args: Args) -> Result<u8, String> {
             findings.extend(policy.lint(source, path, &workspace)?);
         }
     }
+    // Under `all`, a qls that is missing, slow or crashing takes nothing
+    // from what the builtin rules found: its error is said, the findings
+    // are reported, and the run ends in 2 (#2871).
+    let mut silent = false;
     if args.backend != "builtin" {
-        findings.extend(qls::lint(
-            sources.clone(),
-            &args.qls_executable,
-            args.qls_timeout,
-        )?);
+        match qls::lint(sources.clone(), &args.qls_executable, args.qls_timeout) {
+            Ok(found) => findings.extend(found),
+            Err(e) if args.backend == "all" => {
+                eprintln!("qlinter: {e}; reporting the builtin findings only");
+                silent = true;
+                failed = true;
+            }
+            Err(e) => return Err(e),
+        }
     }
     // qls reports on its own; the configuration still decides what is shown.
     let mut kept = vec![];
@@ -873,7 +886,11 @@ fn run(args: Args) -> Result<u8, String> {
         // once it reads again: nothing is written, the old one kept (#2180).
         if failed {
             eprintln!(
-                "qlinter: an input could not be read; no baseline written, {} left as it was",
+                "qlinter: {}; no baseline written, {} left as it was",
+                match silent {
+                    true => "qls reported nothing",
+                    false => "an input could not be read",
+                },
                 file.display()
             );
             return Ok(2);

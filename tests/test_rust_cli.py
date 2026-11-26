@@ -141,6 +141,36 @@ def test_lsp_server_modes(tmp_path, mode, exit_code):
         assert not result.stdout
 
 
+@pytest.mark.parametrize("mode", ["missing", "crash", "silent"])
+def test_backend_all_reports_the_builtin_findings_when_qls_fails(tmp_path, mode):
+    """A qls that is missing, crashing or slow ended the run with nothing shown.
+
+    The builtin findings were already computed, and under `--fix` the files
+    already rewritten (#2871).
+    """
+    server = tmp_path / "fake qls"
+    if mode != "missing":
+        server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+        server.chmod(0o755)
+    bad = tmp_path / "bad.q"
+    bad.write_text("f:{[x;y] x==y}\n")
+    qls = ("--isolated", "--backend", "all", "--qls-executable", server, "--qls-timeout", "0.5")
+    result = run(*qls, "--format", "json", bad)
+    assert result.returncode == 2, result.stderr
+    assert [f["code"] for f in json.loads(result.stdout)] == ["QE004"]
+    assert "reporting the builtin findings only" in result.stderr
+    baseline = tmp_path / "baseline.json"
+    result = run(*qls, "--write-baseline", baseline, bad)
+    assert result.returncode == 2 and not baseline.exists(), result.stderr
+    assert "qls reported nothing; no baseline written" in result.stderr
+    if mode == "missing":
+        # Asked before anything is written, so nothing is.
+        result = run(*qls, "--fix", bad)
+        assert result.returncode == 2, result.stderr
+        assert "Cannot start qls" in result.stderr and "nothing fixed" in result.stderr
+        assert bad.read_text() == "f:{[x;y] x==y}\n"
+
+
 @pytest.mark.skipif(not os.environ.get("Q_LINT_TEST_QLS"), reason="Optional real qls")
 def test_real_qls():
     result = run(

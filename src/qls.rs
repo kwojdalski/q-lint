@@ -160,6 +160,21 @@ fn analyze(
     }
     Ok(diagnostics.into_values().flatten().collect())
 }
+/// Whether `executable` starts at all, for a run to ask before it writes
+/// what it would then be unable to report on. Started and stopped: nothing
+/// is sent to it.
+pub fn startable(executable: &str) -> Result<(), String> {
+    let mut child = Command::new(executable)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Cannot start qls: {e}"))?;
+    let _ = child.kill();
+    let _ = child.wait();
+    Ok(())
+}
+
 pub fn lint(
     sources: Vec<(String, String)>,
     executable: &str,
