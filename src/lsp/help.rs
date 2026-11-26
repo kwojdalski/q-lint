@@ -868,12 +868,17 @@ impl Loads {
         }
         let mut definers: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
+        // What each file defines where the new load would run it, which is
+        // where this file runs before its first `\d`, and not where its
+        // loaders have put it: lib.q's `fancy`, loaded elsewhere under
+        // `\d .a`, is `.a.fancy` there and `fancy` after a load here (#2820).
+        let placement = sources.placement(&cursor.key);
         for key in sources.keys() {
-            for name in &sources.idx.files[key].placed.defined {
-                definers
-                    .entry(name.clone())
-                    .or_default()
-                    .push(key.to_string());
+            let file = &sources.idx.files[key];
+            let mut loaded = file.own.clone();
+            placement.apply(&mut loaded, &file.implicit);
+            for name in loaded.defined {
+                definers.entry(name).or_default().push(key.to_string());
             }
         }
         Loads {

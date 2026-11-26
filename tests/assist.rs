@@ -594,6 +594,29 @@ fn a_load_is_added_at_the_top_when_there_is_none_and_never_below_a_d() {
     );
 }
 
+/// lib.q's `fancy` is `.a.fancy` only where main.q loads it under `\d .a`:
+/// a load added at the top of another file defines `fancy`, so it is no
+/// way to `.a.fancy` - while a file that says `\d .a` itself is (#2820).
+#[test]
+fn a_load_is_offered_only_for_a_name_it_would_define_here() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("lib.q", "fancy:{x}\n"),
+        ("main.q", "\\d .a\n\\l lib.q\n"),
+        ("own.q", "\\d .b\nfancy:{x}\n"),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), auto_load());
+    let uri = server.open(dir.path(), "reader.q", "r:.a.fan\ns:.b.fan");
+    let item = completed(&mut server, &uri, 0, 8, ".a.fancy");
+    assert!(item.get("additionalTextEdits").is_none(), "{item}");
+    let item = completed(&mut server, &uri, 1, 8, ".b.fancy");
+    assert_eq!(item["detail"], "adds \\l own.q", "{item}");
+    // The same name written from inside the context.
+    let uri = server.open(dir.path(), "inside.q", "\\d .a\nr:fan");
+    let item = completed(&mut server, &uri, 1, 5, "fancy");
+    assert!(item.get("additionalTextEdits").is_none(), "{item}");
+}
+
 /// A block comment is header to the end of its `\`, and a `\l` in one
 /// loads nothing; the load is written with the document's line end (#1208).
 #[test]
