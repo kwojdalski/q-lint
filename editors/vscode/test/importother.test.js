@@ -59,6 +59,19 @@ test("qStudio's <serverlist> XML: kdb servers only, entities read, the password 
   assert.ok(!JSON.stringify(read).includes("hunter2"));
 });
 
+test("a > inside a qStudio XML attribute is the attribute's, not the tag's end (#3100)", () => {
+  const xml = `<serverlist>
+    <ServerConfig name="a>b" host="h1" port="5001" jdbcType="KDB"/>
+    <ServerConfig name="orders" host="db1" port="3306" username="u" password="x>y" jdbcType="MYSQL"/>
+    <ServerConfig name='c' folder='x>"y"' host="h3" port="5003" password='p>"q' />
+    <ServerConfig name="d" host="h4" port="5004"></ServerConfig>
+  </serverlist>`;
+  const got = readQStudioXml(xml);
+  assert.deepStrictEqual(got.processes.map((p) => [p.label, p.host, p.port]), [["a>b", "h1", 5001], ["c", "h3", 5003], ["d", "h4", 5004]]);
+  assert.deepStrictEqual(got.skipped, ["orders: a MYSQL connection, not kdb"]);
+  assert.ok(!JSON.stringify(got).includes("x>y") && !JSON.stringify(got).includes('p>"q'));
+});
+
 test("qStudio's preferences: Java's prefs.xml and a plist, split over CONNECTIONS0.., encoded", () => {
   const value = encoded(XML);
   const cut = [value.slice(0, 40), value.slice(40, 90), value.slice(90)];

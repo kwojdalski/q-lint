@@ -180,7 +180,10 @@ export function readQStudioLines(text: string, guarded?: readonly string[]): Imp
 export function readQStudioXml(xml: string, guarded?: readonly string[]): Imported {
   const out: Imported = { processes: [], skipped: [] };
   const seen = new Set<string>();
-  for (const m of xml.matchAll(/<ServerConfig\b([^>]*)\/?>/g)) {
+  // A `>` in a quoted value is the value's, as XML has it: the tag ended
+  // there, a server named `a>b` was one of no host, and a MySQL one whose
+  // password held it lost its jdbcType and was imported as kdb (#3100).
+  for (const m of xml.matchAll(/<ServerConfig\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
     const attrs: Record<string, string> = {};
     for (const a of m[1].matchAll(/([A-Za-z_][\w.-]*)\s*=\s*("([^"]*)"|'([^']*)')/g)) {
       attrs[a[1]] = xmlUnescape(a[3] ?? a[4] ?? "");
