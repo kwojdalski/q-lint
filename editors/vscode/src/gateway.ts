@@ -152,6 +152,17 @@ export function isGatewayCall(code: string): boolean {
   return statements(code).some((s) => names(s).some((n) => /^\.(gw|dataaccess)\./.test(n)));
 }
 
+/// Whether `code` runs on a gateway itself, not on its servers: a gateway
+/// call, or a read of the state every TorQ process keeps of its own, which
+/// asked of a gateway is the gateway's - its discovery in `.servers`
+/// (`.servers.SERVERS`, `.servers.getservers`), `.clients` and `.timer` -
+/// or of `.kxdash`, which only a gateway loads (#3058). Not `.proc`:
+/// `.proc.cp[]` in a where clause is a query for the servers. Such a read
+/// defers no reply, so it is no gateway call, and goes as any query does.
+export function isGatewayOwn(code: string): boolean {
+  return isGatewayCall(code) || statements(code).some((s) => names(s).some((n) => /^\.(servers|clients|timer|kxdash)\./.test(n)));
+}
+
 /// The server types a file names for its queries: a line at column 0
 /// `/ @servertypes rdb hdb`, read to its first word that is no q name - a
 /// comment after them is none (#2587). `/ @servertypes none` names no

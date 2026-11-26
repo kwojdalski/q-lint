@@ -11,7 +11,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, isGatewayOwn, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -144,6 +144,7 @@ async function torq(t, servers = "") {
     [
       `.gw.h:\`rdb\`hdb!(hopen \`::${rdb};hopen \`::${hdb})`,
       ".gw.servers:([] servertype:`rdb`hdb)",
+      ".servers.SERVERS:([] procname:`rdb1`hdb1; proctype:`rdb`hdb)",
       "role:`gateway",
       ".gw.run:{[query;servertypes;join] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; join .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
       ".gw.replies:()",
@@ -274,6 +275,42 @@ test("a gateway call written by hand, and the gateway's own API and state, run o
   // A file can send its queries to the gateway itself.
   r = await query("role\n/ @servertypes none");
   assert.deepStrictEqual(r, { code: "role", outcome: "ok", text: "`gateway" });
+});
+
+// Every TorQ process keeps discovery state of its own, and a server's is
+// not the gateway's: sent on, the rdb answered with the tickerplant it
+// knows, shown as what the gateway had found (#3058).
+test("a read of the state a gateway keeps as any TorQ process does - .servers, .clients, .timer - and .kxdash stay on the gateway (#3058)", () => {
+  assert.ok(isGatewayOwn("select from .servers.SERVERS where proctype=`hdb"));
+  assert.ok(isGatewayOwn(".servers.getservers[`proctype;`hdb;()!();1b;0b]"));
+  assert.ok(isGatewayOwn(".kxdash.dashexec[\"select from trade\";`rdb;raze]"));
+  assert.ok(isGatewayOwn("count .clients.clients"));
+  assert.ok(isGatewayOwn("select from .timer.timer where active"));
+  assert.ok(isGatewayOwn(".gw.servers"));
+  // They defer no reply, so they are no gateway call: sent as any query.
+  assert.ok(!isGatewayCall("select from .servers.SERVERS where proctype=`hdb"));
+  // A query for the servers that reads TorQ's clock is still theirs, as is
+  // a name in a string, a comment or another namespace.
+  assert.ok(!isGatewayOwn("select from trade where time>.proc.cp[]-0D00:05"));
+  assert.ok(!isGatewayOwn('s:".servers.SERVERS"'));
+  assert.ok(!isGatewayOwn("count trade / not .servers.SERVERS"));
+  assert.ok(!isGatewayOwn("my.servers.SERVERS"));
+});
+
+test("a gateway's own discovery state is read on the gateway, not on a server (#3058)", { skip }, async (t) => {
+  const gw = await torq(t, ".servers.SERVERS:([] procname:enlist `tp1; proctype:enlist `tickerplant)");
+  const { live, query } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  let r = await query("exec procname from .servers.SERVERS where proctype=`hdb");
+  assert.deepStrictEqual(r, { code: "exec procname from .servers.SERVERS where proctype=`hdb", outcome: "ok", text: ",`hdb1" });
+  // Asked for on server types, it still runs on the gateway, and says so.
+  stub.messages = [];
+  r = await query("exec procname from .servers.SERVERS", GATEWAY_COMMANDS.queryWith, "rdb");
+  assert.deepStrictEqual([r.code, r.text], ["exec procname from .servers.SERVERS", "`rdb1`hdb1"]);
+  assert.match(stub.messages.at(-1)[1], /reads the gateway's own state, so it runs on the gateway itself, not on rdb\./);
+  // Written out, the call sends it to them.
+  r = await query('.gw.syncexec["exec procname from .servers.SERVERS";`rdb]');
+  assert.strictEqual(r.text, ",`tp1");
 });
 
 test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the server types it came from (#2437)", { skip }, async (t) => {

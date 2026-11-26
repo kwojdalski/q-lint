@@ -74,7 +74,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, readGateway, withServerTypes } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, isGatewayOwn, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
@@ -2922,6 +2922,8 @@ export class Live {
     const retyped = serverTypes !== undefined && isGatewayCall(code) ? withServerTypes(code, serverTypes) : undefined;
     if (serverTypes !== undefined && isGatewayCall(code) && retyped === undefined) {
       void window.showInformationMessage(plainMessage(`q-lint: this code is a gateway call already, so it goes to the server types it names, not ${serverTypes.join(", ")}.`));
+    } else if (serverTypes !== undefined && serverTypes.length > 0 && isGatewayOwn(code)) {
+      void window.showInformationMessage(plainMessage(`q-lint: this code reads the gateway's own state, so it runs on the gateway itself, not on ${serverTypes.join(", ")}. .gw.syncexec written out sends it to them.`));
     }
     await this.run(retyped ?? code, undefined, serverTypes ?? named);
   }
@@ -2932,7 +2934,7 @@ export class Live {
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
     const types = serverTypes ?? process.gateway;
     // `/ @servertypes none` names no server: the gateway itself (#2588).
-    if (process.gateway === undefined || types === undefined || types.length === 0 || isGatewayCall(code) || !this.setting(readGateway).enabled) {
+    if (process.gateway === undefined || types === undefined || types.length === 0 || isGatewayOwn(code) || !this.setting(readGateway).enabled) {
       return code;
     }
     const cut = statements(code);
