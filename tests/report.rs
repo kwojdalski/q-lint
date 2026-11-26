@@ -193,6 +193,28 @@ fn output_file_takes_the_report_and_leaves_the_exit_code() {
     assert!(err.contains("no/such/dir/r.out"), "{err}");
 }
 
+/// Text written to a file is never coloured, as the README says: a CI job
+/// that passes `--color always` for its log and keeps the report in a file
+/// once found escape codes in it (#2763).
+#[test]
+fn output_file_is_never_coloured() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), TWO).unwrap();
+    let (_, plain, _) = run(d, &["--color", "never", "a.q"]);
+    let (_, coloured, _) = run(d, &["--color", "always", "a.q"]);
+    assert!(coloured.contains('\x1b'), "{coloured}");
+    for colour in ["always", "auto", "never"] {
+        let (status, out, err) = run(
+            d,
+            &["--color", colour, "--output-file", "report.txt", "a.q"],
+        );
+        assert_eq!((status, out.as_str()), (Some(1), ""), "{colour}: {err}");
+        let written = fs::read_to_string(d.join("report.txt")).unwrap();
+        assert_eq!(written, plain, "{colour}");
+    }
+}
+
 /// The input an `--output-file` may not be is a file, not a name: a symlink
 /// to a source, a hard link to one, another case of its name on a disk that
 /// ignores case, and the file `--stdin-filename` lints the buffer as were

@@ -1584,11 +1584,13 @@ impl Paint {
     fn for_stdout(flag: &str) -> Self {
         use std::io::IsTerminal;
         let on = match flag {
+            // Text written to a file is never coloured: `--color always` is
+            // for the log a CI job prints, not the report it keeps (#2763).
+            _ if OUTPUT_PATH.get().is_some() => false,
             "always" => true,
             "never" => false,
-            // A file is never a terminal, whatever stdout is.
             _ => auto_colour(
-                std::io::stdout().is_terminal() && OUTPUT_PATH.get().is_none(),
+                std::io::stdout().is_terminal(),
                 std::env::var_os("NO_COLOR").as_deref(),
             ),
         };
