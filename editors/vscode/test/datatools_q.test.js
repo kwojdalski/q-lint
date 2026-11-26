@@ -444,3 +444,28 @@ test("the schema diagram reads the tables of a namespace in a namespace, and the
   assert.match(s.schemaMermaid(mine), / {2}_ref_inst \|\|--o\{ _feed_book_l2 : "sym"/);
   assert.strictEqual((s.schemaSvg(mine).match(/<path class="edge/g) ?? []).length, 1);
 });
+
+test("the schema diagram draws a foreign key held in a column past those it shows (#3053)", { skip }, async (t) => {
+  const q = await startQ(() => [
+    "inst:([sym:`a`b] lot:100 200)",
+    'wide:flip((`$"c",/:string til 44),`sym)!(44#enlist 1 2),enlist`inst$`a`b',
+    "narrow:([] sym:`inst$`a`b; px:1 2f)",
+    "",
+  ].join("\n"));
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const { tables, failed } = s.readSchema(await connection.call(s.SCHEMA, "q Q h j o s", s.SCHEMA_TABLES, s.SCHEMA_COLUMNS));
+  assert.deepStrictEqual(failed, []);
+  const mine = tables.filter((x) => ["inst", "wide", "narrow"].includes(x.name));
+  assert.deepStrictEqual(s.schemaLinks(mine).map((l) => `${l.from}.${l.column}->${l.to}`).sort(), ["narrow.sym->inst", "wide.sym->inst"]);
+  // The columns shown are still the first 40: the one read past them is the key's.
+  const wide = mine.find((x) => x.name === "wide").info;
+  assert.strictEqual(wide.ncols, 45);
+  assert.deepStrictEqual(wide.columns.map((c) => c.name), [...Array.from({ length: s.SCHEMA_COLUMNS }, (_, i) => `c${i}`), "sym"]);
+  const svg = s.schemaSvg(mine);
+  assert.strictEqual((svg.match(/<path class="edge/g) ?? []).length, 2);
+  assert.match(svg, /… 5 more/);
+  assert.ok(svg.includes("c39") && !svg.includes("c40"), "wide's box lists its first 40 columns only");
+  assert.match(s.schemaMermaid(mine), / {2}inst \|\|--o\{ wide : "sym"/);
+});

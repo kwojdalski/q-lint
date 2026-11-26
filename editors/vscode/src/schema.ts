@@ -42,8 +42,9 @@ export function readSchemaTools(get: <T>(key: string, fallback: T) => T): { temp
 /// Every table's details: the root namespace's and those of the root
 /// namespaces not in `ex` (space separated, as the explorer's setting) and
 /// of the namespaces in them, however deep (#3052), at most `lim` tables
-/// of `nc` columns each. A table that cannot be read answers its error as
-/// a string.
+/// of `nc` columns each - and past those, each column that points into a
+/// table, so its link is drawn (#3053). A table that cannot be read
+/// answers its error as a string.
 export const SCHEMA = [
   "{[ex;lim;nc]",
   ` f:${TABLE_INFO.replace(/\n/g, "\n  ")};`,
@@ -56,7 +57,9 @@ export const SCHEMA = [
   "  todo,:` sv's,'k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
   " n,:raze{@[{` sv'x,'tables x};x;{`$()}]}each ns;",
   " n:(\"j\"$lim)sublist n;",
-  " (string n;{[f;c;x]@[f[;c];string x;{x}]}[f;nc]each n)}",
+  // `meta` is read whole, and cut here: every `f` is seen.
+  " g:{[f;c;x] r:f[x;0W];i:where(c>til count r`cols)|0<count each r`fkeys;@[r;`cols`types`fkeys`attrs;@[;i]]};",
+  " (string n;{[g;x]@[g;string x;{x}]}[g[f;\"j\"$nc]]each n)}",
 ].join("\n");
 
 /// Tables a diagram draws at most, and columns of each it lists.
