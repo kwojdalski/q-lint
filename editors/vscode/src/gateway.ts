@@ -8,6 +8,8 @@
 // anything of q-lint's (#2492). Several statements are joined into that one
 // string: q's `value` does not take a newline as the end of a statement, but
 // it reads a `;` on a continuation line as one, after a trailing comment too.
+// Statements that switch the context are the strings of a list in that one
+// string, each valued in the context the ones before it left (#3057).
 //
 // TorQ's `.gw.syncexec` on kdb+ 3.6 and later defers its reply (`-30!`), so
 // what a lambda around it would answer is discarded: a gateway call is sent
@@ -40,9 +42,13 @@ export function symbols(types: string[]): string {
 /// `statements` as the one string a server `value`s to run them in order: a
 /// system command as `system`, as `\d .ns` cannot be followed by more on
 /// its line, and each after the first on a line of its own that starts
-/// `" ;"`, so a trailing comment ends before it.
+/// `" ;"`, so a trailing comment ends before it. With a `\d` among them
+/// each is a string of its own, valued in turn: q parses one string whole,
+/// so a function after `\d .ns` in it was bound to the root, and its call
+/// of a function beside it failed, or found the root's (#3057).
 export function joined(statements: string[]): string {
-  return statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : s)).join("\n ;");
+  const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : s));
+  return each.length > 1 && statements.some((s) => contextSwitch(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
 }
 
 /// The one statement that runs `statements` through the gateway on a server

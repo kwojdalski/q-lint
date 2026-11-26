@@ -30,7 +30,7 @@ test("a query is a q string, several statements one string joined on `;` lines (
   assert.strictEqual(gatewayStatement(["select from trade"], ["rdb", "hdb"]), '.gw.syncexec["select from trade";`rdb`hdb]');
   assert.strictEqual(gatewayStatement(["n:1 / one", "n+1"], ["hdb"]), '.gw.syncexec["n:1 / one\\n ;n+1";enlist `hdb]');
   // A system command cannot be followed on its line, so it is `system`.
-  assert.strictEqual(joined(["\\d .x", "f:{x+\n 1}", "f 1"]), 'system "d .x"\n ;f:{x+\n 1}\n ;f 1');
+  assert.strictEqual(joined(["\\l f.q", "f:{x+\n 1}", "f 1"]), 'system "l f.q"\n ;f:{x+\n 1}\n ;f 1');
   assert.ok(isGatewayCall('.gw.syncexec["1";`rdb]'));
   assert.ok(!isGatewayCall("select from trade"));
   // TorQ's typed and timed variants are gateway calls too (#1427).
@@ -314,6 +314,39 @@ test("a gateway's own discovery state is read on the gateway, not on a server (#
   assert.strictEqual(r.text, ",`tp1");
 });
 
+// q parses a string whole before it runs any of it: in one string, the
+// functions after a `\d .stats` were bound to the root, and `wide`'s call of
+// `mid` failed with 'mid, or found a `mid` of the root (#3057).
+test("statements that switch the context are strings valued one by one, each in the context before it (#3057)", () => {
+  assert.strictEqual(joined(["\\d .x", "f:{x+\n 1}", "f 1"]), 'last value each ("system \\"d .x\\"";"f:{x+\\n 1}";"f 1")');
+  assert.strictEqual(joined(['system "d .x"', "1"]), 'last value each ("system \\"d .x\\"";enlist "1")');
+  assert.strictEqual(gatewayStatement(["\\d .x", "f 1"], ["hdb"]), '.gw.syncexec["last value each (\\"system \\\\\\"d .x\\\\\\"\\";\\"f 1\\")";enlist `hdb]');
+  // The call is still one string with its types, so it is read back.
+  assert.deepStrictEqual(gatewayParts(gatewayStatement(["\\d .x", "f 1"], ["hdb"])), { query: 'last value each ("system \\"d .x\\"";"f 1")', types: ["hdb"] });
+  // One statement, and statements that switch no context, go as they did.
+  assert.strictEqual(joined(["\\d .x"]), 'system "d .x"');
+  assert.strictEqual(joined(["a:1", "\\c 20 200", "a"]), 'a:1\n ;system "c 20 200"\n ;a');
+});
+
+test("functions defined after a \\d through a gateway are bound to its context, and call each other (#3057)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.run("\\d .stats\nspread:{[b;a] a-b}\nmid:{[b;a] (b+a)%2}\nwide:{[b;a] spread[b;a]>mid[b;a]*0.01}\n\\d .");
+  assert.strictEqual(live.history()[0].outcome, "ok");
+  lines.length = 0;
+  await live.run(".stats.wide[100;103]");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["11b"]]);
+  // The last statement's value is each server's answer, as of one string.
+  lines.length = 0;
+  await live.run("\\d .stats\nn:3 / wide enough\nwide[100;100+n]");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["11b"]]);
+  // A later query is in the root again.
+  lines.length = 0;
+  await live.run("string system \"d\"");
+  assert.deepStrictEqual(lines.slice(1), ['".."']);
+});
+
 // One `.gw.` name anywhere made the whole selection the gateway's own, so
 // a query under `n:count .gw.servers` ran on the gateway: 'trade (#3059).
 test("a selection goes to a gateway statement by statement: its own as written, the rest through .gw.syncexec (#3059)", () => {
@@ -333,7 +366,7 @@ test("a selection goes to a gateway statement by statement: its own as written, 
   assert.deepStrictEqual(through("\\d .stats\nn:count .gw.servers\nf:{x+1}\n\\d .\ncount trade"), [
     "\\d .stats",
     "n:count .gw.servers",
-    '.gw.syncexec["system \\"d .stats\\"\\n ;f:{x+1}";enlist `rdb]',
+    '.gw.syncexec["last value each (\\"system \\\\\\"d .stats\\\\\\"\\";\\"f:{x+1}\\")";enlist `rdb]',
     "\\d .",
     '.gw.syncexec["count trade";enlist `rdb]',
   ]);

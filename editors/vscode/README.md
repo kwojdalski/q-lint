@@ -920,7 +920,9 @@ else the process's own. `/ @servertypes none` sends the file's queries to
 the gateway itself. The query is one string,
 `.gw.syncexec["select from trade";\`rdb\`hdb]`, which a server under TorQ's
 read-only mode reads as well: several statements are joined into it, each
-after the first on a line that starts ` ;`. TorQ's `.gw.syncexec` defers
+after the first on a line that starts ` ;`, or with a `\d` among them as
+the strings of a list valued in turn, so a function defined after the `\d`
+is bound to its namespace. TorQ's `.gw.syncexec` defers
 its reply (`-30!`) on kdb+ 3.6 and later, so the call is sent as a plain
 string and its value formatted here, as direct evaluation does. Code that
 calls the gateway's own API or reads its state - any name in `.gw` or
