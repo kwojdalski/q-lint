@@ -385,3 +385,28 @@ fn sarif_locates_a_file_outside_the_run_by_its_file_uri() {
     seen.dedup();
     assert_eq!(seen, ["b.q", "c.q"]);
 }
+
+/// The text report writes a control character in a file's name as an
+/// escape: raw, a newline forged a finding line and an escape sequence
+/// reached the terminal (#2659).
+#[cfg(unix)]
+#[test]
+fn the_text_report_escapes_control_characters_in_a_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let forged = "evil.q:9:9: error: QE001 [fake] forged finding\nreal.q";
+    fs::write(d.join(forged), "f:{[x;y] x==y}\n").unwrap();
+    fs::write(d.join("a\x1b[2J\x1b]0;PWNED\x07b.q"), "f:{[x;y] x==y}\n").unwrap();
+    let (status, out, err) = run(d, &["--color", "never", "."]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        out.contains("forged finding\\nreal.q:1:"),
+        "the newline is written as an escape: {out}"
+    );
+    assert!(
+        !out.lines().any(|l| l.starts_with("real.q:")),
+        "no line of the report starts in the file's name: {out}"
+    );
+    assert!(out.contains("a\\x1b[2J\\x1b]0;PWNED\\x07b.q:1:"), "{out}");
+    assert!(!out.contains(['\x1b', '\x07']), "{out:?}");
+}

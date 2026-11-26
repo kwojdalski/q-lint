@@ -911,7 +911,7 @@ fn run(args: Args) -> Result<u8, String> {
             };
             out!(
                 "{}:{}{}: {}: {} [{}/{}] {}\n    {}",
-                paint.bold(&f.path),
+                paint.bold(&printable(&f.path)),
                 f.line,
                 col,
                 severity,
@@ -1093,6 +1093,27 @@ fn add_noqa(
     } else {
         u8::from(left + stale + undecoded > 0)
     })
+}
+
+/// A path as the text report prints it: a control character in a file's name
+/// is written as an escape, `\n` or `\x1b`, as git quotes one. Printed raw,
+/// a newline in a name forged a finding line and an escape sequence reached
+/// the terminal of whoever linted the tree (#2659).
+fn printable(path: &str) -> std::borrow::Cow<'_, str> {
+    if !path.contains(char::is_control) {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    let mut out = String::with_capacity(path.len() + 8);
+    for c in path.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// `bytes` as text, each byte that is not UTF-8 read as one replacement
