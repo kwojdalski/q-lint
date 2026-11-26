@@ -79,6 +79,13 @@ export function stringLiteral(text: string): string {
   return `"${out}"`;
 }
 
+/// Text from a process - a table's name, a column's - for a one-line `/`
+/// comment: its control characters escaped as `-3!` escapes them, so a line
+/// break in a name ends no comment and starts no statement (#3055).
+export function commentText(text: string): string {
+  return text.replace(/[\x00-\x1f\x7f]/g, (ch) => (ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : `\\${ch.charCodeAt(0).toString(8).padStart(3, "0")}`));
+}
+
 /// A string's literal as a list: q holds it as UTF-8 bytes, so one byte
 /// is a char to `enlist` and `"é"` is two already. Not `,"x"`: q refuses
 /// that as a list item, `("ab";,"x")`.

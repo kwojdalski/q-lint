@@ -168,6 +168,34 @@ test("Save Query keeps the statement at the cursor as written, under a name aske
   assert.strictEqual(item.command.command, "q-lint.editSavedQuery");
 });
 
+// A query saved from a file naming its server types kept only the code, so
+// on a TorQ gateway it then ran on the process's own (#3064).
+test("Save Query from a file with a `/ @servertypes` line keeps the line with the code (#3064)", async (t) => {
+  const { saved } = await setUp(t);
+  const from = (text) => {
+    vscode.window.activeTextEditor = {
+      document: { uri: vscode.Uri.file("/w/a.q"), lineAt: (l) => ({ text: text.split("\n")[l] }), getText: () => text },
+      selection: { active: { line: text.split("\n").length - 1 }, isEmpty: true },
+    };
+  };
+  let box;
+  from("/ @servertypes hdb rdb\ncount trade");
+  stub.inputs.push((o) => ((box = o), "counted"));
+  await stub.commands.get("q-lint.saveQuery")();
+  // The name suggested is the query's, not the line's.
+  assert.strictEqual(box.value, "count trade");
+  from("/ @servertypes none\n.gw.servers");
+  stub.inputs.push("servers");
+  await stub.commands.get("q-lint.saveQuery")();
+  from("count quote");
+  stub.inputs.push("plain");
+  await stub.commands.get("q-lint.saveQuery")();
+  // A Query History entry is what was sent, which names its own.
+  from("/ @servertypes hdb\ncount trade");
+  await stub.commands.get("q-lint.saveQuery")({ name: "sent", code: '.gw.syncexec["count trade";enlist `rdb]' });
+  assert.deepStrictEqual(saved.queries().map((q) => q.code), ["/ @servertypes hdb rdb\ncount trade", "/ @servertypes none\n.gw.servers", "count quote", '.gw.syncexec["count trade";enlist `rdb]']);
+});
+
 test("Run Saved Query runs it on the active connection, asking for its placeholders", async (t) => {
   const { q, live } = await setUp(t);
   await stub.commands.get("q-lint.saveQuery")({ name: "s", code: "select from t where sym={{s}}" });

@@ -65,7 +65,7 @@ function fakeLive(over = {}) {
     process: { label: "rdb", host: "localhost", port: 5000, tags: [] },
     resultOnShow: () => live.shown,
     runOnProcess: async (code, label, options) => void live.ran.push({ code, label, options }),
-    run: async (code, as, serverTypes, mode) => void live.ran.push({ code, mode }),
+    run: async (code, as, serverTypes, mode) => void live.ran.push(serverTypes === undefined ? { code, mode } : { code, mode, serverTypes }),
     activeProcess: () => live.process,
     activeLabel: () => live.process?.label,
     connectTo: async () => false,
@@ -380,7 +380,9 @@ test("Table Templates reads the table, runs a read picked and opens the insert t
   stub.picks.push((options) => (assert.deepStrictEqual(options.items.map((i) => i.label), ["Select first 100", "meta", "Insert template"]), "meta"));
   await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
   assert.deepStrictEqual(live.sent, [["TABLE_INFO", "trade", 500]]);
-  assert.deepStrictEqual(live.ran, [{ code: "meta trade", mode: undefined }]);
+  // With no server types: the table was read on this process, so on a TorQ
+  // gateway the read runs on the gateway itself (#3061).
+  assert.deepStrictEqual(live.ran, [{ code: "meta trade", mode: undefined, serverTypes: [] }]);
   stub.picks.push("Insert template");
   await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
   assert.match(opened.at(-1).content, /^\/ One row for trade/);

@@ -274,7 +274,9 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
       void window.showInformationMessage("q-lint: Preview shows a table or a variable of the Process Explorer.");
       return;
     }
-    await this.live.run(code);
+    // What the explorer lists is the process's own: on a TorQ gateway it
+    // is read there, not on its servers through .gw.syncexec (#3061).
+    await this.live.run(code, undefined, []);
   }
 
   private switchHover(): void {

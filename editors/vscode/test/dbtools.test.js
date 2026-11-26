@@ -153,6 +153,40 @@ test("the column manager checks an op against the table and writes a script the 
   assert.throws(() => readRun("x"), /outcome/);
 });
 
+test("a name holding a line break stays inside a script's / comment, and starts no statement (#3055)", () => {
+  const { statements } = require("../out/statements.js");
+  const { commentText } = require("../out/qliteral.js");
+  assert.strictEqual(commentText("a\r\nb\tc\u0001 d/e"), "a\\r\\nb\\tc\\001 d/e");
+  const evil = 'note\n.z.pw:{[u;p]1b}; -1"ran"';
+  const runs = (script) => statements(script).filter((s) => s.startsWith(".z.pw"));
+  const cm = columnScript("trade", { op: "delete", column: evil }, "hdb");
+  assert.strictEqual(cm.split("\n")[0], '/ q-lint: HDB column manager - delete column note\\n.z.pw:{[u;p]1b}; -1"ran" in trade on hdb.');
+  assert.strictEqual(statements(cm)[0], HELPERS[0]);
+  assert.deepStrictEqual(runs(cm), []);
+  // The table's name, a reorder's and a rename's too.
+  for (const script of [
+    columnScript(evil, { op: "attr", column: "px", attr: "s" }, "hdb"),
+    columnScript("trade", { op: "reorder", order: ["px", evil] }, "hdb"),
+    columnScript("trade", { op: "cast", column: evil, type: "j" }, "hdb"),
+  ]) {
+    assert.deepStrictEqual(runs(script), []);
+    assert.strictEqual(statements(script)[0], HELPERS[0]);
+  }
+  // The migration's header, in memory and on disk, and the test data's.
+  const t = (kind, cols) => ({ kind, rows: 2, bytes: null, partitions: null, keys: [], ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
+  for (const kind of ["table", "splayed"]) {
+    for (const [from, to] of [[t(kind, [["a", "j"]]), t(kind, [["a", "j"], [evil, "s"]])], [t(kind, [["a", "j"], [evil, "s", "g"]]), t(kind, [[evil, "j"], ["a", "j"]])], [t(kind, [[evil, "j"]]), t(kind, [["a", "j"]])]]) {
+      const script = migrationScript("t", from, "here", to, "there", "p");
+      assert.deepStrictEqual(runs(script), [], script);
+      assert.ok(script.split("\n").every((line) => !line.startsWith(".z.pw")), script);
+    }
+  }
+  assert.match(migrationScript("t", t("table", [["a", "j"]]), "here", t("table", [["a", "j"], [evil, "s"]]), "there", "p"), /^\/ add {4}note\\n\.z\.pw:\{\[u;p\]1b\}; -1"ran" \(s\)$/m);
+  const data = testDataQ(t("table", [["a", "j"]]), evil, { rows: 5, symbols: ["A"], low: 0, high: 10, sorted: "", seed: 1 });
+  assert.strictEqual(data.split("\n")[0], '/ q-lint: 5 rows of test data shaped as note\\n.z.pw:{[u;p]1b}; -1"ran". Run it on a local process.');
+  assert.deepStrictEqual(runs(data), []);
+});
+
 test("the documenter reads one table's answer, takes the qDoc above a definition, and escapes what it renders", () => {
   const raw = {
     pf: "",
@@ -187,6 +221,24 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.deepStrictEqual(mixed.tables.map((x) => x.error), [undefined, "..sym"]);
   assert.match(docMarkdown(mixed, "rdb", "now"), /### e\\<m\\>\n\nNot read: \.\.sym\.\n\n## Functions/);
   assert.match(docHtml(mixed, "rdb", "now"), /<h3 id="t-e&lt;m&gt;">e&lt;m&gt;<\/h3>\n<p>Not read: \.\.sym\.<\/p>\n<h2>Functions/);
+});
+
+test("the document says how many tables and functions its limit left out (#3054)", () => {
+  const table = (name) => ({ name, kind: "table", rows: 1, keys: [], cols: ["a"], types: ["j"], fkeys: [""], attrs: [""], error: "" });
+  const raw = { pf: "", parts: 0, allparts: 0, ntables: 2500, nfns: 2102, tables: [table("t1"), table("t2")], fnames: ["f", "g"], fparams: [["x"], ["y"]], ftexts: ["", ""] };
+  const doc = readDoc(raw);
+  assert.strictEqual(doc.allTables, 2500);
+  assert.strictEqual(doc.allFunctions, 2102);
+  const md = docMarkdown(doc, "rdb", "now");
+  assert.match(md, /## Tables\n\nThe first 2 of 2,500 tables: the other 2,498 are not in this document\.\n\n### t1\n/);
+  assert.match(md, /## Functions\n\nThe first 2 of 2,102 functions: the other 2,100 are not in this document\.\n\n### f\[x\]\n/);
+  const html = docHtml(doc, "rdb", "now");
+  assert.match(html, /<h2>Tables<\/h2>\n<p>The first 2 of 2,500 tables: the other 2,498 are not in this document\.<\/p>\n<h3 id="t-t1">/);
+  assert.match(html, /<h2>Functions<\/h2>\n<p>The first 2 of 2,102 functions: the other 2,100 are not in this document\.<\/p>\n<h3>f\[x\]<\/h3>/);
+  // All of them in it, or an answer with no counts: nothing is said.
+  for (const whole of [{ ...raw, ntables: 2, nfns: 2 }, { ...raw, ntables: undefined, nfns: undefined }]) {
+    assert.doesNotMatch(docMarkdown(readDoc(whole), "rdb", "now") + docHtml(readDoc(whole), "rdb", "now"), /The first/);
+  }
 });
 
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
@@ -243,6 +295,29 @@ test("the partition check finds a column enumerated against another domain in so
   assert.deepStrictEqual(problems.map((p) => [p.kind, p.what, p.partitions]), [["enumeration", "trade.sym is enumerated against dom2 here, sym in most partitions: a select across them makes it a mixed column", ["2026.03.06"]]]);
   // Two columns, each against its own domain everywhere, are no problem.
   assert.deepStrictEqual(partitionProblems(answer([row("2026.03.05", ["sym", "src", ""]), row("2026.03.06", ["sym", "src", ""])])), []);
+});
+
+// q's tables are the newest partition's (`.Q.pt`): one that partition lacks
+// is not loaded, and with the newest partition empty none is (#3050).
+test("the partition check says q has not loaded a table the newest partition lacks (#3050)", () => {
+  const row = (table, partition, dir = true) => ({ table, partition, dir, dotd: dir, columns: dir ? ["sym", "px"] : [], missing: [], types: dir ? [20, 9] : [], enums: dir ? ["sym", ""] : [], maxIndexes: [], rows: dir ? 6 : null });
+  const all = ["2026.01.05", "2026.01.06", "2026.01.07"];
+  const answer = (tables, loaded, rows) => ({ hdb: true, field: "date", root: "/db", all, checked: 3, tables, loaded, domains: new Map([["sym", 10]]), rows });
+  const lacks = answer(["trade", "oldtab"], ["trade"], [...all.map((p) => row("trade", p)), row("oldtab", all[0]), row("oldtab", all[1]), row("oldtab", all[2], false)]);
+  assert.deepStrictEqual(partitionProblems(lacks).map((p) => [p.kind, p.table, p.what, p.partitions]), [
+    ["missing table", "oldtab", "no oldtab directory; q takes its tables from the newest partition, so it has not loaded oldtab and a query of it fails", ["2026.01.07"]],
+  ]);
+  assert.match(partitionReport(lacks, "hdb", false), /tables trade, oldtab\.[^]*1 problem:[^]*q takes its tables from the newest partition/);
+  // Written since the load: on disk in the newest partition, in no .Q.pt.
+  const late = answer(["trade", "late"], ["trade"], [...all.map((p) => row("trade", p)), row("late", all[0], false), row("late", all[1], false), row("late", all[2])]);
+  assert.deepStrictEqual(partitionProblems(late).map((p) => [p.what, p.partitions]), [["no late directory; q has not loaded late (it is not in .Q.pt) and a query of it fails", ["2026.01.05", "2026.01.06"]]]);
+  // A loaded table missing from an older partition reads as before.
+  const older = answer(["trade"], ["trade"], [row("trade", all[0], false), row("trade", all[1]), row("trade", all[2])]);
+  assert.deepStrictEqual(partitionProblems(older).map((p) => [p.what, p.partitions]), [["no trade directory", ["2026.01.05"]]]);
+  // No table directory anywhere is not "No problems found".
+  const none = partitionReport(answer([], [], []), "hdb", false);
+  assert.match(none, /tables none\.[^]*\*\*missing table\*\*: no table directory in any partition checked, so q has loaded no table - 1 partition: 2026\.01\.07/);
+  assert.deepStrictEqual(readPartitions({ hdb: true, pf: "date", root: "/db", all, checked: 3, tables: ["trade", "oldtab"], loaded: ["trade"], domains: [], domainsizes: [], rows: {} }).loaded, ["trade"]);
 });
 
 // #2007: q writes a string or nested column with no rows as a general list
@@ -555,6 +630,32 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.match(lines[1].split(",")[2], /^2026\.01\.0[23]D\d\d:\d\d:\d\d\.\d{9}$/);
   assert.strictEqual(loadTypes(info), "SFP");
   assert.notStrictEqual(random(1)(), random(2)());
+});
+
+// Only a string had a generator: a book's sizes, prices and tags were each
+// `n#enlist()`, a mixed column of empty lists, and empty fields in the CSV.
+test("test data for a nested column is a few of its atom's values a row, in the q and the CSV (#3051)", () => {
+  const o = { rows: 6, symbols: ["A", "B"], low: 0, high: 100, seed: 42 };
+  assert.strictEqual(generator("J", o), "{[n] 0+n?100}each 1+(til n)mod 5");
+  assert.strictEqual(generator("F", o), "{[n] 0+n?100f}each 1+(til n)mod 5");
+  assert.strictEqual(generator("S", o), "{[n] n?`A`B}each 1+(til n)mod 5");
+  assert.strictEqual(generator("H", o), '{[n] "h"$0+n?100}each 1+(til n)mod 5');
+  // A string is as it was, and a column of no one type still empty lists.
+  assert.strictEqual(generator("C", o), "{(1+x mod 10)?.Q.a}each til n");
+  assert.strictEqual(generator(" ", o), "n#enlist()");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 5, columns: [col("sym", "s"), col("sizes", "J"), col("px", "F"), col("tags", "S"), col("raw", " ")] };
+  assert.strictEqual(testDataQ(info, "book", o).split("\n")[2], "book:{[n] ([] sym:n?`A`B; sizes:{[n] 0+n?100}each 1+(til n)mod 5; px:{[n] 0+n?100f}each 1+(til n)mod 5; tags:{[n] n?`A`B}each 1+(til n)mod 5; raw:n#enlist())}[6]");
+  const rows = testDataCsv(info, o).trim().split("\n").slice(1).map((l) => l.split(","));
+  assert.strictEqual(rows.length, 6);
+  for (const [, sizes, px, tags, raw] of rows) {
+    assert.match(sizes, /^\d+( \d+){0,4}$/);
+    assert.match(px, /^\d+(\.\d+)?( \d+(\.\d+)?){0,4}$/);
+    assert.match(tags, /^[AB]( [AB]){0,4}$/);
+    assert.strictEqual(raw ?? "", "");
+  }
+  assert.ok(rows.some((r) => r[1].includes(" ")), "a row of more than one value");
+  assert.strictEqual(loadTypes(info), "S****");
 });
 
 test("test data: a short's or an int's range is cut to the finite values it holds, in the q and the CSV (#1499)", () => {

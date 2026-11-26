@@ -12,7 +12,7 @@
 // column that is in both but renamed reads as one dropped and one added:
 // the metas cannot tell a rename from that.
 import { columnScriptOf, type ColumnOp } from "./colmanager";
-import { plainName, symbolLiteral } from "./qliteral";
+import { commentText, plainName, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface SchemaDiff {
@@ -140,7 +140,8 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     ...d.attrs.map((c) => `/ attr   ${c.name} from ${c.from ? `${c.from}#` : "none"} to ${c.to ? `${c.to}#` : "none"}`),
     ...(d.order ? [`/ order  ${d.order.join(" ")}`] : []),
     ...(d.keys ? [`/ keys   ${d.keys.length > 0 ? d.keys.join(" ") : "none"}`] : []),
-  ];
+    // Each is one line, whatever a name holds (#3055).
+  ].map(commentText);
   if (sameSchema(d)) {
     return [...head, "/ The two schemas are the same: there is nothing to change."].join("\n") + "\n";
   }
@@ -156,9 +157,9 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const refused = d.cast.filter((c) => !skipped.includes(c) && castProblem(c.from, c.to, true) !== undefined);
     return [
       ...head,
-      ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`),
-      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${castProblem(c.from, c.to, true)}`),
-      ...d.attrs.filter((c) => attrProblem(d, c, from.rows) !== undefined).map((c) => `/ not written: ${c.to}# on ${c.name}: ${attrProblem(d, c, from.rows)}`),
+      ...skipped.map((c) => `/ not written: a cast of ${c.name} to the nested type ${c.to}, which the column manager does not make on disk`).map(commentText),
+      ...refused.map((c) => `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${castProblem(c.from, c.to, true)}`).map(commentText),
+      ...d.attrs.filter((c) => attrProblem(d, c, from.rows) !== undefined).map((c) => `/ not written: ${c.to}# on ${c.name}: ${attrProblem(d, c, from.rows)}`).map(commentText),
       columnScriptOf(name, ops, process, `migrate ${name} to the schema of ${toWhere}`),
     ].join("\n") + "\n";
   }
@@ -172,7 +173,7 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     const each = names.map(symbolLiteral);
     return each.every((s) => !s.startsWith("`$")) ? each.join("") : `(${each.join(";")})`;
   };
-  const odd = (c: string, what: string) => `/ not written: ${what} ${c}, whose name q-sql cannot write`;
+  const odd = (c: string, what: string) => `/ not written: ${what} ${commentText(c)}, whose name q-sql cannot write`;
   const keyed = from.keys.length > 0;
   const lines = [...head];
   if (keyed) lines.push(assign(`0!${t}`));
@@ -182,15 +183,15 @@ export function migrationScript(name: string, fromInfo: TableInfo, fromWhere: st
     lines.push(!plainName(a.name) ? assign(`{@[x;y;:;count[x]#enlist z]}[${t};${symbolLiteral(a.name)};${nullOf(a.type)}]`) : a.type === a.type.toUpperCase() ? assign(`update ${a.name}:count[i]#enlist ${nullOf(a.type)} from ${t}`) : assign(`update ${a.name}:${nullOf(a.type)} from ${t}`));
   for (const c of d.cast) {
     const problem = castProblem(c.from, c.to, false);
-    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${c.name} from ${c.from} to ${c.to || "mixed"}: ${problem}`);
+    lines.push(!plainName(c.name) ? odd(c.name, "the cast of") : problem === undefined ? assign(`update ${c.name}:${castOf(c.name, c.from, c.to)} from ${t}`) : `/ not written: a cast of ${commentText(c.name)} from ${c.from} to ${c.to || "mixed"}: ${problem}`);
   }
   for (const c of d.attrs) {
     const problem = attrProblem(d, c, from.rows);
-    lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : problem !== undefined ? `/ not written: ${c.to}# on ${c.name}: ${problem}` : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
+    lines.push(!plainName(c.name) ? odd(c.name, "the attribute of") : problem !== undefined ? `/ not written: ${c.to}# on ${commentText(c.name)}: ${problem}` : assign(`update ${c.name}:${c.to ? `\`${c.to}#` : "`#"}${c.name} from ${t}`));
   }
   if (d.order) lines.push(assign(`${symbols(d.order)} xcols ${t}`));
   const keys = to.keys.filter((k) => to.columns.some((c) => c.name === k));
   if (keys.length > 0) lines.push(assign(`${symbols(keys)} xkey ${t}`));
-  else if (keyed) lines.push(`/ ${name} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`);
+  else if (keyed) lines.push(commentText(`/ ${name} was keyed by ${from.keys.join(", ")}; the target is not, so it is left unkeyed`));
   return lines.join("\n") + "\n";
 }

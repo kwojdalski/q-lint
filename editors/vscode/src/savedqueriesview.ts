@@ -28,6 +28,7 @@ import {
   type TreeDataProvider,
   type TreeView,
 } from "vscode";
+import { fileServerTypes } from "./gateway";
 import type { HistoryEntry, Live } from "./live";
 import { iconsEscaped, plainMessage } from "./history";
 import {
@@ -176,17 +177,22 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
       return;
     }
     const given = from !== undefined && typeof from === "object" && typeof from.code === "string" ? from : undefined;
-    const code = given?.code ?? (await this.live.codeFromEditor(false));
-    if (code === undefined) {
+    const file = given === undefined ? window.activeTextEditor?.document.getText() : undefined;
+    const written = given?.code ?? (await this.live.codeFromEditor(false));
+    if (written === undefined) {
       return;
     }
+    // The server types its file names go with it, on a line of its own:
+    // its run, exports and tiles read them there (#3064).
+    const named = file === undefined || fileServerTypes(written) !== undefined ? undefined : fileServerTypes(file);
+    const code = named === undefined ? written : `/ @servertypes ${named.length === 0 ? "none" : named.join(" ")}\n${written}`;
     const taken = this.queries().map((q) => q.name);
     let name = given !== undefined && "name" in given && typeof given.name === "string" ? given.name.trim() : undefined;
     if (name === undefined || nameProblem(name, taken) !== undefined) {
       name = (
         await window.showInputBox({
           title: "Save Query: name",
-          value: name ?? suggestedName(code),
+          value: name ?? suggestedName(written),
           prompt: "A name for the query, unique in this workspace's Saved Queries.",
           validateInput: (v) => nameProblem(v, taken),
         })

@@ -916,27 +916,40 @@ a server of each type and joins what they answer. The server types are, in
 order: those **Query Gateway on Server Types...** (editor menu and palette)
 asks for, for the selection or the current line; those a line at column 0
 of the file names, `/ @servertypes hdb` (a comment after them is none);
-else the process's own. `/ @servertypes none` sends the file's queries to
+else the process's own. Server types are q names: one that is not, `hdb-eu`
+or `2hdb`, is named and refused - in the box, and on a file's line, whose
+queries are then not sent - rather than dropped. `/ @servertypes none` sends the file's queries to
 the gateway itself. The query is one string,
 `.gw.syncexec["select from trade";\`rdb\`hdb]`, which a server under TorQ's
 read-only mode reads as well: several statements are joined into it, each
-after the first on a line that starts ` ;`. TorQ's `.gw.syncexec` defers
+after the first on a line that starts ` ;`, or with a `\d` among them as
+the strings of a list valued in turn, so a function defined after the `\d`
+is bound to its namespace. TorQ's `.gw.syncexec` defers
 its reply (`-30!`) on kdb+ 3.6 and later, so the call is sent as a plain
 string and its value formatted here, as direct evaluation does. Code that
 calls the gateway's own API or reads its state - any name in `.gw` or
 `.dataaccess`, such as `t:.gw.syncexec[...]`, `.gw.servers` or
-`.dataaccess.getdata[...]` - goes as written. The history keeps the call
+`.dataaccess.getdata[...]` - goes as written, and so does a read of the
+state a gateway keeps as every TorQ process does, in `.servers`, `.clients`
+or `.timer`, or of `.kxdash`: `select from .servers.SERVERS` on a gateway is
+the gateway's discovery, not a server's. A selection is read statement by
+statement: the gateway's own go as written, with those a name ties to them
+(`count t` under `t:.gw.syncexec[...]`), and the others through
+`.gw.syncexec`. The history keeps the call
 as it was sent, and running it again does not wrap it twice; **Query
 Gateway on Server Types...** sends such an entry to the types chosen. A
 dashboard tile, a scheduled query, **Query a Tag**, **Compare Query**,
 **Watch Query**, the REPL, the Interactive Window, Smart Send, notebook
 cells and their live values, the agent's query tool, Copy Value as JSON and
-SQL go through it too, and a drill-down, a wrangle step or a cell edit from
+SQL go through it too - a code cell, Smart Send and Copy Value as JSON to
+the server types their file names - and a drill-down, a wrangle step or a cell edit from
 a result goes to the server types it came from. Features that evaluate the
 code inside q-lint's own q - Run Query Asynchronously, Record Query Snapshot
-and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process and
-the Join Assistant - refuse code a gateway would send to its servers, and
-say so, rather than run it on the gateway itself.
+and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process,
+Profile Functions and the Join Assistant - refuse code a gateway would send
+to its servers, and say so, rather than run it on the gateway itself. The
+Process Explorer lists the gateway's own names, so its **Preview** and the
+reads of **Table Templates** run on the gateway itself.
 `q-lint.connection.torqGateway.enable` off sends every query as written and
 hides both commands.
 
@@ -1279,7 +1292,9 @@ workspace. **Save Query** - on the view's title bar, in a q editor's
 context menu, or on a Query History entry - saves the selection, or the
 statement at the cursor, or that entry's code, as written, under a name you
 give (the first line is offered); placeholders stay in it and are asked for
-each time it runs. On a saved query's row: **Run Saved Query** runs it on
+each time it runs. Saved from a file that names its TorQ gateway server
+types, it keeps that `/ @servertypes` line above its code, and its runs,
+scheduled exports and dashboard tiles go to them. On a saved query's row: **Run Saved Query** runs it on
 the active connection as a query from the editor runs (connecting first if
 there is none; the read-only guard applies, and it lands in Query History),
 **Edit Saved Query** - also a click on the row - opens it as a q document of

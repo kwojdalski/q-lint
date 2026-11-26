@@ -245,7 +245,57 @@ test("a title-bar button filters and pauses the view it was clicked in, not the 
   assert.deepStrictEqual(views.map((v) => v.follow), [true, false]);
 });
 
-test("a followed view shows appended lines once they end, the last entry before the next starts; paused, it reads nothing until resumed", async (t) => {
+// A log that ends without a newline - a process killed mid-write, q's
+// `1 "..."` - never showed its last line, often the one that says why.
+test("a log's last line with no newline after it is shown, counted and filtered (#3041)", async (t) => {
+  const file = path.join(tmp(), "out_rdb1.log");
+  fs.writeFileSync(file, [torq("10:00:00", "rdb1", "INF", "started"), torq("10:00:05", "rdb1", "ERR", "disk full, EOD aborted")].join("\n"));
+  const { viewer, text } = setUp(t);
+  const state = await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(file));
+  assert.strictEqual(text(), [torq("10:00:00", "rdb1", "INF", "started"), torq("10:00:05", "rdb1", "ERR", "disk full, EOD aborted")].join("\n"));
+  assert.deepStrictEqual([state.levels, state.entries], [["ERROR", "INFO"], 2]);
+  let offered;
+  stub.picks.push((o) => ((offered = o.items.map((i) => [i.label, i.description])), o.items.filter((i) => i.label === "ERROR")));
+  await stub.commands.get(LOG_COMMANDS.levels)();
+  assert.deepStrictEqual(offered.slice(0, 3), [["ERROR", "1"], ["WARN", "0"], ["INFO", "1"]]);
+  assert.strictEqual(text(), torq("10:00:05", "rdb1", "ERR", "disk full, EOD aborted"));
+  await stub.commands.get(LOG_COMMANDS.clear)();
+  // The line grows and ends: it is one entry, counted once.
+  fs.appendFileSync(file, " twice\n  rolled back");
+  for (let i = 0; i < 60 && !text().includes("rolled back"); i++) await sleep(50);
+  assert.strictEqual(text(), [torq("10:00:00", "rdb1", "INF", "started"), torq("10:00:05", "rdb1", "ERR", "disk full, EOD aborted twice"), "  rolled back"].join("\n"));
+  assert.deepStrictEqual([...viewer.views.values()][0].levels.get("ERROR"), 1);
+  assert.strictEqual(viewer.state().entries, 2);
+  // A file that is one line with no newline has a process to pick.
+  const lone = path.join(tmp(), "out_hdb1.log");
+  fs.writeFileSync(lone, "'type");
+  const one = await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(lone));
+  assert.deepStrictEqual([one.text, one.processes, one.levels, one.entries], ["'type", ["hdb1"], ["ERROR"], 1]);
+});
+
+// Each file's last entry is still open - a line could continue it - and
+// drawn, but was not counted: two files' three entries read "1" (#3042).
+test("the entry count is of the entries shown, each file's last one too (#3042)", async (t) => {
+  const dir = tmp();
+  const a = path.join(dir, "out_rdb1.log");
+  const b = path.join(dir, "out_hdb1.log");
+  fs.writeFileSync(a, [torq("10:00:00", "rdb1", "INF", "one"), torq("10:00:01", "rdb1", "ERR", "two"), ""].join("\n"));
+  fs.writeFileSync(b, [torq("10:00:02", "hdb1", "INF", "three"), ""].join("\n"));
+  const { viewer, text } = setUp(t);
+  const state = await stub.commands.get(LOG_COMMANDS.open)(vscode.Uri.file(a), [vscode.Uri.file(a), vscode.Uri.file(b)]);
+  assert.strictEqual(text().split("\n").length, 3);
+  assert.strictEqual(state.entries, 3);
+  assert.match(viewer.status.text, /all · 3 · following$/);
+  // Under a filter, those of them that pass it.
+  await stub.commands.get(LOG_COMMANDS.levels)(["ERROR"]);
+  assert.strictEqual(text(), torq("10:00:01", "rdb1", "ERR", "two"));
+  assert.match(viewer.status.text, /ERROR · 1 · following$/);
+  await stub.commands.get(LOG_COMMANDS.processes)(["hdb1"]);
+  assert.strictEqual(text(), "(nothing passes the filter)");
+  assert.match(viewer.status.text, / · 0 · following$/);
+});
+
+test("a followed view shows appended lines, the last as far as it is written, and the last entry before the next starts; paused, it reads nothing until resumed", async (t) => {
   const file = path.join(tmp(), "q.log");
   fs.writeFileSync(file, "first\n");
   const { viewer, text } = setUp(t);
@@ -253,12 +303,13 @@ test("a followed view shows appended lines once they end, the last entry before 
   assert.strictEqual(text(), "first");
   fs.appendFileSync(file, "'boom\n  [0] trace\nhalf");
   for (let i = 0; i < 60 && !text().includes("trace"); i++) await sleep(50);
-  assert.strictEqual(text(), "first\n'boom\n  [0] trace");
+  // The line still being written is shown as far as it goes (#3041).
+  assert.strictEqual(text(), "first\n'boom\n  [0] trace\nhalf");
   await stub.commands.get(LOG_COMMANDS.follow)();
   assert.strictEqual(viewer.state().follow, false);
   fs.appendFileSync(file, " done\nlater\n");
   await sleep(1200);
-  assert.strictEqual(text(), "first\n'boom\n  [0] trace");
+  assert.strictEqual(text(), "first\n'boom\n  [0] trace\nhalf");
   await stub.commands.get(LOG_COMMANDS.follow)();
   assert.strictEqual(text(), "first\n'boom\n  [0] trace\nhalf done\nlater");
 });

@@ -16,7 +16,7 @@ const { QConnection } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
 const { columnScript, columnsOf, COLUMN_DIRS, HELPERS, opProblem, readColumnDirs, RUN_SCRIPT, readRun } = require("../out/colmanager.js");
 const { DOCUMENT, readDoc, docMarkdown } = require("../out/dbdoc.js");
-const { PARTITION_CHECK, readPartitions, partitionProblems } = require("../out/partcheck.js");
+const { PARTITION_CHECK, readPartitions, partitionProblems, partitionReport } = require("../out/partcheck.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -192,6 +192,37 @@ test("the column manager parses string and symbol columns it casts to numbers (#
   assert.strictEqual(await connection.call('{(`$"q#") in key .Q.par[hsym`$system"cd";first .Q.pv;`trade]}', 0), false);
 });
 
+// A value the parse cannot read would be a null on disk, for good: the
+// directory is left as it was, and the answer says how many and which first.
+test("the column manager casts no symbol or string column whose values do not parse (#3056)", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/db";',
+    'mk:{[r;d;id] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`p#`AAPL`AAPL`MSFT`;id:id;n:("12";"x1";"";"0N");ok:("12";" ";"";"0N"))};',
+    "mk[r;2026.01.05;`1`2`3`];",
+    "mk[r;2026.01.06;`1`2`x`];",
+    'system "cd $DIR/db";',
+    'system "l .";',
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const cast = async (column, type) => run(connection, columnScript("trade", { op: "cast", column, type }, "hdb"));
+  // Tickers are no longs: neither partition is written, and the column is as it was, its p# too.
+  const sym = await cast("sym", "j");
+  assert.match(sym, /^changed 0 of 2 directories; left as they were: /);
+  assert.strictEqual((sym.match(/trade: 3 values q reads as no "j", the first AAPL/g) ?? []).length, 2);
+  assert.match(await cast("n", "i"), /^changed 0 of 2 directories; .*trade: 1 value q reads as no "i", the first x1/);
+  assert.deepStrictEqual(await connection.call("{exec t from meta trade}", 0), "dssCC");
+  assert.deepStrictEqual(await connection.call("{string(select sym from trade)`sym}", 0), ["AAPL", "AAPL", "MSFT", "", "AAPL", "AAPL", "MSFT", ""]);
+  assert.strictEqual(await connection.call('{attr get` sv .Q.par[hsym`$system"cd";first .Q.pv;`trade],`sym}', 0), "p");
+  assert.deepStrictEqual(await connection.call("{(select n from trade where date=first date)`n}", 0), ["12", "x1", "", "0N"]);
+  // A partition whose values all parse is cast; the other is named.
+  assert.match(await cast("id", "j"), /^changed 1 of 2 directories; left as they were: \S*2026\.01\.06\/trade: 1 value q reads as no "j", the first x$/);
+  assert.deepStrictEqual(await connection.call('{"f"$get` sv .Q.par[hsym`$system"cd";first .Q.pv;`trade],`id}', 0), [1, 2, 3, null]);
+  // A null, a blank and q's own null are nulls after as before.
+  assert.match(await cast("ok", "j"), /^changed 2 of 2 directories$/);
+  assert.deepStrictEqual(await connection.call('{"f"$(select ok from trade where date=first date)`ok}', 0), [12, null, null, null]);
+});
+
 // A table or column whose name is no plain name is written as `$"..." (#1569).
 test("the column manager changes a table and columns whose names have a space", { skip }, async (t) => {
   const source = [
@@ -362,6 +393,17 @@ test("the column manager refuses the casts q does not make, before any partition
   assert.deepStrictEqual(await onDisk(t, db, '{{"h"$type get` sv(hsym`$string x),`trade`sz} each .Q.pv}'), [6, 6, 6]);
 });
 
+test("the column manager deletes a column whose name holds a line break, and runs none of the name (#3055)", { skip }, async (t) => {
+  const odd = '{[r;d] .Q.dd[r;d,`odd`] set .Q.en[r] flip(`sym`px,`$"note\\n.z.pw:{[u;p]1b};1")!(`a`b;1 2f;`x`y)}[r] each 2026.01.05 2026.01.06 2026.01.07;';
+  const { connection } = await connect(t, HDB(odd));
+  const name = "note\n.z.pw:{[u;p]1b};1";
+  assert.deepStrictEqual(await connection.call("{string cols odd}", 0), ["date", "sym", "px", name]);
+  const say = await run(connection, columnScript("odd", { op: "delete", column: name }, "hdb"));
+  assert.match(say, /changed 3 of 3 directories/);
+  assert.strictEqual(await connection.call('{@[{-3!get x};`.z.pw;{"unset"}]}', 0), "unset");
+  assert.deepStrictEqual(await connection.call("{string cols odd}", 0), ["date", "sym", "px"]);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));
@@ -376,6 +418,19 @@ test("the documenter reads tables, keys, foreign keys and functions", { skip }, 
   assert.ok(doc.functions.some((f) => f.name === ".lib.add" && f.params.join() === "a,b"));
   const text = docMarkdown(doc, "hdb", "now", new Map([[".lib.add", "Adds."]]));
   assert.match(text, /### \.lib\.add\[a;b\]\n\nAdds\./);
+});
+
+test("the documenter counts the tables and functions past its limit, and the document says so (#3054)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t1:t2:t3:([] a:1 2)\n.ns.t4:([] a:1 2)\nf1:f2:{x}\n.lib.a:.lib.b:.zz.vwap:{[x;y] x+y}\n");
+  const cut = readDoc(await connection.call(DOCUMENT, 3));
+  assert.deepStrictEqual([cut.tables.length, cut.allTables, cut.functions.length, cut.allFunctions], [3, 4, 3, 5]);
+  const text = docMarkdown(cut, "rdb", "now");
+  assert.match(text, /## Tables\n\nThe first 3 of 4 tables: the other 1 is not in this document\./);
+  assert.match(text, /## Functions\n\nThe first 3 of 5 functions: the other 2 are not in this document\./);
+  assert.ok(!text.includes(".zz.vwap"));
+  const whole = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual([whole.tables.length, whole.allTables, whole.functions.length, whole.allFunctions], [4, 4, 5, 5]);
+  assert.doesNotMatch(docMarkdown(whole, "rdb", "now"), /The first/);
 });
 
 // Only a lambda's parameters are its own: a projection's bound argument or
@@ -551,6 +606,34 @@ test("the partition check finds missing dates, files, differing types and outlie
   // A process with no database says so.
   const { connection: plain } = await connect(t, "a:1\n");
   assert.strictEqual(readPartitions(await plain.call(PARTITION_CHECK, 1000, false)).hdb, false);
+});
+
+// q takes its tables from the newest partition: one that partition lacks is
+// in no .Q.pt, and an empty newest partition - a failed end of day - leaves
+// q with no table at all. Both were "No problems found" (#3050).
+test("the partition check names a table the newest partition lacks, and an empty newest partition (#3050)", { skip }, async (t) => {
+  const old = "{[r;d] .Q.dd[r;d,`oldtab`] set .Q.en[r] ([] sym:`a`b;v:1 2)}[r] each 2026.01.05 2026.01.06;";
+  const { connection } = await connect(t, HDB(old));
+  assert.deepStrictEqual(await connection.call('{(string(),.Q.pt;@[value;"select from oldtab";{x}])}', 0), [["quote", "trade"], "oldtab"]);
+  const answer = readPartitions(await connection.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual([answer.tables, answer.loaded], [["quote", "trade", "oldtab"], ["quote", "trade"]]);
+  assert.deepStrictEqual(partitionProblems(answer).map((p) => [p.kind, p.table, p.what, p.partitions]), [
+    ["missing table", "oldtab", "no oldtab directory; q takes its tables from the newest partition, so it has not loaded oldtab and a query of it fails", ["2026.01.07"]],
+  ]);
+  assert.match(partitionReport(answer, "hdb", false), /tables quote, trade, oldtab\.[^]*1 problem:/);
+  // The sym inspector reads its columns too: their symbols are in the file.
+  const sym = readSym(await connection.call(SYM_INSPECT, 20));
+  assert.deepStrictEqual(sym.columns.map((c) => `${c.table}.${c.column}`).sort(), ["oldtab.sym", "quote.sym", "trade.sym"]);
+
+  const { connection: empty } = await connect(t, HDB('system "mkdir -p $DIR/hdb/2026.01.08";'));
+  assert.deepStrictEqual(await empty.call('{("f"$count .Q.pt;@[value;"select from trade";{x}])}', 0), [0, "trade"]);
+  const none = readPartitions(await empty.call(PARTITION_CHECK, 1000, false));
+  assert.deepStrictEqual([none.tables, none.loaded], [["quote", "trade"], []]);
+  assert.deepStrictEqual(partitionProblems(none).map((p) => [p.kind, p.table, p.partitions]), [
+    ["missing table", "quote", ["2026.01.08"]],
+    ["missing table", "trade", ["2026.01.08"]],
+  ]);
+  assert.doesNotMatch(partitionReport(none, "hdb", false), /No problems found/);
 });
 
 const { SYM_INSPECT, readSym, symReport } = require("../out/syminspect.js");
@@ -872,6 +955,31 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[3], true);
 });
 
+// A nested column - a book's sizes, prices, tags - was `n#enlist()`: empty
+// generic lists, typed as mixed where the table's own meta says J, F, S.
+test("the test data generator's q makes a nested column of the table's own type, and its CSV the values a blank apart (#3051)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "book:([] sym:`a`b; sizes:(1 2;3 4 5); px:(1 2f;3 4 5f); tags:(`x`y;enlist`z); note:(\"ab\";\"c\"))\n");
+  const info = readTableInfo(await connection.call(TABLE_INFO, "book", 100));
+  assert.deepStrictEqual(info.columns.map((c) => c.type).join(""), "sJFSC");
+  const options = { rows: 12, symbols: ["A", "B"], low: 0, high: 100, seed: 42 };
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", options))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call("{exec t from meta gen}", 0), "sJFSC");
+  assert.strictEqual(await connection.call("{(all 0<count each gen`sizes)&(all 7h=type each gen`sizes)&(all 9h=type each gen`px)&all 11h=type each gen`tags}", 0), true);
+  // Rows of the table's own shape: they go into it.
+  assert.strictEqual(await connection.call('{`book insert gen; "f"$count book}', 0), 14);
+  // Every nested type meta names is read back as itself.
+  const types = "BGXHIJEFSPMDZNUVT";
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const all = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: types.length, columns: [...types].map((type, i) => col(`c${i}`, type)) };
+  const every = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(all, "every", { ...options, sorted: "c5" }))));
+  assert.ok(every.ok, every.error);
+  assert.strictEqual(await connection.call("{exec t from meta every}", 0), types);
+  fs.writeFileSync(path.join(dir, "gen.csv"), testDataCsv(info, options));
+  const loaded = await connection.call(`{c:("${loadTypes(info)}";enlist",")0:\`:gen.csv; (count c;all 0<count each "J"$" "vs/:c\`sizes;all not null raze "J"$" "vs/:c\`sizes;all raze(\`$" "vs/:c\`tags)in\`A\`B)}`, 0);
+  assert.deepStrictEqual([Number(loaded[0]), ...loaded.slice(1)], [12, true, true, true]);
+});
+
 // The script set a global `n` to the row count and deleted it at its end:
 // a process's own `n` was gone once the script had run.
 test("the test data generator's q defines the table and no other name, however wide the table (#2016)", { skip }, async (t) => {
@@ -1160,7 +1268,9 @@ test("a schema migration casts a list column to another list type, as q does, an
 });
 
 test("a schema migration casts on disk what the column manager casts, and no other (#2012)", { skip }, async (t) => {
-  const cols = [...ATOMS.map((a) => `c${a}:${SAMPLE[a]}`), 'sC:("12";"2024.01.01";"x")', "lJ:(1 2;3 4;5 6)"].join("; ");
+  // The symbols and strings are nulls and blanks, which every type reads as
+  // its null: a value a type does not read is not cast at all (#3056).
+  const cols = [...ATOMS.map((a) => `c${a}:${a === "s" ? "```" : SAMPLE[a]}`), 'sC:("";" ";"0N")', "lJ:(1 2;3 4;5 6)"].join("; ");
   const { connection } = await connect(t, [
     'r:hsym`$"$DIR/hdb";',
     `{[r;n] .Q.dd[r;2026.01.05,n,\`] set .Q.en[r] ([] k:1 2 3; ${cols})}[r] each \`$"mg",/:"${ATOMS.join("")}";`,
