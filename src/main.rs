@@ -454,6 +454,26 @@ fn run(args: Args) -> Result<u8, String> {
         if args.fix || args.diff {
             return Err("--fix and --diff require q source paths, not --rules or --explain".into());
         }
+        // Nor beside anything that lints or writes: dropped without a word,
+        // it left a hook that meant to lint, add `noqa` comments or write a
+        // baseline passing on a table of rules (#2856).
+        if args.rules && args.explain.is_some() {
+            return Err(
+                "--rules lists every rule and --explain describes one; give one of them".into(),
+            );
+        }
+        let lints = [
+            (!args.paths.is_empty(), "a q source path"),
+            (args.stdin_filename.is_some(), "--stdin-filename"),
+            (args.add_noqa, "--add-noqa"),
+            (args.write_baseline.is_some(), "--write-baseline"),
+            (args.statistics, "--statistics"),
+        ];
+        if let Some((_, given)) = lints.iter().find(|(set, _)| *set) {
+            return Err(format!(
+                "{given} lints, and --rules and --explain only describe the rules; give one or the other"
+            ));
+        }
         if !matches!(args.format.as_str(), "text" | "json") {
             return Err(format!(
                 "--format {} reports findings; --rules and --explain print text or json",

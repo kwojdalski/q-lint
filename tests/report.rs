@@ -410,3 +410,40 @@ fn the_text_report_escapes_control_characters_in_a_path() {
     assert!(out.contains("a\\x1b[2J\\x1b]0;PWNED\\x07b.q:1:"), "{out}");
     assert!(!out.contains(['\x1b', '\x07']), "{out:?}");
 }
+
+/// `--rules` and `--explain` describe the rules and lint nothing, so a path
+/// or a flag that lints or writes beside one is refused rather than dropped:
+/// the run exited 0 having added no `noqa` and written no baseline (#2856).
+#[test]
+fn rules_and_explain_refuse_what_they_would_ignore() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("bad.q"), "f:{[x;y] x==y}\n").unwrap();
+    for args in [
+        &["--explain", "QE004", "bad.q"][..],
+        &["--rules", "bad.q"],
+        &["--rules", "-"],
+        &["--explain", "QE004", "--add-noqa", "bad.q"],
+        &["--rules", "--write-baseline", "nb.json"],
+        &["--explain", "QE004", "--stdin-filename", "x.q"],
+        &["--rules", "--statistics"],
+        &["--rules", "--explain", "QE004"],
+    ] {
+        let (status, out, err) = run(d, args);
+        assert_eq!(status, Some(2), "{args:?}: {out}{err}");
+        assert!(out.is_empty(), "{args:?}: {out}");
+        assert!(err.contains("--rules"), "{args:?}: {err}");
+    }
+    assert_eq!(
+        fs::read_to_string(d.join("bad.q")).unwrap(),
+        "f:{[x;y] x==y}\n"
+    );
+    assert!(!d.join("nb.json").exists());
+    // Alone, each still prints.
+    let (status, out, _) = run(d, &["--explain", "QE004"]);
+    assert_eq!(status, Some(0));
+    assert!(out.starts_with("QE004 "), "{out}");
+    let (status, out, _) = run(d, &["--rules"]);
+    assert_eq!(status, Some(0));
+    assert!(out.lines().count() > 100, "{out}");
+}
