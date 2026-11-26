@@ -1115,14 +1115,35 @@ fn a_bare_name_four_scripts_define_goes_first_to_its_own_then_to_what_it_loads()
     );
 }
 
+/// Locations as `(the last two parts of the file's path, line)`: a file
+/// read from outside every folder is named by its real path, which on
+/// Windows need not begin as the temporary directory is spelled.
+fn in_file(result: &Value) -> Vec<(String, u64)> {
+    result
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of locations, not {result}"))
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let parts: Vec<&str> = uri.rsplitn(3, '/').take(2).collect();
+            (
+                format!("{}/{}", parts[1], parts[0]),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
     // With no folder, or for a load out of every folder, the link went to
     // the file and nothing it defines was known: Go to Definition gave `[]`
     // and signature help nothing (#2964). The files the open documents load
     // are read, and what those load in turn.
+    // The temporary directory as it is spelled, not by its real path, which
+    // on Windows starts `\\?\` and is no URI the server names a file by.
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().canonicalize().unwrap();
+    let dir = tmp.path().to_path_buf();
     let files = [
         ("single/lib.q", "f:{[a;b] a+b}\n"),
         ("ws/main.q", ""),
@@ -1142,7 +1163,7 @@ fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
     let uri = server.open(&dir.join("single"), "main.q", text);
     let reply = server.ask("textDocument/definition", &uri, text, "f[1", 0, json!({}));
     assert_eq!(
-        ordered(&reply["result"], &dir),
+        in_file(&reply["result"]),
         [("single/lib.q".to_string(), 0)],
         "{reply}"
     );
@@ -1162,10 +1183,7 @@ fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
 
     // Inside a folder, by a relative and by an absolute path, and through
     // a load of the file loaded.
-    // Spelled as the temporary directory is, not by its real path, which on
-    // Windows starts `\\?\`.
-    let outside = tmp
-        .path()
+    let outside = dir
         .join("outside/o.q")
         .display()
         .to_string()
@@ -1197,7 +1215,7 @@ fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
             json!({}),
         );
         assert_eq!(
-            ordered(&reply["result"], &dir),
+            in_file(&reply["result"]),
             [("outside/deeper.q".to_string(), 0)],
             "{load}: {reply}"
         );
