@@ -153,6 +153,40 @@ test("the column manager checks an op against the table and writes a script the 
   assert.throws(() => readRun("x"), /outcome/);
 });
 
+test("a name holding a line break stays inside a script's / comment, and starts no statement (#3055)", () => {
+  const { statements } = require("../out/statements.js");
+  const { commentText } = require("../out/qliteral.js");
+  assert.strictEqual(commentText("a\r\nb\tc\u0001 d/e"), "a\\r\\nb\\tc\\001 d/e");
+  const evil = 'note\n.z.pw:{[u;p]1b}; -1"ran"';
+  const runs = (script) => statements(script).filter((s) => s.startsWith(".z.pw"));
+  const cm = columnScript("trade", { op: "delete", column: evil }, "hdb");
+  assert.strictEqual(cm.split("\n")[0], '/ q-lint: HDB column manager - delete column note\\n.z.pw:{[u;p]1b}; -1"ran" in trade on hdb.');
+  assert.strictEqual(statements(cm)[0], HELPERS[0]);
+  assert.deepStrictEqual(runs(cm), []);
+  // The table's name, a reorder's and a rename's too.
+  for (const script of [
+    columnScript(evil, { op: "attr", column: "px", attr: "s" }, "hdb"),
+    columnScript("trade", { op: "reorder", order: ["px", evil] }, "hdb"),
+    columnScript("trade", { op: "cast", column: evil, type: "j" }, "hdb"),
+  ]) {
+    assert.deepStrictEqual(runs(script), []);
+    assert.strictEqual(statements(script)[0], HELPERS[0]);
+  }
+  // The migration's header, in memory and on disk, and the test data's.
+  const t = (kind, cols) => ({ kind, rows: 2, bytes: null, partitions: null, keys: [], ncols: cols.length, columns: cols.map(([name, type, attr = ""]) => ({ name, type, fkey: "", attr })) });
+  for (const kind of ["table", "splayed"]) {
+    for (const [from, to] of [[t(kind, [["a", "j"]]), t(kind, [["a", "j"], [evil, "s"]])], [t(kind, [["a", "j"], [evil, "s", "g"]]), t(kind, [[evil, "j"], ["a", "j"]])], [t(kind, [[evil, "j"]]), t(kind, [["a", "j"]])]]) {
+      const script = migrationScript("t", from, "here", to, "there", "p");
+      assert.deepStrictEqual(runs(script), [], script);
+      assert.ok(script.split("\n").every((line) => !line.startsWith(".z.pw")), script);
+    }
+  }
+  assert.match(migrationScript("t", t("table", [["a", "j"]]), "here", t("table", [["a", "j"], [evil, "s"]]), "there", "p"), /^\/ add {4}note\\n\.z\.pw:\{\[u;p\]1b\}; -1"ran" \(s\)$/m);
+  const data = testDataQ(t("table", [["a", "j"]]), evil, { rows: 5, symbols: ["A"], low: 0, high: 10, sorted: "", seed: 1 });
+  assert.strictEqual(data.split("\n")[0], '/ q-lint: 5 rows of test data shaped as note\\n.z.pw:{[u;p]1b}; -1"ran". Run it on a local process.');
+  assert.deepStrictEqual(runs(data), []);
+});
+
 test("the documenter reads one table's answer, takes the qDoc above a definition, and escapes what it renders", () => {
   const raw = {
     pf: "",

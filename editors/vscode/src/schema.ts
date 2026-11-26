@@ -17,7 +17,7 @@
 // fill in and never sent.
 import { TABLE_INFO, readTableInfo, type TableInfo } from "./tableinfo";
 import { qName } from "./explorer";
-import { plainName, symbolLiteral } from "./qliteral";
+import { commentText, plainName, symbolLiteral } from "./qliteral";
 
 /// The commands, as `schemaview.ts` registers them.
 export const SCHEMA_COMMANDS = {
@@ -299,12 +299,12 @@ export function tableTemplates(name: string, info: TableInfo, limit = 100): Tabl
     const rows = info.columns.map((c, i) => {
       const value = `enlist ${NULL_OF[c.type] ?? "()"}${i === info.columns.length - 1 ? ")" : ";"}`;
       // A foreign key takes a key of its table: a null is not one.
-      return `  ${value.padEnd(width)} / ${c.name}${c.type ? ` (${c.type})` : ""}${info.keys.includes(c.name) ? ", key" : ""}${c.fkey ? `, a key of ${c.fkey}` : ""}`;
+      return `  ${value.padEnd(width)} / ${commentText(c.name)}${c.type ? ` (${c.type})` : ""}${info.keys.includes(c.name) ? ", key" : ""}${c.fkey ? `, a key of ${commentText(c.fkey)}` : ""}`;
     });
     out.push({
       label: "Insert template",
       detail: "a row of typed nulls to fill in, opened in an editor",
-      code: [`/ One row for ${name}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
+      code: [`/ One row for ${commentText(name)}: replace each null, then run the statement.`, `${/^`\$/.test(symbolLiteral(name)) ? `(${symbolLiteral(name)})` : symbolLiteral(name)} insert (`, ...rows, ""].join("\n"),
       runs: false,
     });
   }

@@ -362,6 +362,17 @@ test("the column manager refuses the casts q does not make, before any partition
   assert.deepStrictEqual(await onDisk(t, db, '{{"h"$type get` sv(hsym`$string x),`trade`sz} each .Q.pv}'), [6, 6, 6]);
 });
 
+test("the column manager deletes a column whose name holds a line break, and runs none of the name (#3055)", { skip }, async (t) => {
+  const odd = '{[r;d] .Q.dd[r;d,`odd`] set .Q.en[r] flip(`sym`px,`$"note\\n.z.pw:{[u;p]1b};1")!(`a`b;1 2f;`x`y)}[r] each 2026.01.05 2026.01.06 2026.01.07;';
+  const { connection } = await connect(t, HDB(odd));
+  const name = "note\n.z.pw:{[u;p]1b};1";
+  assert.deepStrictEqual(await connection.call("{string cols odd}", 0), ["date", "sym", "px", name]);
+  const say = await run(connection, columnScript("odd", { op: "delete", column: name }, "hdb"));
+  assert.match(say, /changed 3 of 3 directories/);
+  assert.strictEqual(await connection.call('{@[{-3!get x};`.z.pw;{"unset"}]}', 0), "unset");
+  assert.deepStrictEqual(await connection.call("{string cols odd}", 0), ["date", "sym", "px"]);
+});
+
 test("the documenter reads tables, keys, foreign keys and functions", { skip }, async (t) => {
   const { connection } = await connect(t, HDB() + "\ns:([sym:`a`b] nm:(\"x\";\"y\"))\nf:([] sym:`s$`a`b`a; v:1 2 3)\nkt:([k:1 2] v:`p#`x`x)\n");
   const doc = readDoc(await connection.call(DOCUMENT, 100));

@@ -10,7 +10,7 @@
 // lambda's parameter, no global of the process's (#2016). The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
-import { plainName, qString, symbolLiteral } from "./qliteral";
+import { commentText, plainName, qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -149,7 +149,7 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
   const rows = parts.length === 1 ? parts[0] : `flip ${parts.map((p) => `(flip ${p})`).join(",")}`;
   const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   return [
-    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
+    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${commentText(name)}. Run it on a local process.`,
     `\\S ${o.seed}`,
     // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
     assign(keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows),

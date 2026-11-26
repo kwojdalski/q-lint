@@ -35,7 +35,7 @@
 
 import { castProblem } from "./migrate";
 import { PARTITION_DIRS } from "./partdir";
-import { RESERVED, symbolLiteral } from "./qliteral";
+import { RESERVED, commentText, symbolLiteral } from "./qliteral";
 
 export type ColumnOp =
   | { op: "add"; column: string; value: string }
@@ -217,7 +217,8 @@ export function columnScript(table: string, op: ColumnOp, process: string): stri
 export function columnScriptOf(table: string, ops: ColumnOp[], process: string, what = `${ops.map(opText).join("; ")} in ${table} on ${process}`): string {
   const runs = ops.map((op, i) => `.qlint.cm.result,:update step:${i + 1} from .qlint.cm.run[${sym(table)};${call(op)}]`);
   return [
-    `/ q-lint: HDB column manager - ${what}.`,
+    // A name is the database's, and can hold a line break (#3055).
+    `/ q-lint: HDB column manager - ${commentText(what)}.`,
     "/ It changes every partition of the table on disk (or the splayed table under",
     "/ the root) and then loads the database again. Setting an attribute or casting",
     "/ reads and writes the whole column in each. Review it: it runs only when",
