@@ -900,6 +900,31 @@ test("the test data generator's q makes the rows asked for, and its CSV loads ba
   assert.strictEqual(loaded[3], true);
 });
 
+// A nested column - a book's sizes, prices, tags - was `n#enlist()`: empty
+// generic lists, typed as mixed where the table's own meta says J, F, S.
+test("the test data generator's q makes a nested column of the table's own type, and its CSV the values a blank apart (#3051)", { skip }, async (t) => {
+  const { connection, dir } = await connect(t, "book:([] sym:`a`b; sizes:(1 2;3 4 5); px:(1 2f;3 4 5f); tags:(`x`y;enlist`z); note:(\"ab\";\"c\"))\n");
+  const info = readTableInfo(await connection.call(TABLE_INFO, "book", 100));
+  assert.deepStrictEqual(info.columns.map((c) => c.type).join(""), "sJFSC");
+  const options = { rows: 12, symbols: ["A", "B"], low: 0, high: 100, seed: 42 };
+  const ran = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(info, "gen", options))));
+  assert.ok(ran.ok, ran.error);
+  assert.strictEqual(await connection.call("{exec t from meta gen}", 0), "sJFSC");
+  assert.strictEqual(await connection.call("{(all 0<count each gen`sizes)&(all 7h=type each gen`sizes)&(all 9h=type each gen`px)&all 11h=type each gen`tags}", 0), true);
+  // Rows of the table's own shape: they go into it.
+  assert.strictEqual(await connection.call('{`book insert gen; "f"$count book}', 0), 14);
+  // Every nested type meta names is read back as itself.
+  const types = "BGXHIJEFSPMDZNUVT";
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const all = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: types.length, columns: [...types].map((type, i) => col(`c${i}`, type)) };
+  const every = readRun(await connection.call(RUN_SCRIPT, statements(testDataQ(all, "every", { ...options, sorted: "c5" }))));
+  assert.ok(every.ok, every.error);
+  assert.strictEqual(await connection.call("{exec t from meta every}", 0), types);
+  fs.writeFileSync(path.join(dir, "gen.csv"), testDataCsv(info, options));
+  const loaded = await connection.call(`{c:("${loadTypes(info)}";enlist",")0:\`:gen.csv; (count c;all 0<count each "J"$" "vs/:c\`sizes;all not null raze "J"$" "vs/:c\`sizes;all raze(\`$" "vs/:c\`tags)in\`A\`B)}`, 0);
+  assert.deepStrictEqual([Number(loaded[0]), ...loaded.slice(1)], [12, true, true, true]);
+});
+
 // The script set a global `n` to the row count and deleted it at its end:
 // a process's own `n` was gone once the script had run.
 test("the test data generator's q defines the table and no other name, however wide the table (#2016)", { skip }, async (t) => {

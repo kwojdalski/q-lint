@@ -580,6 +580,32 @@ test("test data: pools, ranges, a q generator per type, and CSV that sorts and r
   assert.notStrictEqual(random(1)(), random(2)());
 });
 
+// Only a string had a generator: a book's sizes, prices and tags were each
+// `n#enlist()`, a mixed column of empty lists, and empty fields in the CSV.
+test("test data for a nested column is a few of its atom's values a row, in the q and the CSV (#3051)", () => {
+  const o = { rows: 6, symbols: ["A", "B"], low: 0, high: 100, seed: 42 };
+  assert.strictEqual(generator("J", o), "{[n] 0+n?100}each 1+(til n)mod 5");
+  assert.strictEqual(generator("F", o), "{[n] 0+n?100f}each 1+(til n)mod 5");
+  assert.strictEqual(generator("S", o), "{[n] n?`A`B}each 1+(til n)mod 5");
+  assert.strictEqual(generator("H", o), '{[n] "h"$0+n?100}each 1+(til n)mod 5');
+  // A string is as it was, and a column of no one type still empty lists.
+  assert.strictEqual(generator("C", o), "{(1+x mod 10)?.Q.a}each til n");
+  assert.strictEqual(generator(" ", o), "n#enlist()");
+  const col = (name, type) => ({ name, type, fkey: "", attr: "" });
+  const info = { kind: "table", rows: 0, bytes: null, partitions: null, keys: [], ncols: 5, columns: [col("sym", "s"), col("sizes", "J"), col("px", "F"), col("tags", "S"), col("raw", " ")] };
+  assert.strictEqual(testDataQ(info, "book", o).split("\n")[2], "book:{[n] ([] sym:n?`A`B; sizes:{[n] 0+n?100}each 1+(til n)mod 5; px:{[n] 0+n?100f}each 1+(til n)mod 5; tags:{[n] n?`A`B}each 1+(til n)mod 5; raw:n#enlist())}[6]");
+  const rows = testDataCsv(info, o).trim().split("\n").slice(1).map((l) => l.split(","));
+  assert.strictEqual(rows.length, 6);
+  for (const [, sizes, px, tags, raw] of rows) {
+    assert.match(sizes, /^\d+( \d+){0,4}$/);
+    assert.match(px, /^\d+(\.\d+)?( \d+(\.\d+)?){0,4}$/);
+    assert.match(tags, /^[AB]( [AB]){0,4}$/);
+    assert.strictEqual(raw ?? "", "");
+  }
+  assert.ok(rows.some((r) => r[1].includes(" ")), "a row of more than one value");
+  assert.strictEqual(loadTypes(info), "S****");
+});
+
 test("test data: a short's or an int's range is cut to the finite values it holds, in the q and the CSV (#1499)", () => {
   const o = { rows: 200, symbols: ["A"], low: 0, high: 5e9, seed: 7 };
   assert.strictEqual(generator("h", o), '"h"$0+n?32767');
