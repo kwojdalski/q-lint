@@ -353,6 +353,11 @@ test("the HTML export is one escaped table, the cells a rule matches styled as t
   assert.strictEqual(exportResult("html", PAYLOAD, -1).rows, 3);
 });
 
+test("a query with 200k backtick runs still gets a fence: the runs are not spread into one call (#2663)", () => {
+  const code = `s in ${"`a".repeat(200000)} and "\`\`\`\`"`;
+  assert.strictEqual(report.fenceFor(code), "`````");
+});
+
 test("a result sent to a notebook or a report is its query in a fence it cannot close, its rows as a table, and its chart (#1021)", () => {
   assert.strictEqual(report.fenceFor("select from t"), "```");
   assert.strictEqual(report.fenceFor("a:\"```\" , \"````\""), "`````");
