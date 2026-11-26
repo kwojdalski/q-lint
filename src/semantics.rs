@@ -4138,34 +4138,31 @@ fn held(code: &str, raw: &str) -> Option<Held> {
 /// statement, where a column of the same name wins: q 5
 /// `{t:([]m:1 2 3); m:5; select from t where m=m -1}[]` runs.
 fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usize) -> bool {
-    let Some(s) = scope_at(scopes, at) else {
-        return false;
-    };
-    let scope = &scopes[s];
-    if at < scope.body || scope.params.contains(name) || !scope.locals.contains(name) {
-        return false;
-    }
-    let rel = at - scope.body;
-    let direct = scope.direct.as_bytes();
-    // Depth-zero statement starts, so the read's own statement is known.
-    let mut depth = 0i32;
-    let mut statement = 0;
-    for (i, &b) in direct[..rel].iter().enumerate() {
-        match b {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b';' if depth == 0 => statement = i + 1,
-            _ => {}
-        }
-    }
-    if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct[statement..rel]) {
-        return false;
+    scope_at(scopes, at).is_some_and(|s| {
+        local_writes(&scopes[s], code, comments, name)
+            .is_some_and(|writes| local_read(&scopes[s], &writes, at))
+    })
+}
+
+/// The half of `local_atom` that is the same for every read of `name` in
+/// `scope`: where in `code` each atom it is bound to sits, and whether that
+/// write is outside every bracket. `None` when a write is of anything else.
+/// QT022 asks it once for a name, not at each read, and has to tell an
+/// integer, which q applies as a handle, from the rest.
+fn local_writes(
+    scope: &Scope,
+    code: &str,
+    comments: &str,
+    name: &str,
+) -> Option<Vec<(usize, usize, bool)>> {
+    if scope.params.contains(name) || !scope.locals.contains(name) {
+        return None;
     }
     let view = local_view(&scope.direct, true);
     if multi_assignments(&view).any(|(_, n)| n == name) {
-        return false;
+        return None;
     }
-    let mut dominated = false;
+    let mut writes = vec![];
     for w in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(&view)
     {
@@ -4174,11 +4171,7 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
             continue;
         }
         // `name:` and nothing else: not `name::`, `name+:` or `name[i]:`.
-        let Some(plain) =
-            re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:([^:]|$)").captures(&view[whole.start()..])
-        else {
-            return false;
-        };
+        let plain = re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:([^:]|$)").captures(&view[whole.start()..])?;
         let start = whole.start() + plain.get(1).unwrap().start();
         let bytes = view.as_bytes();
         let (mut end, mut depth) = (start, 0i32);
@@ -4198,7 +4191,7 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
         }
         let (a, b) = (scope.body + start, scope.body + end);
         if held(&code[a..b], &comments[a..b]) != Some(Held::Atom) {
-            return false;
+            return None;
         }
         let outside = view.as_bytes()[..whole.start()]
             .iter()
@@ -4208,9 +4201,32 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
                 _ => d,
             })
             == 0;
-        dominated |= outside && end <= rel;
+        writes.push((a, b, outside));
     }
-    dominated
+    Some(writes)
+}
+
+/// The half that depends on the read at `at`: outside a qSQL statement, and
+/// after one of `writes` that has certainly run.
+fn local_read(scope: &Scope, writes: &[(usize, usize, bool)], at: usize) -> bool {
+    if at < scope.body {
+        return false;
+    }
+    let rel = at - scope.body;
+    let direct = scope.direct.as_bytes();
+    // Depth-zero statement starts, so the read's own statement is known.
+    let mut depth = 0i32;
+    let mut statement = 0;
+    for (i, &b) in direct[..rel].iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => statement = i + 1,
+            _ => {}
+        }
+    }
+    !re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct[statement..rel])
+        && writes.iter().any(|&(_, b, outside)| outside && b <= at)
 }
 
 /// The rules that need to know what a name holds: indexing an atom, two
@@ -4452,6 +4468,7 @@ fn named_values(
     // Names bound to an integer atom, which q applies as a file handle rather
     // than indexing: see QT022 below.
     let mut handles: HashSet<&str> = HashSet::new();
+    let integer = re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$");
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
     // Nor is a member of a namespace or dictionary written as a whole:
@@ -4514,7 +4531,7 @@ fn named_values(
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later. Not a short: q 5
             // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
-            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(text) {
+            if integer.is_match(text) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
@@ -4647,6 +4664,8 @@ fn named_values(
     // Over `comments`, where a string keeps its quotes: `k "hi"` and
     // `k@"hi"` index an atom with a string (q 5: 'type) (#472). The name
     // itself must be code, not inside a string.
+    type Written<'a> = HashMap<(usize, &'a str), Option<Vec<(usize, usize, bool)>>>;
+    let mut written: Written = HashMap::new();
     let mut at = 0;
     while let Some(m) = indexed.captures_at(comments, at) {
         let name = m.get(1).unwrap();
@@ -4657,27 +4676,60 @@ fn named_values(
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
-            (INFIX.contains(&next.as_str()) && next.as_str() != "each")
+            (INFIX.contains(&next.as_str()) && !matches!(next.as_str(), "each" | "peach"))
                 || matches!(next.as_str(), "by" | "from" | "where")
         }) {
             continue;
         }
-        if !boundary(code, name.start())
-            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
-        {
+        if !boundary(code, name.start()) {
             continue;
         }
+        // A local bound to an atom earlier in its lambda is indexed the
+        // same way, where most q code lives: KDB-X `{a:2.5; a 0}[]` and
+        // `{d:2024.01.01; d[0]}[]` are 'type (#2892). `local_writes` and
+        // `local_read` say when the text is sure, and which atoms it may
+        // hold; the writes are read once for a name, or a long body of
+        // calls to a local was quadratic.
+        let local = match visible(name.as_str(), name.start()) {
+            Some(Held::Atom) => None,
+            Some(_) => continue,
+            None => {
+                let Some(s) = scope_at(scopes, name.start()) else {
+                    continue;
+                };
+                let writes = written
+                    .entry((s, name.as_str()))
+                    .or_insert_with(|| local_writes(&scopes[s], code, comments, name.as_str()));
+                match writes {
+                    Some(writes) if local_read(&scopes[s], writes, name.start()) => Some(&*writes),
+                    _ => continue,
+                }
+            }
+        };
+        let handle = match local {
+            Some(atoms) => atoms.iter().any(|&(a, b, _)| {
+                let text = ungrouped(&code[a..b], &comments[a..b]).map_or("", |v| v.1);
+                integer.is_match(text)
+            }),
+            None => handles.contains(key(name.as_str(), name.start()).as_str()),
+        };
         // An integer is applied as a file handle. Given a string it may well
         // write - `out:1; out["hi\n"]` prints - but given a number or nothing
         // it cannot: 'type on an open handle, and on one that is not q 5
         // tries the write and fails - `a:5; a[0]` is 'Cannot write to handle
         // 5. OS reports: Bad file descriptor (#507). A name or anything else might be a string.
-        if handles.contains(key(name.as_str(), name.start()).as_str()) {
+        if handle {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
             let after = &raw[crate::past_blanks(code, name.end())..];
             let after = after
                 .strip_prefix(['@', '.'])
                 .map_or(after, |a| a.trim_start_matches([' ', '\t']));
+            // And so does an iterator, an item at a time: KDB-X `a:5;
+            // a each 0`, `a peach 0` and `a'[0]` are 'Cannot write to handle
+            // 5 as well (#2893).
+            let after = re!(r"^(?:p?each\b|')[ \t]*")
+                .find(after)
+                .map_or(after, |m| &after[m.end()..]);
             let argument = match after.strip_prefix('[') {
                 Some(inside) => inside.trim_start_matches([' ', '\t']),
                 None => after,

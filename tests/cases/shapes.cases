@@ -1386,6 +1386,34 @@ e:a each 0 1
 f:a`b
 g:a(0)
 
+=== QT022 profile: general | a local bound to an atom earlier in its lambda is indexed the same way (#2892; q 5: each call is 'type, and the last 'Cannot write to handle 5)
+f:{a:2.5; a 0}
+g:{d:2024.01.01; d[0]}
+h:{c:"c"; c@0}
+i:{d:2024.01.01; d each 0 1}
+j:{a:5; a 0}
+
+=== clean profile: general | but not a symbol, which names a function, a local set under a condition or bound again, a parameter, or a handle given a string (#2892; q 5: 'x, (), 1, and the rest depend on the call)
+f:{a:`x; a 0}
+g:{[c] if[c;a:2.5]; a 0}
+h:{a:2.5; a:1 2; a 0}
+i:{[a] a:2.5; a 0}
+j:{a:5; a "hi"}
+k:{a:2.5; a+0}
+
+=== QT022 profile: general | an integer applied an item at a time is still a handle given a number (#2893; q 5: each 'Cannot write to handle 5, and b peach 'type)
+a:5
+r:a each 0
+r2:a peach 0 1
+r3:a'[0]
+b:2.5
+r4:b peach 0 1
+
+=== clean profile: general | and one given names or strings an item at a time may write (#2893)
+a:5
+r:a each x
+r2:a each ("hi";"there")
+
 === clean profile: general | a protected call catches the error, and a vector indexes
 a:2.5
 b:@[a;0;{x}]
