@@ -28,3 +28,17 @@ test("a query's snapshot is its printed result, whatever \\c is", { skip }, asyn
   assert.deepStrictEqual([failed.ok, failed.error], [false, "type"]);
   assert.deepStrictEqual((await c.evaluate("system \"c\"")).value.map(Number), [12, 20]);
 });
+
+// Printed at 2000 by 2000, a longer or wider result is cut, and a change
+// past the cut left the snapshot passing (#2454).
+test("a result longer or wider than a snapshot holds is said to be cut; one that fits is not (#2454)", { skip }, async (t) => {
+  const { snapshotCut } = require("../out/snapshot.js");
+  const { connection: c } = await connect(t, "");
+  const cut = async (query) => snapshotCut(readAnswer(await c.call(SNAPSHOT_RUN, [query])).text);
+  assert.match(await cut("([] a:til 3000)"), /longer than the 2000 lines/);
+  assert.match(await cut("3000#\"x\""), /wider than the 2000 characters/);
+  assert.match(await cut("([] s:enlist 2500#\"x\")"), /wider/);
+  for (const fits of ["([] a:til 1998)", "1997#\"x\"", "til 300", "([] a:1 2)"]) {
+    assert.strictEqual(await cut(fits), undefined, fits);
+  }
+});
