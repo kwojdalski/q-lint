@@ -1717,12 +1717,29 @@
 
   // --- chart
 
+  /// The columns a chart of `kind` can draw: a box each.
+  function chartCan(grid, kind) {
+    return C.chartable(grid, kind === "linked" ? "line" : kind);
+  }
+
+  /// What a picked colour and a preset know column `c` by, of those the
+  /// chart `can` draw: its name, and from the second of one name on its
+  /// place among them too (`x`, `x#2`). By the name alone two series of one
+  /// name were one (#3136), and the first column of a name was meant, even
+  /// one the chart cannot draw - a key of the value's name (#3135).
+  function seriesKey(grid, can, c) {
+    const name = grid.columns[c].name;
+    const nth = can.filter(function (x) { return x < c && grid.columns[x].name === name; }).length;
+    return nth === 0 ? name : name + "#" + (nth + 1);
+  }
+
   /// The colours the chart draws its datasets in: the theme's, in turn, or
   /// the one chosen for a series' column (#1019).
   function seriesColours(grid, datasets, theme) {
+    const can = chartCan(grid, state.kind);
     return datasets.map(function (d, i) {
-      const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
-      return (feature("chartPresets") && name && ownValue(state.colours, name)) || theme.colours[i % theme.colours.length];
+      const key = d.column !== undefined && grid.columns[d.column] ? seriesKey(grid, can, d.column) : null;
+      return (feature("chartPresets") && key && ownValue(state.colours, key)) || theme.colours[i % theme.colours.length];
     });
   }
 
@@ -1741,12 +1758,14 @@
   }
 
   /// The chart drawn, as a preset a saved query keeps (#1019): its kind,
-  /// series, right axis, bins, colours and map columns, by name.
-  function currentPreset(picked) {
+  /// series, right axis, bins, colours and map columns, by name - a
+  /// series by its seriesKey() among the columns it `can` draw.
+  function currentPreset(can, picked) {
     const grid = result.grid;
     const name = function (c) { return c >= 0 && grid.columns[c] ? grid.columns[c].name : undefined; };
+    const key = function (c) { return seriesKey(grid, can, c); };
     // A depth chart and a map find their own columns.
-    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
+    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(key);
     const colours = {};
     series.forEach(function (n) {
       if (ownValue(state.colours, n)) {
@@ -1755,7 +1774,7 @@
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
     if (picked.indexOf(state.y2) >= 0) {
-      out.y2 = name(state.y2);
+      out.y2 = key(state.y2);
     }
     if (state.kind === "map") {
       if (name(state.mapSize)) {
@@ -1772,13 +1791,19 @@
   /// series by name.
   function applyPreset(grid, preset) {
     const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
+    // A series is one of the columns the kind can draw (#3135).
+    const can = chartCan(grid, preset.kind);
+    const drawn = function (k) {
+      const c = can.find(function (x) { return seriesKey(grid, can, x) === k; });
+      return c === undefined ? -1 : c;
+    };
     state.view = "chart";
     setKind(preset.kind);
     // No series - a depth chart and a map keep none - is the kind's own
     // choice of columns, not every box unticked (#3134).
-    const series = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
+    const series = (preset.series || []).map(drawn).filter(function (i) { return i >= 0; });
     state.columns = series.length > 0 ? series : null;
-    state.y2 = preset.y2 ? at(preset.y2) : -1;
+    state.y2 = preset.y2 ? drawn(preset.y2) : -1;
     if (preset.bins) {
       state.bins = preset.bins;
     }
@@ -1844,7 +1869,7 @@
     controls.append(kind);
     // A depth chart and a map find their columns by name.
     const own = state.kind === "depth" || state.kind === "map";
-    const can = C.chartable(grid, state.kind === "linked" ? "line" : state.kind);
+    const can = chartCan(grid, state.kind);
     const chosen = chartColumns(can, state.columns);
     const picked = chosen.columns;
     // A candle chart's columns are its open, high, low and close.
@@ -1863,12 +1888,13 @@
       if (feature("chartPresets") && box.checked) {
         // A series' own colour, kept with a chart preset.
         const name = grid.columns[c].name;
+        const key = seriesKey(grid, can, c);
         const colour = el("input", "swatch");
         colour.type = "color";
         colour.title = "The colour of " + name;
-        colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.value = ownValue(state.colours, key) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
-          setOwn(state.colours, name, colour.value);
+          setOwn(state.colours, key, colour.value);
           save();
           drawChart();
         });
@@ -1945,7 +1971,7 @@
         ? "Keep this chart with the saved query " + result.saved + ", to draw again when it runs"
         : "Save this result's query to Saved Queries with this chart, to draw again when it runs";
       keep.addEventListener("click", function () {
-        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(picked) });
+        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(can, picked) });
       });
       controls.append(keep);
     }
@@ -1992,7 +2018,7 @@
         summary.y2 = grid.columns[y2].name;
       }
     }
-    const preset = feature("chartPresets") ? currentPreset(picked) : undefined;
+    const preset = feature("chartPresets") ? currentPreset(can, picked) : undefined;
     drawnChart = null;
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";

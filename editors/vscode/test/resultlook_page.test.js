@@ -291,6 +291,42 @@ test("a preset kept from a depth chart or a map leaves the series ticked when th
   assert.ok(page.body.all((e) => e.tagName === "INPUT" && e.type === "checkbox").every((b) => b.checked));
 });
 
+test("two series of one name are told apart: a colour is one's own, and a preset draws the one it kept (#3135, #3136)", () => {
+  FakeChart.made = [];
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const twice = [["t", 7, ["1", "2"]], ["x", 9, ["1", "2"]], ["x", 9, ["3", "4"]]];
+  const swatches = () => page.body.all((e) => e.className === "swatch");
+  const boxes = () => page.body.all((e) => e.tagName === "INPUT" && e.type === "checkbox");
+  const drawn = () => Array.from(FakeChart.made.filter((c) => !c.destroyed).at(-1).config.data.datasets);
+  const lines = () => drawn().map((d) => d.borderColor);
+  page.send(result("s.1", twice, { view: "chart", saved: "q1" }));
+  const first = swatches()[0].value;
+  swatches()[1].value = "#ff0000";
+  swatches()[1].fire("change");
+  assert.deepStrictEqual(swatches().map((s) => s.value), [first, "#ff0000"]);
+  assert.deepStrictEqual(lines(), [first, "#ff0000"]);
+  page.button("Save with Query").fire("click");
+  assert.deepStrictEqual(page.posted.at(-1).preset, { kind: "line", series: ["x", "x#2"], bins: 20, colours: { "x#2": "#ff0000" } });
+  // The second alone, kept and drawn again: the second, in its colour.
+  boxes()[0].checked = false;
+  boxes()[0].fire("change");
+  const preset = page.rendered().preset;
+  assert.deepStrictEqual([page.state.columns, preset.series], [[2], ["x#2"]]);
+  const again = loadPage(undefined, { Chart: FakeChart });
+  again.send(result("s.9", twice, { look: { chart: preset }, saved: "q1" }));
+  assert.deepStrictEqual(again.state.columns, [2]);
+  assert.deepStrictEqual(drawn().map((d) => [d.borderColor, Array.from(d.data, (p) => (p && typeof p === "object" ? p.y : p))]), [["#ff0000", [3, 4]]]);
+  // A keyed table whose key and value share a name: the value is the one
+  // the chart draws, so the one the preset names.
+  const keyed = result("s.1", [["size", 7, ["100", "200"]], ["size", 7, ["250", "780"]]], { view: "chart", saved: "q2" });
+  keyed.grid.columns[0].key = true;
+  const own = loadPage(undefined, { Chart: FakeChart });
+  own.send(keyed);
+  assert.deepStrictEqual(own.rendered().preset.series, ["size"]);
+  own.send({ ...keyed, id: "s.2", look: { chart: own.rendered().preset } });
+  assert.deepStrictEqual([own.state.columns, own.rendered().chart.note, own.rendered().chart.datasets.map((d) => d.label)], [[1], undefined, ["size"]]);
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });
