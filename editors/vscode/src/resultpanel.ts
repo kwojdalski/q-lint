@@ -321,6 +321,9 @@ interface PageMessage {
   layout?: unknown;
   /// "chartPreset": the chart drawn.
   preset?: unknown;
+  /// "copy", "export", "exportAs", "send", "drill": the run of the result
+  /// the page drew, whose rows `rows` or `row` index (#2504).
+  run?: number;
 }
 
 /// What a webview's context menu passes its command: the cell's
@@ -343,6 +346,20 @@ export function staleMenu(run: unknown, now: number): boolean {
     return false;
   }
   void window.showInformationMessage("q-lint: the result changed while its menu was open. Right-click it again.");
+  return true;
+}
+
+/// The page's messages that name rows of the result it drew.
+const ROW_MESSAGES = new Set(["copy", "export", "exportAs", "send", "drill"]);
+
+/// Whether rows the page picked are of a run other than the one on show,
+/// `now`: a watched query ran again under the same result id before the
+/// message reached here, and its rows index the old run's (#2504). Said so.
+export function staleRows(run: unknown, now: number): boolean {
+  if (typeof run !== "number" || run === now) {
+    return false;
+  }
+  void window.showInformationMessage("q-lint: the result changed (its query ran again) before that reached it. Try again on the rows shown now.");
   return true;
 }
 
@@ -841,6 +858,8 @@ export class QueryModes {
         void this.toggleHeatmap();
       }
     } else if (!current) {
+      return;
+    } else if (ROW_MESSAGES.has(message.type ?? "") && this.shown !== undefined && staleRows(message.run, this.shown.run)) {
       return;
     } else if (message.type === "look") {
       // A layout the page changed: a column moved or resized (#1015).

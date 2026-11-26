@@ -462,6 +462,34 @@ test("a watched query's next run replaces its result in place: the same id, no n
   assert.strictEqual(fake.pages.length, 1);
 });
 
+test("Copy, Export, Send or drill from a watched query's grid refuse rows of the run before, under the same id (#2504)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const info = [];
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  modes.show({ ...result([10, 20, 30]), code: "w" }, live());
+  const page = fake.pages[0];
+  const first = page.posted.at(-1);
+  modes.show({ ...result([99, 10, 20, 30]), code: "w" }, live(), true);
+  const next = page.posted.at(-1);
+  assert.strictEqual(next.id, first.id);
+  assert.notStrictEqual(next.run, first.run);
+  // The row the page showed 30 at, sent for the run it drew.
+  page.receive({ type: "copy", id: first.id, run: first.run, rows: [2] });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, undefined);
+  assert.match(info.at(-1), /the result changed/);
+  page.receive({ type: "export", id: first.id, run: first.run, rows: [2] });
+  page.receive({ type: "send", id: first.id, run: first.run, rows: [2] });
+  page.receive({ type: "drill", id: first.id, run: first.run, column: 0, row: 2 });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(info.length, 4);
+  // The run on show is acted on.
+  page.receive({ type: "copy", id: next.id, run: next.run, rows: [3] });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(fake.clipboard.text, "c\n30\n");
+});
+
 // --- wave two: export formats (#921), paging (#922), pivot (#925), charts
 // (#926) and drill-down (#927)
 
