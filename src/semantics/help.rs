@@ -244,9 +244,14 @@ pub fn call_at(code: &str, comments: &str, raw: &str, offset: usize) -> Option<C
                 {
                     start -= 1;
                 }
-                return (re!(&format!("^{NAME}$")).is_match(&code[start..end])
-                    && boundary(code, start))
-                .then_some(Call {
+                // The name is as much of that as starts one: the `_` of
+                // `2_f[`, `n _f[` and `-1_f[` is Drop, and `f` is called
+                // (KDB-X 5: `2_f[til 5;0]` is `2 3 4` for an `f` that gives
+                // back its first argument, #2951).
+                let start = (start..end).find(|&from| {
+                    re!(&format!("^{NAME}$")).is_match(&code[from..end]) && boundary(code, from)
+                })?;
+                return Some(Call {
                     at: start,
                     len: end - start,
                     argument,

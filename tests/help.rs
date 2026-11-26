@@ -541,6 +541,25 @@ fn nothing_is_called_outside_brackets_or_by_what_is_not_a_name() {
     assert_eq!(call(""), None);
 }
 
+// #2951: the scan back from the bracket took a `_` for part of the name,
+// so a call whose result is dropped from was `2_f` or `_f`, no name at all.
+// KDB-X 5, for `d:{[aa;bb] aa}` and `n:1`: `2_d[til 5;0]` is `2 3 4`,
+// `n _d[til 5;0]` is `1 2 3 4` and `-1_d[til 5;0]` is `0 1 2 3`.
+#[test]
+fn a_call_after_drop_is_a_call_to_the_name_after_it() {
+    assert_eq!(call("r:2_f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:n _f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:-1_f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:(1;2)_f["), Some(("f", 0)));
+    assert_eq!(call("r:0x01_.ns.f[1;2;"), Some((".ns.f", 2)));
+    // After a name's own letters it is part of the name, and the segment
+    // of a dotted one may begin with it.
+    assert_eq!(call("r:n_f[1;"), Some(("n_f", 1)));
+    assert_eq!(call("r:.a._f[1;"), Some((".a._f", 1)));
+    // And a number written against a name still calls nothing.
+    assert_eq!(call("r:1f[1;"), None);
+}
+
 #[test]
 fn a_space_before_the_bracket_still_calls_the_name() {
     // q 5 reads `f [1;2;3]` as `f[1;2;3]`, after a tab too, at the top
@@ -1646,6 +1665,15 @@ fn signature_help_for_an_alias_is_the_function_it_names() {
 fn signature_help_reads_a_call_with_a_space_before_its_bracket() {
     let help = zz_help(plain(), "r:.zz.add [1;");
     assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
+}
+
+#[test]
+fn signature_help_reads_a_call_whose_result_is_dropped_from() {
+    // #2951.
+    let help = zz_help(plain(), "r:2_.zz.add[1;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
+    let help = zz_help(plain(), "r:n _.zz.add[1;2;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(2)));
 }
 
 #[test]
