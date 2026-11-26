@@ -2893,6 +2893,23 @@ fn a_block_comment_after_a_k_line_is_no_k() {
 }
 
 #[test]
+fn a_block_comment_inside_a_k_statement_is_no_k_and_does_not_end_it() {
+    // #3010. KDB-X 5 loads `k)gk:{[zz] zz+`, `/`, ` zz in a comment`, `\`,
+    // `  zz}` as one k lambda: the block comment folds into the statement
+    // the indented line continues. So the `zz` after it is the lambda's
+    // parameter, as the one before it is, and no use of the global.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "zz:1\nk)gk:{[zz] zz+\n/\n zz in a comment\n\\\n  zz}\nshow zz\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask("textDocument/references", &uri, text, "zz:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 6, 5, 7)]
+    );
+}
+
+#[test]
 fn a_file_loaded_under_two_contexts_is_renamed_in_both() {
     // #2043. KDB-X 5 runs this main.q and prints 1 1: b.q's one `ff:`
     // defines `.aa.ff` and `.bb.ff`. Renaming it renames both, so the

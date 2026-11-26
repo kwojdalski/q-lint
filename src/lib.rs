@@ -4603,18 +4603,37 @@ pub(crate) fn timed_prefix(line: &str) -> usize {
 /// nothing an indented line continues after it: q 5 hands `t)a`, `/ note`,
 /// `  b` to `.t.e` as one statement, and `t)a`, `/ note`, `c:1` as `t)a` and
 /// then q (#317). A bare `/` is no comment line but a block comment's
-/// opener, and ends the statement: q 5 hands `t)c`, `/`, `  zz`, `\`,
-/// `show 1` to `.t.e` as `c` alone and then prints 1 (#2042).
+/// opener, and the same holds of the block: q 5 hands `t)c`, `/`, `  zz`,
+/// `\`, `show 1` to `.t.e` as `c` alone and then prints 1 (#2042), and
+/// `t)e`, `/`, `  f`, `\`, `  g` as one statement, the block folded into it
+/// (#3010). For a bare `/` this says whether the statement goes on after
+/// the block it opens; the block's own lines are the caller's to skip.
 pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
-    let bare = |l: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == "/";
-    let comment = |l: &str| l.starts_with('/') && !bare(l);
-    line.starts_with([' ', '\t'])
-        || line.trim().is_empty()
-        || comment(line)
-            && rest
-                .lines()
-                .find(|l| !l.trim().is_empty() && !comment(l))
-                .is_some_and(|l| l.starts_with([' ', '\t']))
+    let bare = |l: &str, c: &str| l.trim_end_matches(['\r', '\n', ' ', '\t']) == c;
+    let comment = |l: &str| l.starts_with('/') && !bare(l, "/");
+    if line.starts_with([' ', '\t']) || line.trim().is_empty() {
+        return true;
+    }
+    // Comment lines, blank lines and whole block comments are read past, to
+    // the line that says: an unclosed block leaves none.
+    let mut depth = usize::from(bare(line, "/"));
+    if depth == 0 && !comment(line) {
+        return false;
+    }
+    for l in rest.lines() {
+        if depth > 0 {
+            if bare(l, "/") {
+                depth += 1;
+            } else if bare(l, "\\") {
+                depth -= 1;
+            }
+        } else if bare(l, "/") {
+            depth = 1;
+        } else if !l.trim().is_empty() && !comment(l) {
+            return l.starts_with([' ', '\t']);
+        }
+    }
+    false
 }
 /// The length of the run of language prefixes that `line` opens with, as
 /// many as are written and of any letter: q reads `q)k)\d .ns` as `\d .ns`
@@ -4798,7 +4817,10 @@ fn lex_line(
         }
         st.statement = !stripped.is_empty() && !line.starts_with(['\\', '/', ' ', '\t']);
     }
-    if st.foreign && !foreign_continues(line, rest) {
+    // Inside the block comment a foreign statement folds in, nothing is
+    // asked: the bare `/` that opened it already said the statement goes on
+    // after it (#3010).
+    if st.foreign && st.block == 0 && !foreign_continues(line, rest) {
         st.foreign = false;
     }
     let run = if st.string.is_none() {
@@ -4819,7 +4841,9 @@ fn lex_line(
         if run > 0 && (bytes[0] != b'q' || bytes[run - 2] != b'q' && !commanded) {
             st.foreign = true;
         }
-        if st.foreign {
+        // A bare `/` in a foreign statement that goes on after it still
+        // opens a block comment, which is masked as one below.
+        if st.foreign && stripped != "/" {
             blank(comments);
             blank(code);
             record.foreign_offsets.push(offset);
@@ -4935,9 +4959,10 @@ fn lex_line(
 ///
 /// The lines before are unchanged because what any of them reads of a
 /// later line (`foreign_continues`) is whether it is blank, indented or a
-/// comment line: an edit after a line's first byte that leaves it neither
-/// blank nor a bare `/` changes none of those, and one that makes it a bare
-/// `/` opens a block, which ends the line in another state.
+/// comment line, or opens or closes a block comment: an edit after a line's
+/// first byte that leaves it neither blank nor a bare `/` changes none of
+/// the first three, and one that makes or unmakes a bare `/` or `\` opens,
+/// closes or keeps open a block, which ends the line in another state.
 fn edited_line_views(
     source: &str,
     states: &[(usize, LexState)],

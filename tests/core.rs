@@ -225,6 +225,38 @@ fn the_last_prefix_of_a_run_names_the_language() {
     assert_eq!((&*findings[0].code, findings[0].line), ("QE001", 2));
 }
 
+#[test]
+fn a_block_comment_folds_into_the_foreign_statement_an_indented_line_continues() {
+    // #3010. KDB-X 5 hands `t)e`, `/`, `  f`, `\`, `  g` to `.t.e` as one
+    // statement, "e\n/\n/  f\n/\n  g", and loads `k)f:{[a;b] a+`, `/`,
+    // `  old: a*b`, `\`, `  b}` as one k lambda: the block comment folds
+    // into the statement when an indented line follows its `\`. The bare
+    // `/` ended the statement, so the `  b}` was read as q.
+    for prefix in ["p)", "k)", "q)k)"] {
+        for text in [
+            format!("{prefix}f:{{[a;b] a+\n/\n  old: a*b\n\\\n  b}}\nshow f[1;2]\n"),
+            // Past a blank line, a comment line, a second block and a
+            // nested one, as q 5 reads each.
+            format!("{prefix}e(\n/\n f\n\\\n\n/ note\n/\n/\n\\\n h\n\\\n  g)}}\n"),
+        ] {
+            let findings = lint(&text, "t.q", Profile::Style);
+            assert!(findings.is_empty(), "{text:?}: {findings:?}");
+        }
+        // The q after it is read, and the block is still a block: its `\`
+        // ends no script.
+        let text = format!("{prefix}e\n/\n  f\n\\\n  g\nx:(1;2\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(
+            findings.iter().any(|f| f.code == "QE001" && f.line == 6),
+            "{prefix}: {findings:?}"
+        );
+        // A block nothing closes leaves no line to continue the statement.
+        let text = format!("{prefix}e\n/\n  f)\n");
+        let findings = lint(&text, "t.q", Profile::Style);
+        assert!(findings.iter().all(|f| f.code == "QE003"), "{findings:?}");
+    }
+}
+
 /// The cases here were settled by running each one through a real q 4.x and
 /// asking it what the lambda's parameters actually are (`value value`), not by
 /// reading the reference manual. q accepts more in a parameter list than one
