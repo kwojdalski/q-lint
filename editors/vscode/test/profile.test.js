@@ -310,10 +310,9 @@ test("on a TorQ gateway the profile refuses code Run Query sends to the servers,
   assert.strictEqual(panels.length, 0);
   // The gateway's own code is profiled there, as Run Query runs it there.
   await stub.commands.get(PROFILE_FUNCTIONS)(".gw", ".gw.getserverids[`rdb]");
-  assert.deepStrictEqual(q.sent.slice(before), [
-    [PROFILE, ".gw", [".gw.getserverids[`rdb]"]],
-    [PROFILE_CLEANUP, 0],
-  ]);
+  const sent = q.sent.slice(before);
+  assert.deepStrictEqual(sent.map((m) => [m[0], m[1]]), [[PROFILE_READ, ".gw"], [PROFILE, ".gw"], [PROFILE_CLEANUP, 0]]);
+  assert.deepStrictEqual(sent[1].at(-1), [".gw.getserverids[`rdb]"]);
 });
 
 test("on a guarded process the run is held until confirmed, even for a query that only reads", async (t) => {
