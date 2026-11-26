@@ -5140,6 +5140,12 @@ fn pattern_within(s: &str, nested: bool, depth: usize) -> bool {
         items(&s[2..close - 1], &|c| field(c)) && items(&s[close..s.len() - 1], &|c| field(c))
     } else if whole(s) {
         items(&s[1..s.len() - 1], &|c| is_pattern(c, true))
+    } else if s.starts_with('[') && matching(s, 0, b'[', b']') == Some(s.len()) {
+        // One pattern in brackets is that pattern, and none is one too: q 5
+        // `{[[a]] a} 5` is 5, `{[[(a;b)]] a+b} 1 2` is 3 and `{[[]] 1}[]` is
+        // 1. Two are no pattern: `{[[a;b]] a+b}` is 'nyi (#2789).
+        let inner = &s[1..s.len() - 1];
+        slots(inner).len() == 1 && is_pattern(inner, true)
     } else if let Some(at) = typed_at(s) {
         !iterated_type(s) && is_pattern(&s[..at], nested)
     } else if let Some(at) = first_outside(s, b'!') {
@@ -5396,6 +5402,11 @@ fn names_within(slot: &str, depth: usize) -> Vec<&str> {
     if whole {
         return items_names(slots(&trimmed[1..trimmed.len() - 1]), depth);
     }
+    // A pattern in brackets binds what it binds: q 5 `{[[a:`j]] a} 1` is 1
+    // (#2789).
+    if trimmed.starts_with('[') && matching(trimmed, 0, b'[', b']') == Some(trimmed.len()) {
+        return names_within(&trimmed[1..trimmed.len() - 1], depth + 1);
+    }
     // A dictionary pattern `k!p`: what each side binds, each side its own
     // pattern - `k!(a:neg;b)` binds k, a and b (q 5: `(k!(a:neg;b)):`x`y!1 2`
     // sets k to `x`y and a to -1).
@@ -5464,6 +5475,10 @@ fn underscore_binding(s: &str, depth: usize) -> Option<bool> {
         worst(&parts, &fields)
     } else if whole(s) {
         worst(&slots(&s[1..s.len() - 1]), &inner)
+    } else if s.starts_with('[') && matching(s, 0, b'[', b']') == Some(s.len()) {
+        // A pattern in brackets: q 5 `{[[_]] 1}[1]` is 'match and
+        // `{[[_a]] 1}` is '_ (#2789).
+        inner(&s[1..s.len() - 1])
     } else if let Some(at) = typed_at(s) {
         inner(&s[..at])
     } else if let Some(at) = first_outside(s, b'!') {
