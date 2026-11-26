@@ -27,7 +27,7 @@
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
 import { ORIGINAL } from "./instrument";
-import { contextSwitch, scriptCode, statementSpans } from "./statements";
+import { contextLeft, scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -132,12 +132,6 @@ export function definitions(source: string, path?: string): Definition[] {
   let ctx = "";
   for (const { text, start } of statementSpans(scriptCode(source))) {
     const lines = text.split("\n");
-    const opened = contextSwitch(text);
-    if (opened !== undefined) {
-      ctx = opened === "." ? "" : opened.slice(1);
-      switched = true;
-      continue;
-    }
     module ||= EXPORT.test(text);
     const found = definitionOf(lines, start, ctx);
     if (found !== undefined) {
@@ -145,6 +139,12 @@ export function definitions(source: string, path?: string): Definition[] {
       if (!switched && !found.name.startsWith(".")) {
         implicit.add(found);
       }
+    }
+    // After it: `a:1;system "d .ns"` switches for the lines below (#2916).
+    const opened = contextLeft(text);
+    if (opened !== undefined) {
+      ctx = opened === "." ? "" : opened.slice(1);
+      switched = true;
     }
   }
   const context = module && path !== undefined ? moduleContext(path) : undefined;
