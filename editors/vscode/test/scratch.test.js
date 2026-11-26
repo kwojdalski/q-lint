@@ -58,3 +58,35 @@ test("off, nothing is written; on, the process's file is made once, opened and b
   assert.strictEqual(fs.readFileSync(first.path, "utf8"), "select from trade\n");
   assert.strictEqual(q.sent.length, 0);
 });
+
+// The buffer is kept by label: a renamed process opened an empty one, and
+// the next process given the old label got the old one's queries (#2405).
+test("a renamed process keeps its buffer, and a deleted one's is put aside, not given to the next of its label (#2405)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-scratch-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { context, live } = await setUp(t, { register: registerScratchBuffers });
+  context.globalStorageUri = vscode.Uri.file(dir);
+  stub.commands.set(CONTROL_COMMANDS.chooseFileConnection, () => {});
+  vscode.workspace.openTextDocument = async () => ({});
+  vscode.window.showTextDocument = async () => ({});
+  const open = (label) => stub.commands.get(PROCESS_TOOL_COMMANDS.openScratch)(label);
+  const first = await open("rdb");
+  fs.appendFileSync(first.path, "select from trade\n");
+  const port = String(live.processes()[0].port);
+  stub.inputs = ["rdb-eu", "127.0.0.1", port, "", "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.editProcess")("rdb");
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["rdb-eu"]);
+  const renamed = await open("rdb-eu");
+  assert.strictEqual(fs.readFileSync(renamed.path, "utf8"), scratchHeader("rdb-eu") + "select from trade\n");
+  assert.strictEqual(fs.existsSync(first.path), false);
+  stub.picks = ["Delete"];
+  await stub.commands.get("q-lint.deleteProcess")("rdb-eu");
+  assert.strictEqual(fs.existsSync(renamed.path), false);
+  assert.strictEqual(fs.readdirSync(path.join(dir, "scratch", "deleted")).length, 1);
+  // Another process given the label starts empty.
+  stub.inputs = ["rdb-eu", "127.0.0.1", port, "", ""];
+  stub.picks = ["No"];
+  await stub.commands.get("q-lint.addProcess")();
+  assert.strictEqual(fs.readFileSync((await open("rdb-eu")).path, "utf8"), scratchHeader("rdb-eu"));
+});
