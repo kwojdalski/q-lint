@@ -4,6 +4,7 @@
 // asks before code that would change a guarded process, and Abort Current
 // Query stops waiting - and recorded in Query History as a query is.
 import { window, workspace, type Uri } from "vscode";
+import { fileServerTypes } from "./gateway";
 import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
@@ -44,6 +45,10 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
   if (!(await live.toFileBinding(uri))) {
     return undefined;
   }
+  // The server types its file names on a `/ @servertypes` line, which Run
+  // Query sends the same code to (#3063).
+  const file = uri === undefined ? undefined : (workspace.textDocuments ?? []).find((d) => d.uri.toString() === uri.toString());
+  const named = file === undefined ? undefined : fileServerTypes(file.getText());
   const configuration = workspace.getConfiguration("q-lint");
   // Toggle Unlimited Query holds here as for Run Query (#2362).
   const unlimited = live.isUnlimited();
@@ -57,7 +62,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
     ran = await live.runOnActive(code, (connection) => {
       sentTo = live.activeLabel() ?? sentTo;
       // Through a TorQ gateway's .gw.syncexec, as Run sends it (#2356).
-      const sent = live.gatewayed(inContext(cut, context));
+      const sent = live.gatewayed(inContext(cut, context), named);
       // Direct evaluation (#2470), or a gateway call (#2584): each
       // statement as a plain string. Unlimited as Run Query is (#2362).
       return connection.isDirect || sent.plain

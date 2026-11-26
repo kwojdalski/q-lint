@@ -2946,15 +2946,15 @@ export class Live {
   /// `cut`, statements for the active process, as they go to it from a
   /// feature that runs code as Run does - the REPL, a notebook cell, an
   /// agent: through `.gw.syncexec` on a TorQ gateway (#909), to the
-  /// process's server types. `plain` when that is a gateway call, which
-  /// defers its reply past any lambda of q-lint's, so it goes as plain
-  /// strings (#2584).
-  gatewayed(cut: string[]): { cut: string[]; plain: boolean } {
+  /// process's server types, or to `serverTypes`, those the code's file
+  /// names (#3063). `plain` when that is a gateway call, which defers its
+  /// reply past any lambda of q-lint's, so it goes as plain strings (#2584).
+  gatewayed(cut: string[], serverTypes?: string[]): { cut: string[]; plain: boolean } {
     const process = this.active;
     if (process === undefined || cut.length === 0) {
       return { cut, plain: false };
     }
-    const sent = this.throughGateway(cut.join("\n"), process);
+    const sent = this.throughGateway(cut.join("\n"), process, serverTypes);
     return { cut: statements(sent), plain: this.plainGatewayCall(process, sent) };
   }
 

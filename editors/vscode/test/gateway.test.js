@@ -463,6 +463,37 @@ test("the REPL, a notebook cell, its live values and the agent's query go throug
   assert.deepStrictEqual(agent.value.data, [[2], [3]]);
 });
 
+// A cell, Smart Send and the REPL's run from the editor read only the
+// process's own server types: a file naming the HDB had its cells answered
+// by the RDB, where Run Query on the same line asked the HDB (#3063).
+test("a cell, Smart Send and the REPL send a file's code to the server types the file names (#3063)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  const { runText } = require("../out/consolerun.js");
+  const open = (name, text) => {
+    const document = { uri: vscode.Uri.file(name), getText: () => text };
+    vscode.workspace.textDocuments = [...vscode.workspace.textDocuments, document];
+    return document.uri;
+  };
+  t.after(() => (vscode.workspace.textDocuments = []));
+  const hist = open("/w/hist.q", "/ @servertypes hdb\n//// history\nexec sym from trade");
+  let ran = await runText(live, "exec sym from trade", hist);
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`c`d`e"]]);
+  // Several statements go as one query there.
+  ran = await runText(live, "n:count trade\nn+1", hist);
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, [",4"]]);
+  // None: the gateway itself. A file naming none, and code from no file,
+  // go to the process's own.
+  ran = await runText(live, "role", open("/w/own.q", "/ @servertypes none\nrole"));
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`gateway"]]);
+  for (const from of [open("/w/live.q", "exec sym from trade"), undefined]) {
+    ran = await runText(live, "exec sym from trade", from);
+    assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`a`b"]]);
+  }
+});
+
 // What runs code inside a lambda of q-lint's cannot go through a deferred
 // .gw.syncexec, and says so rather than run it on the gateway itself (#2357,
 // #2432, #2434, #2435, #2589, #2590); Copy Value as JSON joins the servers'

@@ -939,8 +939,8 @@ Gateway on Server Types...** sends such an entry to the types chosen. A
 dashboard tile, a scheduled query, **Query a Tag**, **Compare Query**,
 **Watch Query**, the REPL, the Interactive Window, Smart Send, notebook
 cells and their live values, the agent's query tool, Copy Value as JSON and
-SQL go through it too - Copy Value as JSON to the server types its file
-names - and a drill-down, a wrangle step or a cell edit from
+SQL go through it too - a code cell, Smart Send and Copy Value as JSON to
+the server types their file names - and a drill-down, a wrangle step or a cell edit from
 a result goes to the server types it came from. Features that evaluate the
 code inside q-lint's own q - Run Query Asynchronously, Record Query Snapshot
 and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process,
