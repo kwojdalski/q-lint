@@ -109,6 +109,12 @@ function typeOf(message: Buffer): number | undefined {
 /// nothing, which `Live.dial` says in its own words (#1355).
 export class ClosedBeforeHandshake extends Error {}
 
+/// The process took the connection and did not answer the handshake in
+/// time: it is there, and busy - a q runs one message at a time. A host
+/// that takes no connection in that time is not there, and fails with a
+/// plain error: waiting for it to be free would wait for ever (#3032).
+export class NoHandshakeAnswer extends Error {}
+
 /// A connect's error with its reason in `message`. Node tries each address
 /// of a name in turn - `localhost` is `::1` and `127.0.0.1` - and when all
 /// fail gives an AggregateError whose own message is empty (#1352): the
@@ -211,10 +217,13 @@ export class QConnection {
           reject(error);
         }
       };
+      // Connected to, it is the handshake that was not answered (#3032).
+      let connected = false;
+      socket.once("connect", () => (connected = true));
+      const late = (): void =>
+        fail(connected ? new NoHandshakeAnswer(`no answer from ${at} in ${timeoutMs / 1000} s`) : new Error(`${at} could not be reached in ${timeoutMs / 1000} s`));
       // A timer cannot wait for ever: an infinite delay fires at once.
-      const timer = Number.isFinite(timeoutMs)
-        ? setTimeout(() => fail(new Error(`no answer from ${at} in ${timeoutMs / 1000} s`)), timeoutMs)
-        : undefined;
+      const timer = Number.isFinite(timeoutMs) ? setTimeout(late, timeoutMs) : undefined;
       if (signal?.aborted) {
         cancelled();
         return;

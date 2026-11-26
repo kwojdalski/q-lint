@@ -333,6 +333,26 @@ test("a connect that gets no answer gives up", { skip }, async () => {
   silent.close();
 });
 
+// One text, "no answer from", said both that the host took no connection
+// and that the process took it and was busy: Abort's reconnect, which
+// waits for a busy process, waited for a host that was gone for ever.
+test("a host that takes no connection fails as unreachable, apart from a process that does not answer the handshake (#3032)", async (t) => {
+  const { NoHandshakeAnswer } = require("../out/qclient.js");
+  const silent = net.createServer(() => {}).listen(0, "127.0.0.1");
+  await new Promise((r) => silent.once("listening", r));
+  t.after(() => silent.close());
+  const busy = await QConnection.open({ host: "127.0.0.1", port: silent.address().port }, 100).catch((e) => e);
+  assert.ok(busy instanceof NoHandshakeAnswer, String(busy));
+  assert.match(busy.message, /^no answer from 127\.0\.0\.1:\d+ in 0\.1 s$/);
+  // A SYN nothing answers: a socket that never connects.
+  const connect = net.connect;
+  t.after(() => (net.connect = connect));
+  net.connect = () => new net.Socket();
+  const gone = await QConnection.open({ host: "10.255.255.1", port: 5000 }, 100).catch((e) => e);
+  assert.ok(gone instanceof Error && !(gone instanceof NoHandshakeAnswer), String(gone));
+  assert.strictEqual(gone.message, "10.255.255.1:5000 could not be reached in 0.1 s");
+});
+
 test("a connect with no time limit waits for the process until it is cancelled", { timeout: 10_000 }, async (t) => {
   // A process busy with a query accepts a connection and answers the
   // handshake only once it is free: a reconnect after Abort waits for that.

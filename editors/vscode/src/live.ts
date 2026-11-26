@@ -72,7 +72,7 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, NoHandshakeAnswer, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, serverTypesProblem, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
@@ -2463,7 +2463,8 @@ export class Live {
               try {
                 return await this.dial(process, target, cut.signal);
               } catch (error) {
-                const busy = error instanceof Error && error.message.startsWith("no answer from ");
+                // Not a host that took no connection: it is gone, not busy (#3032).
+                const busy = error instanceof NoHandshakeAnswer;
                 if (!untilFree || !busy || this.reconnectStopped || cut.signal.aborted) {
                   throw error;
                 }

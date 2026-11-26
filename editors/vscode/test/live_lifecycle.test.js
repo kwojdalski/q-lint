@@ -1025,3 +1025,39 @@ test("a file bound to a process renamed in another window runs on it under its n
   await sleep(10);
   assert.strictEqual(live.fileBinding(eod), "hdb-eu");
 });
+
+// A host that takes no connection was read as a process busy with the
+// query it was left with: Abort's reconnect dialed it again every 10 s
+// without end, and without a word.
+test("Abort's reconnect gives up, saying why, on a host that takes no connection (#3032)", async (t) => {
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => a.sent.some((sent) => JSON.stringify(sent).includes("slow")));
+  // The network goes: a SYN nothing answers is a socket that never connects.
+  const connect = net.connect;
+  let dials = 0;
+  net.connect = () => (dials++, new net.Socket());
+  t.after(() => (net.connect = connect));
+  const turn = async () => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  stub.messages.length = 0;
+  for (let i = 0; i < 3; i++) {
+    await turn();
+    t.mock.timers.tick(10_000);
+  }
+  await turn();
+  t.mock.timers.reset();
+  assert.strictEqual(dials, 1);
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: could not connect to a (127.0.0.1:${a.port}): 127.0.0.1:${a.port} could not be reached in 10 s`]]);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});
