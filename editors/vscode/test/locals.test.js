@@ -20,6 +20,11 @@ test("a frame assigning no lambda is not offered as a function (#2412)", () => {
   assert.deepStrictEqual(namedFrames(trace), [{ name: ".ns.f", where: "/w/lib.q:4" }]);
 });
 
+test("q-lint's own functions in a backtrace are not offered (#2970)", () => {
+  const trace = "  [3]  .qlint.log.hit:{[nm;a]0N!(nm;a);}\n                         ^\n  [2]  f:{[px;qty] n:px*qty; n+`bad}\n                            ^\n  [1]  .qlint.log.inst:{x}\n                        ^\n  [0]  f[1;2]\n       ^\n";
+  assert.deepStrictEqual(namedFrames(trace), [{ name: "f", where: "" }]);
+});
+
 test("a backtrace's named functions, and what is shown of a capture", () => {
   assert.deepStrictEqual(namedFrames(TRACE), [
     { name: ".ns.m", where: "/w/lib.q:5" },

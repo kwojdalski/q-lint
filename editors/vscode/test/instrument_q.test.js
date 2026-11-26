@@ -9,6 +9,7 @@ const { connect, skip } = require("./qserver.js");
 const { definitions, DRIFT, readDrift } = require("../out/definitions.js");
 const { coverageText, localsText, installLambda, restoreExpression, readInstalled, readRestored } = require("../out/instrument.js");
 const { RUN, readAnswer } = require("../out/query.js");
+const { coveragePlan, coverageByFile, neverCounted, uncountedNote } = require("../out/coverage.js");
 
 const LIB = [
   "/ a library",
@@ -137,6 +138,30 @@ test("the locals capture keeps the arguments and locals up to the error", { skip
   assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;key[`.qlint]~enlist`)"), [true, true]);
 });
 
+// The locals were kept in a dictionary started empty, which took the type of
+// the first atom kept: a local of another type then failed with 'type
+// inside the function, in place of the error being looked into (#2968).
+test("the locals capture keeps locals of different types, and one assigned again with another (#2968)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "m:{[x] n:count x; s:`$string n; n:`again; s+1}\nfine:{[x] p:x; q:\"ab\"; p}\n");
+  const capture = async (name, call) => {
+    const was = await value(c, `last value ${name}`);
+    assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), [name], [was], [localsText(was).text], 0), 1), ["ok"]);
+    const answer = readAnswer(await c.call(RUN, [call], [25, 80]));
+    return { answer, d: readRestored(await c.call(restoreExpression("err"))).d };
+  };
+  const failed = await capture("m", "m 1 2 3");
+  // The function's own error, at its own statement.
+  assert.strictEqual(failed.answer.error, "type");
+  assert.strictEqual(Number(failed.d.at), 3);
+  assert.deepStrictEqual(failed.d.locals, { n: "`again", s: "`3" });
+  const ran = await capture("fine", "fine 5");
+  assert.strictEqual(ran.answer.ok, true, ran.answer.error);
+  assert.deepStrictEqual(ran.d.locals, { p: "5", q: '"ab"' });
+  // A call that assigned nothing has no locals.
+  const none = await capture("fine", "1+1");
+  assert.deepStrictEqual(none.d.locals, {});
+});
+
 // A typed parameter list is the one q reads: the capture goes after it, and
 // keeps each name it binds. Before, the instrumented lambda failed with 'a
 // and captured nothing (#2332).
@@ -166,4 +191,78 @@ test("a captured local is text to 2000 characters, whatever the process's \\c (#
   assert.deepStrictEqual(d.args, { a: "60", b: "`sym" });
   assert.deepStrictEqual(d.locals, { c: n, d: `+\`x\`y!(${n};${Array(60).fill("`sym").join("")})` });
   assert.deepStrictEqual(await value(c, "(system\"c\";key[`.qlint]~enlist`)"), [[25, 40], true]);
+});
+
+
+// One capture for the whole process held the arguments and locals of
+// whichever call ran last: a function that calls itself, failing after the
+// inner call returned, showed the inner call's (#2969).
+test("the locals capture shows the call that failed, not the last call a recursive function made (#2969)", { skip }, async (t) => {
+  const { connection } = await connect(
+    t,
+    [
+      "walk:{[depth;node] kids:node`kids; r:walk[depth+1] each kids; $[depth=0;r,`bad+1;r,depth]}",
+      "early:{[n] if[n=0; :0]; m:early n-1; $[n=2;m+`bad;m]}",
+      "deep:{[n] v:$[n=3;`bad+1;n]; deep n+1}",
+      "safe:{[n] a:n+1; r:@[safe;`bad;{[e] -1}]; a+`bad}",
+    ].join("\n") + "\n",
+  );
+  const capture = async (name, call) => {
+    const state = readDrift(await connection.call(DRIFT, name)).get(name);
+    const captured = localsText(state.text);
+    readInstalled(await connection.call(installLambda("err"), [name], [state.text], [captured.text], 0), 1);
+    const error = await connection.call(`{[x] @[value;x;{x}]}`, call);
+    const d = readRestored(await connection.call(restoreExpression("err"))).d;
+    assert.strictEqual(await connection.call("{[x] `err in key`.qlint}", 0), false);
+    return { error, args: d.args, locals: d.locals, at: Number(d.at) };
+  };
+  // The outermost call fails after the inner one returned.
+  assert.deepStrictEqual(await capture("walk", "walk[0;`kids`v!(enlist `kids`v!(();1);0)]"), {
+    error: "type",
+    args: { depth: "0", node: "`kids`v!(+`kids`v!(,();,1);0)" },
+    locals: { kids: "+`kids`v!(,();,1)", r: ",,1" },
+    at: 2,
+  });
+  // The inner calls returned early, through `:`.
+  assert.deepStrictEqual(await capture("early", "early 3"), { error: "type", args: { n: "2" }, locals: { m: "0" }, at: 2 });
+  // The innermost call fails: its frame, not the first call's.
+  assert.deepStrictEqual(await capture("deep", "deep 0"), { error: "type", args: { n: "3" }, locals: {}, at: 0 });
+  // A call whose error a caller trapped is not the one shown.
+  assert.deepStrictEqual(await capture("safe", "safe 5"), { error: "type", args: { n: "5" }, locals: { a: "6", r: "-1" }, at: 2 });
+});
+
+// A probe called `.qlint.cov.hit` by name: a handler or a timer set to an
+// instrumented function during the run kept that copy, and every call of it
+// after the restore failed with '.qlint.cov.hit (#2975).
+test("a reference taken to a function under coverage keeps answering after the restore (#2975)", { skip }, async (t) => {
+  const src = "{[x] y:x+1; y*2}";
+  const { connection: c } = await connect(t, `.ns.tick:${src}\n`);
+  const cov = coverageText(src, 0);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), [".ns.tick"], [src], [cov.text], 2), 1), ["ok"]);
+  // What a test under coverage does: it registers the function as a handler.
+  assert.strictEqual(Number(await value(c, "handler:.ns.tick; handler 1")), 4);
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.d.map(Number), [1, 1]);
+  assert.strictEqual(await value(c, "last value .ns.tick"), src);
+  // The handler still holds the instrumented copy: it answers, counting nothing.
+  assert.strictEqual(Number(await value(c, "handler 1")), 4);
+  assert.strictEqual(Number(await value(c, "handler 5")), 12);
+  assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+});
+
+// Only the name is replaced: a handler a dictionary took at load time is
+// the function as it was, and runs uncounted. The run's output says so of
+// the functions it shows as never run.
+test("a function the tests reach through a reference is counted as never run, and the output says why (#2976)", { skip }, async (t) => {
+  const file = ".ns.upd:{[t;x] n:count x; n+1}\nhandlers:enlist[`trade]!enlist .ns.upd\ndispatch:{[t;x] handlers[t][t;x]}\n";
+  const { connection: c } = await connect(t, file);
+  const plan = coveragePlan([{ uri: "file:///w/a.q", text: file }], readDrift(await c.call(DRIFT, ".ns.upd dispatch")));
+  assert.deepStrictEqual(plan.names, [".ns.upd", "dispatch"]);
+  const installed = new Set(plan.names);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), plan.names, plan.was, plan.src, plan.probes.length), 2), ["ok", "ok"]);
+  assert.strictEqual(Number(await value(c, "dispatch[`trade;1 2 3]")), 4);
+  const counts = readRestored(await c.call(restoreExpression("cov"))).d;
+  assert.deepStrictEqual([...coverageByFile(plan, counts, installed).values()][0].map((s) => s.count), [0, 0, 1]);
+  assert.deepStrictEqual(neverCounted(plan, counts, installed), [".ns.upd"]);
+  assert.match(uncountedNote(neverCounted(plan, counts, installed)), /^Counted as never run: \.ns\.upd\. .* a reference taken before the run .* is not counted\.$/);
 });

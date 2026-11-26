@@ -64,14 +64,14 @@ export function registerFunctionDiff(
   };
   let last: DiffState | undefined;
 
-  const side = (process: string, name: string, text: string | undefined): Uri => {
+  const side = (process: string, name: string, read: Texts): Uri => {
     const uri = Uri.from({ scheme: DIFF_SCHEME, path: `/${process}/${name}.q`, query: process });
-    documents.set(uri.toString(), sideDocument(name, process, text));
+    documents.set(uri.toString(), sideDocument(name, process, read.texts.get(name), read.held.get(name)));
     changed.fire(uri);
     return uri;
   };
   const openDiff = async (name: string, first: string, a: Texts, second: string, b: Texts): Promise<void> => {
-    await commands.executeCommand("vscode.diff", side(first, name, a.texts.get(name)), side(second, name, b.texts.get(name)), `${name}: ${first} vs ${second}`, { preview: true });
+    await commands.executeCommand("vscode.diff", side(first, name, a), side(second, name, b), `${name}: ${first} vs ${second}`, { preview: true });
   };
 
   const diff = async (given?: string, firstArg?: ProcessArg, secondArg?: ProcessArg, namespace = false): Promise<DiffState | string> => {

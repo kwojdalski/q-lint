@@ -53,7 +53,7 @@ import {
   type DriftRow,
   type ProcessState,
 } from "./definitions";
-import { REDEFINE } from "./funcsource";
+import { redefineKeepingLogpoint } from "./logpoint";
 import { askRedefine } from "./funcsourceview";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
@@ -290,11 +290,19 @@ export class Drift implements TextDocumentContentProvider {
         }
         try {
           // Only on the process the question named (#1289).
-          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text), undefined, process.label);
+          const got = await borrowWhenFree(
+            this.live,
+            (connection) => redefineKeepingLogpoint((q, ...args) => connection.call(q, ...args), s.name, s.held, s.text, states.get(s.name)?.via === "log"),
+            undefined,
+            process.label,
+          );
           if (got === undefined) {
             out.failed.push({ name: s.name, why: `${process.label} is busy with a query` });
           } else {
             out.sent.push(s.name);
+            if (got.value.lost !== undefined) {
+              void window.showWarningMessage(plainMessage(`q-lint: ${s.name} was reloaded on ${process.label} without its logpoint: ${got.value.lost}`));
+            }
           }
         } catch (error) {
           out.failed.push({ name: s.name, why: message(error) });
@@ -317,12 +325,16 @@ export class Drift implements TextDocumentContentProvider {
   }
 
   /// The workspace's q files and the definitions in each: an open file's
-  /// text as the editor has it, any other's from disk.
-  private async workspaceDefinitions(): Promise<{ file: string; uri: Uri; def: Definition }[]> {
+  /// text as the editor has it, any other's from disk. `capped` says what
+  /// was left out when there are more files or definitions than a check
+  /// reads: a summary of "0 differ" is not of the whole workspace then
+  /// (#2985).
+  private async workspaceDefinitions(): Promise<{ defs: { file: string; uri: Uri; def: Definition }[]; capped?: string }> {
     const files = await workspace.findFiles("**/*.q", "**/node_modules/**", DRIFT_FILES);
     const open = new Map((workspace.textDocuments ?? []).map((d) => [d.uri.toString(), d]));
     const out: { file: string; uri: Uri; def: Definition }[] = [];
-    for (const uri of files) {
+    let capped = files.length >= DRIFT_FILES ? `the workspace holds ${DRIFT_FILES} q files or more, and only the first ${DRIFT_FILES} found were read` : undefined;
+    for (const [i, uri] of files.entries()) {
       let text: string;
       try {
         text = open.get(uri.toString())?.getText() ?? (await readFile(uri.fsPath, "utf8"));
@@ -334,10 +346,13 @@ export class Drift implements TextDocumentContentProvider {
         out.push({ file, uri, def });
       }
       if (out.length >= DRIFT_DEFINITIONS) {
+        if (out.length > DRIFT_DEFINITIONS || i < files.length - 1) {
+          capped = `only the first ${DRIFT_DEFINITIONS} definitions found were compared`;
+        }
         break;
       }
     }
-    return out.slice(0, DRIFT_DEFINITIONS);
+    return { defs: out.slice(0, DRIFT_DEFINITIONS), capped };
   }
 
   /// Check Drift Against Process. The rows, or undefined when nothing was read.
@@ -350,9 +365,9 @@ export class Drift implements TextDocumentContentProvider {
     const read = await window.withProgress(
       { location: ProgressLocation.Notification, title: plainMessage(`q-lint: comparing the workspace's functions with ${process.label}`) },
       async () => {
-        const defs = await this.workspaceDefinitions();
+        const { defs, capped } = await this.workspaceDefinitions();
         if (defs.length === 0) {
-          return { defs, states: new Map<string, ProcessState>() };
+          return { defs, capped, states: new Map<string, ProcessState>() };
         }
         const names = [...new Set(defs.map((d) => d.def.name))];
         const states = new Map<string, ProcessState>();
@@ -367,7 +382,7 @@ export class Drift implements TextDocumentContentProvider {
             states.set(k, v);
           }
         }
-        return { defs, states };
+        return { defs, capped, states };
       },
     ).then(
       (r) => r,
@@ -390,7 +405,7 @@ export class Drift implements TextDocumentContentProvider {
     // A row for the last definition of a name in each file (#1927).
     const compared = lastInFile(read.defs);
     const rows = driftRows(compared, read.states);
-    const summary = driftSummary(rows, process.label);
+    const summary = `${driftSummary(rows, process.label)}${read.capped === undefined ? "" : ` Not the whole workspace: ${read.capped}.`}`;
     const drifted = rows.map((row, i) => ({ row, uri: compared[i].uri })).filter(({ row }) => row.status !== "same");
     if (drifted.length === 0) {
       void window.showInformationMessage(plainMessage(`q-lint: ${summary}`));

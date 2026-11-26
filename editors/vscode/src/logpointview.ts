@@ -1,4 +1,4 @@
-// Logpoints (#984): **Add Logpoint** wraps the function under the cursor (or
+// Logpoints (#984): **Add Logpoint** instruments the function under the cursor (or
 // one named) on the active process so each call's arguments are printed
 // there with `0N!` and kept; **Remove Logpoint** and **Remove All
 // Logpoints** put the functions back; **Show Logpoint Hits** reads the calls
@@ -25,7 +25,7 @@ import { unquotedName } from "./funcsource";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
-import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, hitLines, readLogpoints } from "./logpoint";
+import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, addLogpoint, hitLines, readLogpoints } from "./logpoint";
 import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "logpoints");
@@ -142,8 +142,8 @@ export function registerLogpoints(
     // `` `.ns.f ``, as q code names it, is .ns.f (#2649).
     const fn = unquotedName(target);
     try {
-      // Turned off at the name box, the pick or the guard: nothing is wrapped (#1453).
-      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))), "ask", undefined, undefined, true);
+      // Turned off at the name box, the pick or the guard: nothing is changed (#1453).
+      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : await addLogpoint((code, ...args) => connection.call(code, ...args), fn)), "ask", undefined, undefined, true);
       if (done === undefined || done.value === undefined) {
         return;
       }

@@ -3,74 +3,148 @@
 // table and a flame chart (`profileview.ts`). Free of any `vscode` import,
 // so node tests it.
 //
-// `PROFILE` is sent as one lambda with the namespace and the statements to
-// run. It replaces each lambda directly in the namespace (`.ns.f`, not
-// `.ns.sub.f`) with a wrapper of the same rank that notes the time, by q's
-// own clock (`.z.p`), on entry and on exit - through an error too, which it
-// signals on - runs the statements, and puts every original back, the very
-// objects it took, whether the run succeeded or not - but for a name the
-// run itself defined anew, which keeps its new definition. A wrapper holds
-// its function's name written with `string`: `-3!` cuts a name longer than
-// the process's `\c`, and the wrapper then called nothing (#1869). Its
-// working state lives in `.qlint.prof` for the run and is deleted after. What it cannot see: a
-// function reached by value rather than by name (one stored in a dictionary
-// or a callback set before the run keeps the original), a projection or
-// composition (only lambdas are wrapped), and a function of another
-// namespace.
+// The timing is written into each function's own text, as coverage's probes
+// are (`instrument.ts`): `PROFILE_READ` answers the text of each lambda
+// directly in the namespace (`.ns.f`, not `.ns.sub.f`), `profileText` puts
+// into it a note of the time, by q's own clock (`.z.p`), where the body
+// starts and wherever the text hands a value back or signals, and `PROFILE`
+// defines each anew in its own context, runs the statements, and puts every
+// original back, the very objects it took, whether the run succeeded or not
+// - but for a name the run itself defined anew, which keeps its new
+// definition and is answered as kept, for the view to say so (#2980). A
+// function timed this way is still one function: a call of
+// it adds no frame to q's stack, so a recursion as deep as q allows still
+// runs (#2978), and `.z.s` inside it is the timed function, so a recursion
+// through `.z.s` is counted call by call (#2977). Its working state lives
+// in `.qlint.prof` for the run and is deleted after; the timing asks
+// whether it is there before it notes anything, so a reference the run
+// took to a timed function - a callback it registered, `.z.ts` - goes on
+// answering once the profile is over (#2973). What it cannot see: a
+// function reached by a reference taken before the run (one stored in a
+// dictionary or a callback keeps the original), a projection or
+// composition (only lambdas are timed), a function of another namespace,
+// and where a call ended when an error q itself signalled ended it: such a
+// call is closed when a caller of it that is timed returns, or the run
+// ends, and until then a call made after it is shown under it.
 //
-// The wrapper costs time on every call. Before the run the lambda times a
-// thousand calls of `{x}` through a wrapper against a thousand direct ones,
-// on that process, and answers the difference per call: about 1.7 µs on
-// KDB-X and 4.8 µs on PeachQ on the machine this was written on. Each
-// function's time includes the wrappers of the calls it makes, so a
-// function that makes many short calls looks slower than it is by about
-// that much a call; the view says how much in all. At most `LIMIT` calls
-// are recorded, the first ones; the rest still run and are counted in the
-// total time.
+// The timing costs time on every call. Before the run the lambda times a
+// thousand calls of `{x}` timed against a thousand plain ones, on that
+// process, and answers the difference per call: about 1 µs on KDB-X on the
+// machine this was written on. Each function's time includes the timing of
+// the calls it makes, so a function that makes many short calls looks
+// slower than it is by about that much a call; the view says how much in
+// all. At most `LIMIT` calls are recorded, the first ones; the rest still
+// run and are counted in the total time.
+
+import { DEFINE_AS, bodyStatements, exits, inserted, outer } from "./instrument";
+import { codeMask } from "./paramcache";
 
 /// The most calls recorded in one run.
 export const LIMIT = 100000;
 
-export const PROFILE = [
-  "{[ns;stmts]",
+const GLOBAL = /^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/;
+
+/// `text` (a lambda, the function `name`) made to note when each call of
+/// it starts and ends: `qlintprof` is what closes the call, applied to the
+/// value the text hands back or signals, and is the identity when no
+/// profile is running. Undefined when the text is not one lambda.
+export function profileText(text: string, name: string): string | undefined {
+  const mask = codeMask(text);
+  const lambda = outer(text, mask);
+  if (lambda === undefined || !GLOBAL.test(name)) {
+    return undefined;
+  }
+  return inserted(text, [
+    { offset: lambda.bodyStart, text: `qlintprof:$[\`prof in key\`.qlint;.qlint.prof.in\`${name};::];` },
+    ...exits(text, lambda, mask, bodyStatements(text, lambda, mask), "qlintprof", true),
+  ]);
+}
+
+const NAMESPACE = [
   " if[not (`$1_string ns) in key `; '\"not a namespace: \",string ns];",
   " d:get ns; if[99h<>type d; '\"not a namespace: \",string ns];",
+].join("\n");
+
+/// Answers the lambdas directly in the namespace `ns` (a symbol), their
+/// full names and their texts. Reads only.
+export const PROFILE_READ = [
+  "{[ns]",
+  NAMESPACE,
   " f:k where 100h=type each d k:(key d) except `;",
-  " full:` sv' ns,'f; orig:d f;",
-  " .qlint.prof.log:([] id:`long$(); parent:`long$(); fn:`symbol$(); start:`timestamp$(); stop:`timestamp$());",
-  " .qlint.prof.stack:enlist 0; .qlint.prof.n:0; .qlint.prof.orig:full!orig;",
-  " .qlint.prof.call:{[name;args]",
-  "   .qlint.prof.n+:1; id:.qlint.prof.n; p:last .qlint.prof.stack; .qlint.prof.stack,:id; t0:.z.p;",
-  `   done:{[id;p;name;t0;u] .qlint.prof.stack:-1_.qlint.prof.stack; if[id<=${LIMIT}; \`.qlint.prof.log insert (id;p;name;t0;.z.p)]}[id;p;name;t0];`,
-  "   r:.[.qlint.prof.orig name;args;{[done;e] done[]; 'e}[done]]; done[]; r};",
-  " wrap:{[name;fn] ps:(value fn) 1; ps:$[ps~enlist `;enlist `x0;`$\"x\",/:string til count ps];",
-  "   value \"{[\",(\";\" sv string ps),\"] .qlint.prof.call[`\",string[name],\";\",$[1=count ps;\"enlist \",string first ps;\"(\",(\";\" sv string ps),\")\"],\"]}\"};",
-  " wrapped:wrap'[full;orig]; .qlint.prof.wrapped:full!wrapped;",
-  " .qlint.prof.orig[`.qlint.prof.id]:{x}; idw:wrap[`.qlint.prof.id;{x}];",
+  " `name`text!(string ` sv' ns,'f; {last value x} each d f)}",
+].join("\n");
+
+/// Replaces each of `nms` (strings) whose text on the process is `was` with
+/// `src` (`profileText` of it; one that is no lambda leaves the function as
+/// it is, untimed), runs `stmts`, and puts back what it replaced. The log
+/// is one list, three items a note: a call's number, its function and the
+/// time where it starts, and its number, the null symbol and the time where
+/// it ends. The calls are made up from it after the run: one that ended
+/// unseen is closed with the first caller of it seen to end, or with the
+/// run.
+export const PROFILE = [
+  "{[ns;nms;was;src;stmts]",
+  NAMESPACE,
+  " .qlint.prof.n:0; .qlint.prof.log:(); .qlint.prof.saved:(`$())!(); .qlint.prof.inst:(`$())!();",
+  ` .qlint.prof.in:{[nm] id:.qlint.prof.n+:1; if[id>${LIMIT}; :(::)]; .qlint.prof.log,:(id;nm;.z.p); .qlint.prof.out id};`,
+  " .qlint.prof.out:{[id;r] .qlint.prof.log,:(id;`;.z.p); r};",
+  ` idw:${profileText("{x}", ".qlint.prof.id")};`,
   " t0:.z.p; do[1000;{x}1]; plain:.z.p-t0; t0:.z.p; do[1000;idw 1]; inst:.z.p-t0;",
-  " .qlint.prof.log:0#.qlint.prof.log; .qlint.prof.n:0;",
+  " .qlint.prof.n:0; .qlint.prof.log:();",
+  " nms:`${(),x}each(),nms;",
+  " {[nm;w;s] old:@[get;nm;{::}];",
+  "   if[not 100h=type old; :(::)]; if[not w~last value old; :(::)];",
+  `   r:${DEFINE_AS}[old;s]; if[not first r; :(::)]; if[not 100h=type last r; :(::)];`,
+  // Kept by amending: assigned, a function with no name yet would take
+  // `.qlint.prof.saved` for one, and show it in a backtrace (#2970).
+  "   @[`.qlint.prof.saved;nm;:;old]; @[`.qlint.prof.inst;nm;:;last r];}'[nms;{(),x}each(),was;{(),x}each(),src];",
+  " full:key .qlint.prof.saved; timed:.qlint.prof.inst full; orig:value .qlint.prof.saved;",
   " t0:.z.p;",
-  ' res:@[{[full;wrapped;stmts] full set\' wrapped; value each stmts; ""}[full;wrapped];stmts;{$[10h=type x;x;string x]}];',
-  " total:.z.p-t0;",
-  // Only a name still holding its wrapper is put back: one the run itself
-  // defined anew keeps its new value (#1271).
-  " {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[full;wrapped;orig];",
-  " l:.qlint.prof.log; n:.qlint.prof.n;",
-  " (`float$total; `float$(inst-plain)%1000; res; `float$n; string full; `float$l`id; `float$l`parent; string l`fn; `float$l[`start]-t0; `float$l[`stop]-l`start)}",
+  // Each is assigned as a script assigns it, so that a backtrace of the run
+  // names it; `set` names nothing (#2970).
+  ' res:@[{[full;timed;stmts] {[n;f] .[{eval(:;x;y)};(n;f);{}]; n set f}\'[full;timed]; value each stmts; ""}[full;timed];stmts;{$[10h=type x;x;string x]}];',
+  " t1:.z.p;",
+  // Only a name still holding its timed text is put back: one the run
+  // itself defined anew keeps its new value (#1271), and is answered as
+  // kept, so that the view does not say it was put back (#2980).
+  " kept:full where not {[n;w;o] $[w~@[get;n;{::}]; [n set o; 1b]; 0b]}'[full;timed;orig];",
+  " c:{[l;t1] m:(count l) div 3; id:`long$l 3*til m; fn:`$string l 1+3*til m; t:`timestamp$l 2+3*til m;",
+  "   e:where not null fn; par:(count e)#0; stop:(count e)#t1; st:enlist 0; i:0;",
+  "   do[m; $[null fn i; [p:st?id i; if[p<count st; stop[-1+p _ st]:t i; st:p#st]]; [par[-1+id i]:last st; st,:id i]]; i+:1];",
+  "   (par;fn e;t e;stop)}[.qlint.prof.log;t1];",
+  " (`float$t1-t0; `float$(inst-plain)%1000; res; `float$.qlint.prof.n; string full; `float$1+til count c 0; `float$c 0; string c 1; `float$c[2]-t0; `float$c[3]-c 2;",
+  "  string nms except full; string kept)}",
 ].join("\n");
 
 /// The cleanup that runs after `PROFILE`, whatever became of it: its
 /// working state deleted, and the originals put back from it - where a
-/// name still holds its wrapper - if the profile stopped between replacing
-/// them and putting them back; a process that went away mid-run cannot be
-/// helped.
+/// name still holds its timed text - if the profile stopped between
+/// replacing them and putting them back; a process that went away mid-run
+/// cannot be helped.
 export const PROFILE_CLEANUP = [
   "{[x]",
-  " if[`prof in key `.qlint; if[99h=type w:.qlint.prof`wrapped; {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[key w;value w;.qlint.prof.orig key w]]];",
+  " if[`prof in key `.qlint; if[99h=type w:.qlint.prof`inst; {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[key w;value w;.qlint.prof.saved key w]]];",
   " @[{delete prof from `.qlint};::;::]; ::}",
 ].join("\n");
 
-/// The names q keeps for itself: profiling them would wrap q's own code.
+/// Profiles the namespace `ns` over `stmts` on the process `call` sends
+/// to: reads its functions, and sends them back with the timing in their
+/// text. Answers what `PROFILE` answered, for `readProfile`.
+export async function runProfile(call: (code: string, ...args: unknown[]) => Promise<unknown>, ns: string, stmts: string[]): Promise<unknown> {
+  const read = (await call(PROFILE_READ, `\`${ns}`)) as { name?: unknown; text?: unknown } | null;
+  if (read === null || typeof read !== "object" || read.name === undefined || read.text === undefined) {
+    throw new Error(`the process answered something other than its functions: ${JSON.stringify(read)?.slice(0, 200)}`);
+  }
+  const names = list(read.name).map(String);
+  const texts = list(read.text).map(String);
+  // One that cannot be given the timing goes as no text, and is answered
+  // as not timed.
+  return call(PROFILE, `\`${ns}`, names, texts, names.map((name, i) => profileText(texts[i] ?? "", name) ?? ""), stmts);
+}
+
+const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
+
+/// The names q keeps for itself: profiling them would replace q's own code.
 const RESERVED = new Set([".q", ".Q", ".h", ".j", ".o", ".z", ".qlint"]);
 
 /// Why `namespace` cannot be profiled, or undefined when it can: a dotted
@@ -101,14 +175,20 @@ export interface Profile {
   namespace: string;
   /// ns, the whole run.
   total: number;
-  /// ns a wrapped call costs over a plain one, measured on the process.
+  /// ns a timed call costs over a plain one, measured on the process.
   overheadPerCall: number;
   /// The error the run stopped with, or empty.
   error: string;
   /// Calls made, recorded or not.
   calls: number;
-  /// The functions wrapped.
+  /// The functions timed.
   functions: string[];
+  /// The lambdas of the namespace left as they were, not timed: their text
+  /// could not be given the timing.
+  untimed: string[];
+  /// The functions not put back: the run itself defined them anew, or
+  /// deleted them, and they are as it left them (#1271).
+  kept: string[];
   recorded: Call[];
 }
 
@@ -127,19 +207,22 @@ export function readProfile(raw: unknown, namespace: string): Profile {
   const bad = (): never => {
     throw new Error(`the process answered something other than a profile: ${JSON.stringify(raw)?.slice(0, 200)}`);
   };
-  if (!Array.isArray(p) || p.length !== 10 || typeof p[0] !== "number" || typeof p[1] !== "number" || typeof p[2] !== "string" || typeof p[3] !== "number") {
+  if (!Array.isArray(p) || p.length !== 12 || typeof p[0] !== "number" || typeof p[1] !== "number" || typeof p[2] !== "string" || typeof p[3] !== "number") {
     return bad();
   }
   // One function or one call answers an atom or a string where many answer
   // lists; none answer empty lists.
-  const functions = Array.isArray(p[4]) && p[4].length === 0 ? [] : typeof p[4] === "string" ? [p[4]] : strings(p[4]);
+  const named = (v: unknown): string[] | undefined => (Array.isArray(v) && v.length === 0 ? [] : typeof v === "string" ? [v] : strings(v));
+  const functions = named(p[4]);
   const ids = floats(p[5]) ?? [];
   const one = ids.length === 1;
   const parents = floats(p[6]) ?? [];
   const names = (one && typeof p[7] === "string" ? [p[7]] : Array.isArray(p[7]) && p[7].length === 0 ? [] : strings(p[7])) ?? bad();
   const starts = floats(p[8]) ?? [];
   const durations = floats(p[9]) ?? [];
-  if (functions === undefined || [parents, names, starts, durations].some((l) => l.length !== ids.length)) {
+  const untimed = named(p[10]);
+  const kept = named(p[11]);
+  if (functions === undefined || untimed === undefined || kept === undefined || [parents, names, starts, durations].some((l) => l.length !== ids.length)) {
     return bad();
   }
   return {
@@ -149,6 +232,8 @@ export function readProfile(raw: unknown, namespace: string): Profile {
     error: p[2] as string,
     calls: p[3] as number,
     functions,
+    untimed,
+    kept,
     recorded: ids.map((id, i) => ({ id, parent: parents[i], fn: names[i], start: starts[i], duration: durations[i] })),
   };
 }
@@ -160,7 +245,7 @@ export interface FunctionStats {
   /// ns in the function and what it called; a recursive call is counted
   /// once, at its outermost.
   total: number;
-  /// ns in the function itself, less the calls it made to wrapped ones.
+  /// ns in the function itself, less the calls it made to timed ones.
   self: number;
   /// ns per call, of `total`.
   mean: number;
@@ -262,6 +347,8 @@ export interface ProfileView {
   calls: number;
   recorded: number;
   functions: number;
+  untimed: string[];
+  kept: string[];
   stats: FunctionStats[];
   frames: Frame[];
 }
@@ -278,6 +365,8 @@ export function profileView(profile: Profile, process: string, code: string): Pr
     calls: profile.calls,
     recorded: profile.recorded.length,
     functions: profile.functions.length,
+    untimed: profile.untimed,
+    kept: profile.kept,
     stats: functionStats(profile),
     frames: flame(profile),
   };

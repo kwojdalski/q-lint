@@ -4,7 +4,9 @@
 // around it.
 //
 // Each call is one lambda sent with its arguments, as the explorer's is, and
-// only Redefine changes the process - by the one `set` the user confirmed.
+// only Redefine changes the process - by the one `set` the user confirmed,
+// and for a KDB-X module's function the two that put it in what the module
+// exports (`EXPORTED`), which the question names.
 // Names arrive as strings and are made symbols there: a string starting with
 // a backtick would reach q as a symbol, and one of a single character as a
 // char atom, so each is `(),`'d first.
@@ -32,6 +34,7 @@
 // A view (`v::expr`) has a lambda's type too, and `get` of its name
 // evaluates it: the root's views (`views[]`) are not read (#1864).
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
+import { ORIGINAL } from "./instrument";
 import { SLOT_TEXT, slotParams } from "./paramcache";
 import { isProduction } from "./agent";
 import type { Process } from "./processes";
@@ -49,8 +52,36 @@ export const SOURCE = [
   " if[(`$(),nm)in views[];'\"a view, not a function\"];",
   " f:get`$(),nm;t:type f;",
   " if[not t within 100 112h;'\"not a function\"];",
+  // The function itself, though q-lint's logpoint is in its text (#2971).
+  ` if[100h=t;f:first ${ORIGINAL}[\`$(),nm;f]];`,
   " v:$[100h=t;value f;()];",
   ` \`type\`text\`ctx\`params!("f"$t;$[100h=t;last v;${FULL_TEXT}[${TEXT_LIMIT};f]];$[100h=t;string first v 3;""];$[100h=t;(),v 1;\`$()])}`,
+].join("\n");
+
+/// A q function `{[nm;olds;new]}`: when `nm` is a KDB-X module's function
+/// (`.m.<module>.<name>`) the module exports - as one of `olds`, what the
+/// name held - puts `new` in its place in the module's `export`, which is
+/// what `use` answers, and in every global that holds what the module
+/// exported: `` m:use`mymod `` keeps the functions themselves, not their
+/// names, so `m.f` went on running the old one (#2972). A handle kept
+/// anywhere else - a local, a projection - is a reference like any other.
+const EXPORTED = [
+  "{[nm;olds;new]",
+  " p:` vs nm;if[not(3<count p)&`m~p 1;:(::)];",
+  " e:` sv(-1_p),`export;was:@[get;e;{::}];",
+  " if[not 99h=type was;:(::)];",
+  " i:where{[o;v]any v~/:o}[olds]each value was;if[0=count i;:(::)];",
+  " if[(last p)in key[was]i;i:i where(last p)=key[was]i];",
+  " now:@[was;key[was]i;:;new];e set now;",
+  " todo:enlist`.;seen:`$();",
+  " while[(count todo)&1000>count seen;",
+  "  ns:first todo;todo:1_todo;seen,:ns;",
+  "  d:@[get;ns;{()!()}];k:((key d)except`)except$[ns~`.;views[];`$()];",
+  "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  "  todo,:$[ns~`.;` sv'`,'(key`)except`q`Q`h`j`o`qlint;` sv'ns,'kids];",
+  "  k:k except kids;k:k where was~/:d k;",
+  "  {x set y}[;now]each $[ns~`.;k;` sv'ns,'k]];",
+  " }",
 ].join("\n");
 
 export const REDEFINE = [
@@ -58,7 +89,10 @@ export const REDEFINE = [
   " nm:`$(),nm;if[nm in views[];'\"not a lambda on the process\"];old:get nm;src:(),src;",
   " if[not 10h=type src;'\"the text is not a string\"];",
   " if[not 100h=type old;'\"not a lambda on the process\"];",
-  " if[not((),was)~last value old;'\"changed on the process since it was opened\"];",
+  // `was` is the function's own text, though a logpoint is in what the
+  // name holds (#2971).
+  ` own:first ${ORIGINAL}[nm;old];`,
+  " if[not((),was)~last value own;'\"changed on the process since it was opened\"];",
   " c:first(value old)3;d:system\"d\";",
   " system\"d \",$[null c;\".\";\".\",string c];",
   " r:@[{(1b;value x)};src;{(0b;x)}];",
@@ -66,6 +100,7 @@ export const REDEFINE = [
   " if[not first r;'last r];",
   " if[not 100h=type last r;'\"the text is not a function\"];",
   " nm set last r;",
+  ` ${EXPORTED}[nm;(old;own);last r];`,
   " last value last r}",
 ].join("\n");
 
@@ -160,11 +195,17 @@ export function unquotedName(text: string): string {
 }
 
 /// The name of the function at `offset` in `line`, dots and all, or
-/// undefined when the cursor is on no name.
+/// undefined when the cursor is on no name. A `_` after a number, or with
+/// no name before it, is q's drop and not the name's start: `f` is the name
+/// in `-1_f x` and in `x _f` (#2986).
 export function nameAt(line: string, offset: number): string | undefined {
   const before = /[.\w]*$/.exec(line.slice(0, offset))?.[0] ?? "";
   const after = /^[.\w]*/.exec(line.slice(offset))?.[0] ?? "";
-  const name = (before + after).replace(/\.+$/, "");
+  const dropped = /^(?:\.?\d[^_]*)?_+/.exec(before + after)?.[0].length ?? 0;
+  if (dropped > before.length) {
+    return undefined;
+  }
+  const name = (before + after).slice(dropped).replace(/\.+$/, "");
   return /^\.?[A-Za-z][\w]*(\.[A-Za-z][\w]*)*$/.test(name) ? name : undefined;
 }
 
@@ -231,10 +272,13 @@ export function redefineConfirmation(name: string, target: Process, guarded: str
       : isProduction(target)
         ? `${target.label} is a production process (tagged ${target.tags.join(", ")}). `
         : "";
+  // A module's function is assigned in more than its name (#2972), and
+  // the question says so.
+  const exported = /(^|[\s,])\.m\.[A-Za-z]/.test(name) ? "A KDB-X module's function is replaced in the module's export too, and in the globals holding what the module exported. " : "";
   return {
     message: guarded.length > 0 ? `Redefine ${name} on the read-only process ${target.label}?` : `Redefine ${name} on ${target.label}?`,
     detail:
-      `${warning}The edited text replaces ${name} on ${target.label} for every caller, parsed in the namespace it was defined in. ` +
+      `${warning}The edited text replaces ${name} on ${target.label} for every caller, parsed in the namespace it was defined in. ${exported}` +
       "Nothing is saved to a file: a restart of the process brings back the old definition.",
   };
 }

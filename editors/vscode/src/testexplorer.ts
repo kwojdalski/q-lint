@@ -47,7 +47,7 @@ import {
 } from "vscode";
 import { open } from "node:fs/promises";
 import { isProduction } from "./agent";
-import { coverageByFile, coveragePlan, coverageSummary, definedNames, type CoveragePlan, type SourceFile } from "./coverage";
+import { coverageByFile, coveragePlan, coverageSummary, definedNames, neverCounted, uncountedNote, type CoveragePlan, type SourceFile } from "./coverage";
 import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
 import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRestored, restoreApart, restoreExpression, type Restored } from "./instrument";
@@ -850,5 +850,9 @@ class QTests {
       });
     }
     run.appendOutput(`${coverageSummary(byFile, covering.installed.size)}\r\n`);
+    const uncounted = uncountedNote(neverCounted(covering.plan, done.d, covering.installed));
+    if (uncounted !== undefined) {
+      run.appendOutput(`${terminalText(uncounted)}\r\n`);
+    }
   }
 }

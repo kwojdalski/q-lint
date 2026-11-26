@@ -11,10 +11,14 @@ export const CAPTURE_LOCALS = "q-lint.captureLocals";
 /// the frame says it is. A frame whose code after `name:` is no lambda - the
 /// failed query's own `res:f 1`, a caller's `r:.Q.trp[...]` - names what
 /// was assigned, not a function (#2412). A lambda's is `{`, or nothing when
-/// q prints it from its second line.
+/// q prints it from its second line. q-lint's own functions under `.qlint`
+/// - what a logpoint or a profile calls - are none of the query's (#2970).
 export function namedFrames(trace: string): { name: string; where: string }[] {
   const out: { name: string; where: string }[] = [];
   for (const frame of parseBacktrace(trace)) {
+    if (frame.name !== undefined && /^\.qlint(\.|$)/.test(frame.name)) {
+      continue;
+    }
     const after = frame.name === undefined ? "" : (frame.code[0] ?? "").replace(/^[^:]*:/, "").trim();
     if (after !== "" && !after.startsWith("{")) {
       continue;

@@ -830,7 +830,11 @@ A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
 ran is left as it is then. A call made where q refuses a global write
 (under `reval`, in a secondary thread of `peach`) answers as before and is
-not counted. `.qlint.cov` holds the counts and the originals
+not counted. Only the name is replaced: a call made through a reference
+taken before the run - a dictionary of handlers, `.z.ts`, a timer's
+projection - runs the function as it was, and is not counted; the run's
+output names the functions counted as never run, and says so. `.qlint.cov`
+holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
 else of q-lint's is in it, as q cannot remove a namespace. When the
 functions cannot be put back over the active connection - another process
@@ -1131,20 +1135,30 @@ statements as it reads a query (`q-lint.query.lineTimings.enable`).
 palette, runs the selection, or the statement at the cursor, with every
 function of a namespace you name (`.lib`; the first one the code names is
 offered) timed, as cProfile times a Python program. Each lambda directly in
-the namespace is replaced for the run by a wrapper of the same rank that
-notes, by `.z.p`, when it is entered and left - through an error too - and
-the very objects that were there are put back after, whether the run
-succeeded or failed; a second message follows to make sure of it, and the
-working state in `.qlint.prof` is deleted. The panel shows the functions as
+the namespace is replaced for the run by its own text with the timing
+written into it - a note, by `.z.p`, where its body starts and wherever it
+hands a value back or signals - and the very objects that were there are
+put back after, whether the run succeeded or failed (a function the run
+itself defines anew keeps its new definition, and the panel names it); a
+second message follows to make sure of it, and the working state in
+`.qlint.prof` is deleted. A function timed is still one function: a call adds no frame to
+q's stack, so a recursion as deep as q allows still runs, one through
+`.z.s` is counted call by call, and a reference the run takes to a function
+- a callback it registers, `.z.ts` - goes on answering once the profile is
+over, the timing in it doing nothing then. The panel shows the functions as
 a table - calls, total, self (less the calls it made), per call, longest -
 sortable by any column, and the calls as a flame chart, merged by their
-path of callers. The wrapper costs time on every call: it is measured on
-the process before each run (a thousand calls of `{x}` through a wrapper
-against a thousand direct ones; about 1.7 µs a call on KDB-X and 4.8 µs on
-PeachQ here) and the panel says how much it adds in all. Only functions
-called by name are seen: one stored in a dictionary or set as a callback
-before the run keeps the original, projections and compositions are not
-wrapped, and at most the first 100,000 calls are recorded. Since a run
+path of callers. The timing costs time on every call: it is measured on
+the process before each run (a thousand calls of `{x}` timed against a
+thousand plain ones; about 1 µs a call on KDB-X here) and the panel says
+how much it adds in all. Only functions called by name are seen: one stored
+in a dictionary or set as a callback before the run keeps the original,
+projections and compositions are not timed, nor is a function whose text is
+not a q lambda's (one written in k), which the panel names; and at most the
+first 100,000 calls are recorded. A call that an error of q's own ends
+(`'type`, not a `'` the text writes) is not seen to end: it is closed when
+a timed caller of it returns, or the run ends, and a call made in between
+is drawn under it. Since a run
 replaces the namespace's functions, the read-only guard asks first on a
 guarded process, whatever the query (`q-lint.query.functionProfile.enable`).
 
@@ -1424,19 +1438,31 @@ code that runs anywhere it matters.
 
 **Logpoints.** **Add Logpoint** (a q editor's context menu) logs the calls
 of the function under the cursor - or one named - on the active process
-without editing its file: the function is replaced there by a wrapper of
-the same parameters that prints `(name; arguments)` with `0N!`, to the
-process's console or log (a launched process's output channel), keeps the
-last 1000 calls as text in `.qlint.log.hits`, and calls the original, kept
-in `.qlint.log.orig`. Where q refuses a global write - a call made under
+without editing its file: the function is replaced there by its own text
+with one statement more at the start of its body, which prints
+`(name; arguments)` with `0N!`, to the process's console or log (a launched
+process's output channel), and keeps the last 1000 calls as text in
+`.qlint.log.hits`; what the name held is kept in `.qlint.log.saved`. The
+function is otherwise itself: a call uses no more of q's stack, so a deep
+recursion runs as before, and a call it makes of itself through `.z.s` is
+logged too. Where q refuses a global write - a call made under
 `reval`, or in a secondary thread of `peach` - the call is printed but not
-kept, and the function answers as before. The editor marks the definition `logpoint on
+kept, and the function answers as before. A call q refuses on a typed or
+pattern parameter list never starts, and is not logged. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
-them; a function redefined while it had a logpoint is left as it is. With
+them; a function redefined while it had a logpoint is left as it is. What
+reads or replaces a definition takes the function as it was before the
+logpoint: **Check Drift**, **Diff Function** and **Open Function Source**
+show it without the logging, a coverage run and **Capture Locals** work
+over it and put the logpoint back, and hot reload and **Redefine on
+Process** put the logpoint on the new definition. A backtrace names the
+function as before. With
 the last one removed, `.qlint.log` is deleted and `.qlint` is left empty: q
 cannot remove a namespace. Only a lambda takes one, and a projection or
-alias made of the function before keeps calling the original. Adding and
+alias made of the function before keeps calling the original; a reference
+taken while the logpoint is on - a handler, a timer - keeps answering,
+unlogged, once it is removed. Adding and
 removing go through the read-only guard; reading the
 hits changes nothing. `q-lint.logpoints.enable` hides the commands.
 
@@ -1992,7 +2018,8 @@ list shows the functions that differ, are not defined on the process or
 are not a lambda there; picking one that differs opens a diff of the
 process's text and the file's, and picking another opens the file at its
 definition. An open file is read as the editor has it. It reads up to 5000
-files and 20,000 definitions. Off by default
+files and 20,000 definitions, and its summary says so when the workspace
+has more than it compared. Off by default
 (`q-lint.processExplorer.driftDetection.enable`), since it reads every
 function the workspace defines from the process.
 
@@ -2011,7 +2038,12 @@ new one, or one the process does not hold as a lambda is listed as not
 sent. You are asked on every save that sends something, until you pick
 **Reload on Every Save** for that file and process, which lasts until the
 window closes or the setting is turned off; a production process is never
-offered it.
+offered it. A KDB-X module's function (`.m.<module>.<name>`) is replaced
+in what the module exports too: in its `export`, which the next `use`
+answers, and in every global holding what it exported - `` m:use`mymod ``
+keeps the functions themselves, so `m.f` would otherwise run the old one.
+A handle kept in a local or a projection keeps what it has. **Redefine on
+Process** does the same.
 
 **Find Callers in Process**, on a function in the explorer or the name
 under the cursor, lists the loaded functions that call it, read from what q
@@ -2314,7 +2346,10 @@ the palette) reads a function's definition - the name under the cursor, or
 one typed - on two processes you pick and opens VS Code's side-by-side diff
 of them. **Diff Namespace Across Processes...** reads every function
 directly in a namespace on both and lists the ones that differ or are on
-one side only; the one picked opens the same diff. Each process is read
+one side only; the one picked opens the same diff. A side whose process
+holds the name as something other than a function says what - "a table",
+"a dictionary", "a view" - where one that does not hold it says it is not
+defined. Each process is read
 over a connection of its own, closed after, with a read-only lambda, so the
 active connection is left as it is. `q-lint.processes.functionDiff.enable`
 off hides both.
