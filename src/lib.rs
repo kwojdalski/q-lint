@@ -8349,20 +8349,33 @@ fn lint_rules(
         }) {
             continue;
         }
-        if !boundary(code, whole.start())
-            || !gap(&m)
-            || redefined.contains(&key)
-            || overwritten(&key)
-            || foreign(whole.start(), &key)
-        {
+        if !boundary(code, whole.start()) || !gap(&m) {
             continue;
         }
-        let Some(&rank) = ranks.get(&key) else {
-            continue;
+        // `.z.s` is the lambda it is written in, whose rank is there to
+        // read: q 5 `f:{[a] $[a>0; .z.s[a-1;0]; a]}` is 'rank at `f 1`, as
+        // the call by name `f[a-1;0]` is (#2945). The innermost one - and
+        // not where the lambda assigns it, which makes it a local: q 5 runs
+        // `{[a] .z.s:{x+y}; .z.s[a;2]}`.
+        let rank = if name == ".z.s" {
+            let own = enclosing_brace(code, whole.start()).and_then(|brace| {
+                let end = matching(code, brace, b'{', b'}')?;
+                (!re!(r"\.z\.s\s*[:;)]").is_match(&code[brace..end]))
+                    .then(|| lambda_rank(code, source, brace, end))
+            });
+            match own {
+                Some(rank) => rank,
+                None => continue,
+            }
+        } else {
+            if redefined.contains(&key) || overwritten(&key) || foreign(whole.start(), &key) {
+                continue;
+            }
+            match ranks.get(&key) {
+                Some(&rank) if !shadowed(code, source, whole.start(), name) => rank,
+                _ => continue,
+            }
         };
-        if shadowed(code, source, whole.start(), name) {
-            continue;
-        }
         let open = whole.end() - 1;
         if rank == 0 {
             continue;

@@ -596,6 +596,19 @@ h:{[f] @[f;1;{x}]}
 f:{x+1}
 a:f . 1
 
+=== QA012 profile: general | `.z.s` is the lambda it is written in, and takes what that takes (KDB-X: f 1, g 1, h 1 and k[1;2] are 'rank, #2945)
+f:{[a] $[a>0; .z.s[a-1;0]; a]}
+g:{$[x>0; .z.s[x-1;0]; x]}
+h:{[a] {[x;y] $[x>0;.z.s[x-1;y;3];x]}[a;2]}
+k:{[a;b] $[a>0; .z.s[a-1][b;3]; a]}
+
+=== clean profile: general | the innermost one, and no more than it takes; a projection of it; a `.z.s` the lambda assigns is a local (KDB-X: each runs)
+f:{[a] $[a>0; .z.s[a-1]; a]}
+g:{[a] {[x;y] $[x>0;.z.s[x-1;y];x]}[a;2]}
+h:{[a;b] $[a>0; .z.s[a-1;]; a]}
+k:{[a] .z.s:{x+y}; .z.s[a;2]}
+l:{[a;b] $[a>0; .z.s[a-1][b]; a]}
+
 === QA009 profile: general | after any operand, as in the brackets: a builtin, an operator in parentheses, data, a projection, a symbol, a string (KDB-X: each is 'type, #2936)
 v:1 2 3
 d:`a`b!1 2
