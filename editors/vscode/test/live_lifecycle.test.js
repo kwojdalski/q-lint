@@ -987,3 +987,41 @@ test("an automatic reconnect follows a rename made in another window, and says w
   ]);
   assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
 });
+
+// The log of renames (#1749) was read only when a workspace opened: a file
+// bound to a process another window then renamed stayed bound to the old
+// label, and every Run Line in it failed until a reload.
+test("a file bound to a process renamed in another window runs on it under its new label, without a reload (#3035)", async (t) => {
+  const a = await fakeQ(() => ({ ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  stub.reset();
+  let focus;
+  vscode.window.onDidChangeWindowState = (listener) => ((focus = listener), new vscode.Disposable(() => {}));
+  t.after(() => delete vscode.window.onDidChangeWindowState);
+  const context = keeping(stub.newContext());
+  await context.globalState.update("q-lint.processes", [proc("rdb", a.port), proc("hdb", a.port)]);
+  const report = vscode.Uri.file("/w/report.q");
+  const eod = vscode.Uri.file("/w/eod.q");
+  await context.workspaceState.update("q-lint.fileConnections", { [report.toString()]: "rdb", [eod.toString()]: "hdb" });
+  const live = new Live(context);
+  t.after(async () => {
+    await stub.commands.get("q-lint.disconnectProcess")?.();
+    for (const d of context.subscriptions) d.dispose?.();
+  });
+  await sleep(10);
+  await elsewhere(context, "rdb", "rdb-eu");
+  vscode.window.activeTextEditor = {
+    document: { uri: report, version: 1, languageId: "q", lineAt: () => ({ text: "1+1" }), getText: () => "1+1" },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual([live.fileBinding(report), live.activeLabel()], ["rdb-eu", "rdb-eu"]);
+  assert.deepStrictEqual(live.history().map((e) => [e.process, e.code, e.outcome]), [["rdb-eu", "1+1", "ok"]]);
+  // And when the window is come back to, before anything is run in it.
+  await elsewhere(context, "hdb", "hdb-eu");
+  focus({ focused: true });
+  await sleep(10);
+  assert.strictEqual(live.fileBinding(eod), "hdb-eu");
+});

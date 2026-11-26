@@ -896,6 +896,12 @@ export class Live {
         },
       },
       workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
+      // Back from the window a process was renamed or deleted in (#3035).
+      window.onDidChangeWindowState((state) => {
+        if (state.focused) {
+          void this.applyRelabels();
+        }
+      }),
     );
     globalThis.process.on("exit", this.closeTunnels);
     this.showStatus();
@@ -1237,6 +1243,7 @@ export class Live {
   /// when the connection cannot move there: a query is still running, or
   /// the connect failed.
   async toFileBinding(uri: Uri | undefined): Promise<boolean> {
+    await this.applyRelabels();
     const bound = uri === undefined ? undefined : this.fileBinding(uri);
     if (bound === undefined || bound === this.activeLabel()) {
       return true;
@@ -1861,7 +1868,8 @@ export class Live {
   }
 
   /// The renames and deletions made in other workspaces since this one's
-  /// state last had them, applied to it (#1749).
+  /// state last had them, applied to it (#1749): when it opens, when its
+  /// window is come back to, and before a file's binding is read (#3035).
   private async applyRelabels(): Promise<void> {
     const log = parseRelabels(this.context.globalState.get<unknown>(RELABELS_KEY));
     const applied = this.context.workspaceState.get<number>(RELABELS_APPLIED_KEY, 0);
@@ -3027,6 +3035,9 @@ export class Live {
   /// sends its definition here. `origin`: the line a Run Line or Run
   /// Selection is running from, where its inline result is drawn.
   async queryCode(code: string, uri: Uri, serverTypes?: string[], origin?: Origin): Promise<void> {
+    // Bound to a process another window has renamed since, the file is
+    // bound to it under its new label (#3035).
+    await this.applyRelabels();
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
