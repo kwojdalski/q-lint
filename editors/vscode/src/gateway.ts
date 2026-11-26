@@ -57,12 +57,15 @@ export function symbols(types: string[]): string {
 /// `statements` as the one string a server `value`s to run them in order: a
 /// system command as `system`, as `\d .ns` cannot be followed by more on
 /// its line, and each after the first on a line of its own that starts
-/// `" ;"`, so a trailing comment ends before it. With a `\d` among them
+/// `" ;"`, so a trailing comment ends before it. One in another language,
+/// `k)a:1+!3`, is a string of its own, valued: the prefix is one only where
+/// a string starts, and makes all that follows it that language (#2912).
+/// With a `\d` among them
 /// each is a string of its own, valued in turn: q parses one string whole,
 /// so a function after `\d .ns` in it was bound to the root, and its call
 /// of a function beside it failed, or found the root's (#3057).
 export function joined(statements: string[]): string {
-  const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : s));
+  const each = statements.map((s) => (s.startsWith("\\") ? `system ${qString(s.slice(1))}` : /^[A-Za-z]\)/.test(s) ? `value ${qString(s)}` : s));
   return each.length > 1 && statements.some((s) => contextLeft(s) !== undefined) ? `last value each (${each.map(qString).join(";")})` : each.join("\n ;");
 }
 

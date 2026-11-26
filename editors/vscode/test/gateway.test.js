@@ -381,6 +381,25 @@ test("functions defined after a \\d through a gateway are bound to its context, 
   assert.deepStrictEqual(lines.slice(1), ['".."']);
 });
 
+// `k)` is a prefix only where a string starts: joined second it was read as
+// q, ')', and joined first it made the q after it k, 'til (#2912).
+test("a k) statement among several goes through a gateway as a string of its own, valued (#2912)", { skip }, async (t) => {
+  assert.strictEqual(joined(["a:1", "k)b:2+!3", "b"]), 'a:1\n ;value "k)b:2+!3"\n ;b');
+  assert.strictEqual(joined(["k)a:1+!3", "b:til 3"]), 'value "k)a:1+!3"\n ;b:til 3');
+  // Alone it is the string itself, and no prefix after a space.
+  assert.strictEqual(gatewayStatement(["k)!3"], ["hdb"]), '.gw.syncexec["k)!3";enlist `hdb]');
+  assert.strictEqual(joined(["a:1", "b:(a+1\n k)"]), "a:1\n ;b:(a+1\n k)");
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  // Each server's last value, joined.
+  await live.run("a:1\nk)b:a+!3\nb");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["1 2 3 1 2 3"]]);
+  lines.length = 0;
+  await live.run("k)c:1+!3\nd:til 3\n\\d .kq\nk)e:{x+1}\ne 1 3 5");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["2 4 6 2 4 6"]]);
+});
+
 // One `.gw.` name anywhere made the whole selection the gateway's own, so
 // a query under `n:count .gw.servers` ran on the gateway: 'trade (#3059).
 test("a selection goes to a gateway statement by statement: its own as written, the rest through .gw.syncexec (#3059)", () => {
