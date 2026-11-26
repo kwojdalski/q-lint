@@ -2134,3 +2134,14 @@ test("an evaluator derived by each or peach in brackets, or passed as an argumen
   }
   assert.deepStrictEqual(writes('(value each) enlist "count t"'), []);
 });
+
+test("a lambda parse or -5! makes of a string, applied, runs; one -9! deserialises, applied, is asked about (#2633, #2634)", () => {
+  assert.deepStrictEqual(writes('(parse "{zz::1}")[]'), ["applies what parse makes of a string that changes the process"]);
+  assert.deepStrictEqual(writes('(-5!"{zz::1}")[]'), ["applies what -5! makes of a string that changes the process"]);
+  assert.deepStrictEqual(writes("(-9!0x010000001800000064000a00080000007b7a7a393a3a317d)[]"), ["applies a value -9! deserialises, which the guard cannot read"]);
+  assert.deepStrictEqual(writes("(-9!0x0100)@1"), ["applies a value -9! deserialises, which the guard cannot read"]);
+  // Made and not applied, or a lambda that only reads, is a read.
+  for (const code of ['parse "{zz::1}"', '(parse "{x+1}")[1]', '(-5!"{x+1}") 1', "-9!0x0100", "count -9!x"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

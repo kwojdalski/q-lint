@@ -766,6 +766,27 @@ function implicit(t: Token[], open: number, close: number): number {
   return last;
 }
 
+/// Whether the group that opens at `t[open]` is applied to what follows it:
+/// `(f x)[]`, `(f x)@1`, `(f x) y`.
+function groupApplied(t: Token[], open: number): boolean {
+  if (t[open]?.text !== "(" || t[open].kind !== "open") {
+    return false;
+  }
+  let close = open;
+  for (let depth = 0; close < t.length; close++) {
+    if (t[close].kind === "open") depth++;
+    else if (t[close].kind === "close" && --depth === 0) break;
+  }
+  const after = t[close + 1];
+  return (
+    after !== undefined &&
+    ((after.kind === "open" && after.text !== "{") ||
+      (after.kind === "op" && ["@", "."].includes(after.text)) ||
+      ["str", "sym", "num"].includes(after.kind) ||
+      (after.kind === "name" && !INFIX.has(after.text)))
+  );
+}
+
 /// Whether the `upsert` at `t[i]`, applied infix, is given a value on its
 /// left: a name alone that is no local holding a symbol (`held`), or a
 /// table written out, `([] a:1 2)`.
@@ -2153,6 +2174,11 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(what);
           continue;
         }
+        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634).
+        if (t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" && groupApplied(t, i - 1) && writes([valued(qText(t[i + 1].text))]).length > 0) {
+          found.add(`applies what ${k.text} makes of a string that changes the process`);
+          continue;
+        }
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
@@ -2683,6 +2709,19 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(`evaluates ${what.reason} on handle 0`);
           continue;
         }
+      }
+    }
+    // `-5!` is `parse`: of a lambda, applied, it runs it, `(-5!"{a::1}")[]`
+    // (#2634); `-9!` makes any value of bytes, a lambda too, which applied
+    // runs code the guard cannot read, `(-9!0x01..)[]` (#2633).
+    if (bang === i + 1 && (fn === "-5" || fn === "-9") && groupApplied(t, i - 1)) {
+      if (fn === "-9") {
+        found.add("applies a value -9! deserialises, which the guard cannot read");
+        continue;
+      }
+      if (t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" && writes([valued(qText(t[bang + 1].text))]).length > 0) {
+        found.add("applies what -5! makes of a string that changes the process");
+        continue;
       }
     }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
