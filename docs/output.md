@@ -48,7 +48,9 @@ object per rule that has any, the most frequent first:
 | `count` | integer | How many findings it has. |
 | `summary` | string | The rule's summary, as `why` above. |
 
-The exit code is the one the findings would give: 0 with none, 1 with any.
+The exit code is the one the findings would give: 1 when any of them is an
+`error` or a `warning`, 0 otherwise - with none, or with rows that count only
+`information` and `hint` findings.
 
 ## `--show-settings`
 

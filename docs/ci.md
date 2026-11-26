@@ -1,9 +1,11 @@
 # qlinter in CI
 
-qlinter exits 0 when it reports nothing, 1 when it reports a finding and 2
-when it cannot run (an unreadable configuration, a missing baseline). A CI
-step that runs it fails on the first finding, so on a tree that has findings
-today, start from a [baseline](#adopting-on-a-tree-with-findings).
+qlinter exits 1 when it reports a finding that is an error or a warning, 0
+when it reports none - nothing at all, or only findings a `[severity]` table
+made `information` or `hint` - and 2 when it cannot run (an unreadable
+configuration, a missing baseline). A CI step that runs it fails on the first
+error or warning, so on a tree that has findings today, start from a
+[baseline](#adopting-on-a-tree-with-findings).
 
 Pin a release everywhere: rules are added in every release, and a CI run
 that takes "the latest" fails one morning on code nobody touched.
