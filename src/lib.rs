@@ -229,6 +229,9 @@ pub struct References {
     /// Those of `defines` assigned before the file's first `\d`, by a name
     /// without a leading dot: a load under `\d .a` puts them in `.a`.
     pub implicit_defines: Vec<String>,
+    /// Those of `implicit_defines` assigned again after a `\d .`, which is
+    /// the root wherever the file is loaded: q keeps that one there.
+    pub root_defines: Vec<String>,
     /// The paths of `\l path`, `system "l path"` and `` `:path.q ``, as
     /// written, each with the `\d` in force where it is loaded, since the
     /// loaded script runs in it: `""` before the file's first `\d`, where

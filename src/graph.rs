@@ -88,7 +88,11 @@ pub fn build_from(
     let root = rooted(&loads, &tree, &contexts, &modules);
     for (d, read) in reads.iter().enumerate() {
         if !root[d] {
-            for name in &read.implicit_defines {
+            // But for one the script assigns again after a `\d .`: KDB-X
+            // runs b.q's `xx:1` / `\d .` / `xx:2` under `\d .a` to `.a.xx` 1
+            // and a root `xx` 2 (#2824).
+            let moved = |name: &&String| !read.root_defines.contains(name);
+            for name in read.implicit_defines.iter().filter(moved) {
                 if let Some(defs) = definers.get_mut(name) {
                     defs.retain(|&x| x != d);
                 }
@@ -529,10 +533,12 @@ impl Default for Placement {
 }
 
 impl Placement {
-    /// `file`, the index of a script whose root definitions are `implicit`
-    /// (its `References::implicit_defines`), with them where q puts them.
-    pub fn apply(&self, file: &mut FileIndex, implicit: &[String]) {
-        for name in implicit {
+    /// `file`, the index of the script `read` is the `References` of, with
+    /// its root definitions (`References::implicit_defines`) where q puts
+    /// them. One assigned again after a `\d .` stays at the root too: that
+    /// write is the root's wherever the script is loaded (#2824).
+    pub fn apply(&self, file: &mut FileIndex, read: &References) {
+        for name in &read.implicit_defines {
             let lambda = file.lambdas.contains(name);
             for ns in &self.contexts {
                 let qualified = format!("{ns}.{name}");
@@ -541,7 +547,7 @@ impl Placement {
                 }
                 file.defined.insert(qualified);
             }
-            if !self.root {
+            if !self.root && !read.root_defines.contains(name) {
                 file.lambdas.remove(name);
                 file.defined.remove(name);
             }

@@ -870,7 +870,7 @@ fn run(args: Args) -> Result<u8, String> {
         q_lint_rs::graph::placements(&paths, &read, std::slice::from_ref(&cwd))
             .into_iter()
             .zip(reads)
-            .map(|(placement, read)| Some((placement, read.implicit_defines)))
+            .map(|(placement, read)| Some((placement, read)))
             .collect()
     } else {
         vec![None; sources.len()]
@@ -880,8 +880,8 @@ fn run(args: Args) -> Result<u8, String> {
     for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
         if indexed.insert(q_lint_rs::graph::on_disk(file)) {
             let mut defined = index(source);
-            if let Some((placement, implicit)) = placed {
-                placement.apply(&mut defined, &implicit);
+            if let Some((placement, read)) = placed {
+                placement.apply(&mut defined, &read);
                 // And where it is loaded, which a rule that calls a name
                 // undefined asks about the names the file reads (#2178).
                 workspace.place(file, &placement);

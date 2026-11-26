@@ -314,7 +314,6 @@ const MAX_ENTRIES: usize = 500_000;
 struct Indexed {
     own: FileIndex,
     loads: Vec<(String, String)>,
-    implicit: Vec<String>,
     placement: Placement,
     placed: FileIndex,
     /// What the file reads, for the dependency graph `relate` draws when it
@@ -357,7 +356,7 @@ impl Index {
     fn put_keyed(&mut self, path: String, text: &str, withheld: bool) -> bool {
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
-        let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
+        let loads = read.loads.clone();
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| {
             old.loads != loads || old.read.module != read.module || old.read.uses != read.uses
@@ -382,7 +381,7 @@ impl Index {
             .map(|old| old.placement.clone())
             .unwrap_or_default();
         let mut placed = own.clone();
-        placement.apply(&mut placed, &implicit);
+        placement.apply(&mut placed, &read);
         if old.is_none() {
             self.ws.place(Path::new(&path), &placement);
         }
@@ -405,7 +404,6 @@ impl Index {
         let file = Indexed {
             own,
             loads,
-            implicit,
             placement,
             placed,
             read,
@@ -499,7 +497,7 @@ impl Index {
             changed = true;
             self.ws.place(Path::new(key), &placement);
             let mut placed = file.own.clone();
-            placement.apply(&mut placed, &file.implicit);
+            placement.apply(&mut placed, &file.read);
             file.placement = placement;
             if placed != file.placed {
                 if !file.withheld {

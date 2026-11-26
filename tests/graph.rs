@@ -1397,4 +1397,19 @@ fn a_script_loaded_only_under_a_context_defines_no_root_name() {
         false,
     );
     assert_eq!(deps(&g, "d.q"), ["b.q"]);
+    // Nor does it take from the root a name the script assigns again after
+    // a `\\d .`: KDB-X runs main.q to `.a.xx` 1 and a root `xx` 2 (#2824).
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("lib/b.q", "xx:1\nonly:1\n\\d .\nxx:2\n"),
+            ("d.q", "h:{xx}\n"),
+            ("e.q", "k:{.a.xx}\n"),
+            ("f.q", "m:{only}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "d.q"), ["b.q"]);
+    assert_eq!(deps(&g, "e.q"), ["b.q"]);
+    assert!(deps(&g, "f.q").is_empty());
 }

@@ -1779,6 +1779,11 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         .map(|(name, _)| name.clone())
         .collect();
     implicit_defines.sort();
+    let root_defines: Vec<_> = implicit_defines
+        .iter()
+        .filter(|&name| writes[name].iter().any(|&a| a >= first_switch))
+        .cloned()
+        .collect();
     let mut defines: Vec<_> = writes
         .into_keys()
         .chain(k_writes(raw, &placed))
@@ -1792,6 +1797,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         relative,
         defines,
         implicit_defines,
+        root_defines,
         loads: loads(
             code,
             raw,

@@ -1197,6 +1197,18 @@ fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
         repo.codes(".", &[&style[..], &["."]].concat()),
         Vec::<String>::new()
     );
+    // A name the script assigns again after a `\\d .` is the root's too:
+    // KDB-X runs `\\d .a` / `\\l c.q`, then r.q's `r:xx`, to 2 (#2824).
+    let repo = Repo::new();
+    repo.write("main.q", "\\d .a\n\\l c.q\n")
+        .write("c.q", "xx:1\nonly:1\n\\d .\nxx:2\n")
+        .write("r.q", "r:xx\n");
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["."]].concat()),
+        Vec::<String>::new()
+    );
+    repo.write("r.q", "r:only\n");
+    assert_eq!(repo.codes(".", &[&style[..], &["."]].concat()), ["QF018"]);
 }
 
 #[test]
