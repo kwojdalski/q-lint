@@ -141,11 +141,14 @@ test("a relative cwd, or a relative script with no cwd, is from the workspace fo
 });
 
 test("a definition is read from the saved list and an import, never from a discovery server", () => {
-  const entry = { label: "a", host: "localhost", port: 1, launch: { command: "q", script: "s.q", args: "-t 1000 \"x y\"", env: { A: "1", "B-C": "no", D: 2 }, junk: 1 } };
+  const entry = { label: "a", host: "localhost", port: 1, launch: { command: "q", script: "s.q", args: "-t 1000 \"x y\"", env: { A: "1", "B=C": "no", D: 2 }, junk: 1 } };
   // A number is its text: D's 2 was dropped, as was 5010 from ["-p", 5010] (#2521).
   assert.deepStrictEqual(parseProcesses([entry], true).processes[0].launch, { command: "q", script: "s.q", args: ["-t", "1000", "x y"], env: { A: "1", D: "2" } });
   assert.deepStrictEqual(launchOf({ args: ["-p", 5010, true, null], env: { SLAVES: 4, X: null, Y: false } }), { args: ["-p", "5010", "true"], env: { SLAVES: "4", Y: "false" } });
   assert.strictEqual(parseProcesses([entry]).processes[0].launch, undefined);
+  // A variable's name is any the system takes, not an identifier only (#3112).
+  const named = { "ProgramFiles(x86)": "C:\\x86", "A.B": "1", "my-var": "2", OK: "3", __proto__: null };
+  assert.deepStrictEqual(launchOf({ env: { ...named, "": "x", "A=B": "x", "N\0": "x" } }).env, { "ProgramFiles(x86)": "C:\\x86", "A.B": "1", "my-var": "2", OK: "3" });
   assert.deepStrictEqual(splitArgs('-a "b c" d'), ["-a", "b c", "d"]);
   // A quote groups anywhere in a word, as a shell's does (#1695).
   assert.deepStrictEqual(splitArgs('-name="a b" -x "" c'), ["-name=a b", "-x", "", "c"]);

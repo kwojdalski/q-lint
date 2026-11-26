@@ -326,7 +326,10 @@ export function launchOf(value: unknown): Launch | undefined {
   if (typeof v.env === "object" && v.env !== null && !Array.isArray(v.env)) {
     for (const [k, x] of Object.entries(v.env as Record<string, unknown>)) {
       const value = argText(x);
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && value !== undefined) {
+      // Any name the system takes - one with no `=` and no NUL - not a
+      // shell's identifiers only: `ProgramFiles(x86)`, `A.B` and `my-var`
+      // were left out, and the q started without them (#3112).
+      if (k !== "" && !/[=\0]/.test(k) && value !== undefined) {
         Object.defineProperty(env, k, { value, enumerable: true, writable: true, configurable: true });
       }
     }
