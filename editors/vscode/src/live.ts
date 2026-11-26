@@ -718,7 +718,7 @@ export class Live {
   readonly onDidAnswer = this.answered.event;
   /// The line a Run Line or Run Selection is running from, until `run`
   /// takes it.
-  private origin: { uri: string; line: number } | undefined;
+  private origin: { uri: string; line: number; version?: number } | undefined;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
@@ -2780,7 +2780,7 @@ export class Live {
     const { selection } = editor;
     // The last line of a selection that ends at a line's start is the one before.
     const last = selection.isEmpty ? selection.active.line : selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line - 1 : selection.end.line;
-    this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last } : undefined;
+    this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
     try {
       await this.queryCode(code, editor.document.uri, serverTypes);
     } finally {
