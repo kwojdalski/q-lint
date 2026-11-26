@@ -928,7 +928,10 @@ calls the gateway's own API or reads its state - any name in `.gw` or
 `.dataaccess.getdata[...]` - goes as written, and so does a read of the
 state a gateway keeps as every TorQ process does, in `.servers`, `.clients`
 or `.timer`, or of `.kxdash`: `select from .servers.SERVERS` on a gateway is
-the gateway's discovery, not a server's. The history keeps the call
+the gateway's discovery, not a server's. A selection is read statement by
+statement: the gateway's own go as written, with those a name ties to them
+(`count t` under `t:.gw.syncexec[...]`), and the others through
+`.gw.syncexec`. The history keeps the call
 as it was sent, and running it again does not wrap it twice; **Query
 Gateway on Server Types...** sends such an entry to the types chosen. A
 dashboard tile, a scheduled query, **Query a Tag**, **Compare Query**,

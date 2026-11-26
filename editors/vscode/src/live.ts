@@ -74,7 +74,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatement, isGatewayCall, isGatewayOwn, readGateway, withServerTypes } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
@@ -2930,15 +2930,17 @@ export class Live {
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
   /// (#909), to `serverTypes` or else the process's own; as written to any
-  /// other process, or with q-lint.connection.torqGateway.enable off.
+  /// other process, or with q-lint.connection.torqGateway.enable off. The
+  /// gateway's own statements stay as written, each for itself (#3059).
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
     const types = serverTypes ?? process.gateway;
     // `/ @servertypes none` names no server: the gateway itself (#2588).
-    if (process.gateway === undefined || types === undefined || types.length === 0 || isGatewayOwn(code) || !this.setting(readGateway).enabled) {
+    if (process.gateway === undefined || types === undefined || types.length === 0 || !this.setting(readGateway).enabled) {
       return code;
     }
     const cut = statements(code);
-    return cut.length === 0 ? code : gatewayStatement(cut, types);
+    const sent = gatewayStatements(cut, types);
+    return sent === cut ? code : sent.join("\n");
   }
 
   /// `cut`, statements for the active process, as they go to it from a
@@ -2968,7 +2970,7 @@ export class Live {
   /// through `.gw.syncexec`; undefined elsewhere. Copy Value as JSON (#2433).
   gatewayJoinedOnActive(code: string, join: string): string | undefined {
     const types = this.activeProcess()?.gateway;
-    return types === undefined || !this.goesThroughGateway(code) ? undefined : gatewayJoined(statements(code), types, join);
+    return types === undefined || isGatewayOwn(code) || !this.goesThroughGateway(code) ? undefined : gatewayJoined(statements(code), types, join);
   }
 
   /// Why `feature`, which runs `code` inside a lambda of q-lint's, refuses

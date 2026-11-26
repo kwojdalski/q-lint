@@ -13,7 +13,7 @@
 // what a lambda around it would answer is discarded: a gateway call is sent
 // as a plain string, never inside q-lint's lambda (#2584).
 import { qString } from "./qliteral";
-import { statements } from "./statements";
+import { contextSwitch, statements } from "./statements";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -160,7 +160,68 @@ export function isGatewayCall(code: string): boolean {
 /// `.proc.cp[]` in a where clause is a query for the servers. Such a read
 /// defers no reply, so it is no gateway call, and goes as any query does.
 export function isGatewayOwn(code: string): boolean {
-  return isGatewayCall(code) || statements(code).some((s) => names(s).some((n) => /^\.(servers|clients|timer|kxdash)\./.test(n)));
+  return statements(code).some(ownStatement);
+}
+
+function ownStatement(statement: string): boolean {
+  return names(statement).some((n) => /^\.(gw|dataaccess|servers|clients|timer|kxdash)\./.test(n));
+}
+
+/// Which of `cut` run on the gateway itself: its own statements, and those
+/// a name ties to one - `count t` after `t:.gw.syncexec[...]` (#2361), the
+/// `t:\`trade` a later `.gw.syncexec[({select from x};t);...]` reads
+/// (#1951) - which mean nothing on a server.
+function onGateway(cut: string[]): boolean[] {
+  const read = cut.map((s) => new Set(names(s)));
+  const set = cut.map((s) => /^([A-Za-z.][A-Za-z0-9_.]*)[ \t]*[^ \t\w"`(\[{;:]?:/.exec(s)?.[1]);
+  const own = cut.map(ownStatement);
+  for (let more = true; more; ) {
+    more = false;
+    for (let i = 0; i < cut.length; i++) {
+      const tied = (j: number): boolean => own[j] && (j < i ? set[j] !== undefined && read[i].has(set[j]) : set[i] !== undefined && read[j].has(set[i]!));
+      if (!own[i] && contextSwitch(cut[i]) === undefined && cut.some((_, j) => j !== i && tied(j))) {
+        own[i] = more = true;
+      }
+    }
+  }
+  return own;
+}
+
+/// `cut` as it goes to a gateway whose queries go to `types`, statement by
+/// statement (#3059): the gateway's own as written, and each run of the
+/// others as one `.gw.syncexec` call, so `n:count .gw.servers` above a
+/// query does not keep the query from its servers. A `\d` holds on both
+/// sides: it stays where it is for the gateway's statements, and heads each
+/// call that follows it. With none of the gateway's own, one call of all.
+export function gatewayStatements(cut: string[], types: string[]): string[] {
+  const own = onGateway(cut);
+  if (cut.length === 0 || !own.includes(true)) {
+    return cut.length === 0 ? cut : [gatewayStatement(cut, types)];
+  }
+  if (cut.every((s, i) => own[i] || contextSwitch(s) !== undefined)) {
+    return cut;
+  }
+  const out: string[] = [];
+  let run: string[] = [];
+  let context: string | undefined;
+  const call = (): void => {
+    if (run.length > 0) {
+      out.push(gatewayStatement(context === undefined ? run : [context, ...run], types));
+    }
+    run = [];
+  };
+  cut.forEach((s, i) => {
+    const to = contextSwitch(s);
+    if (to === undefined && !own[i]) {
+      run.push(s);
+      return;
+    }
+    call();
+    out.push(s);
+    context = to === undefined ? context : to === "." ? undefined : s;
+  });
+  call();
+  return out;
 }
 
 /// The server types a file names for its queries: a line at column 0

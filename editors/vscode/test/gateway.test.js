@@ -11,7 +11,8 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, isGatewayOwn, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, gatewayStatements, isGatewayCall, isGatewayOwn, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { statements } = require("../out/statements.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -311,6 +312,57 @@ test("a gateway's own discovery state is read on the gateway, not on a server (#
   // Written out, the call sends it to them.
   r = await query('.gw.syncexec["exec procname from .servers.SERVERS";`rdb]');
   assert.strictEqual(r.text, ",`tp1");
+});
+
+// One `.gw.` name anywhere made the whole selection the gateway's own, so
+// a query under `n:count .gw.servers` ran on the gateway: 'trade (#3059).
+test("a selection goes to a gateway statement by statement: its own as written, the rest through .gw.syncexec (#3059)", () => {
+  const through = (code) => gatewayStatements(statements(code), ["rdb"]);
+  assert.deepStrictEqual(through("n:count .gw.servers\nselect count i by sym from trade"), ["n:count .gw.servers", '.gw.syncexec["select count i by sym from trade";enlist `rdb]']);
+  // Statements next to each other for the servers are one call.
+  assert.deepStrictEqual(through("a:1\nb:a+1\n.gw.servers\ncount trade"), ['.gw.syncexec["a:1\\n ;b:a+1";enlist `rdb]', ".gw.servers", '.gw.syncexec["count trade";enlist `rdb]']);
+  // A statement a name ties to one of the gateway's runs where it does:
+  // what a call's answer was assigned to (#2361), what a call reads (#1951).
+  let cut = statements('t:.gw.syncexec["select from trade";`rdb]\ncount t\nu:2#t\nmeta u');
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  cut = statements("t:`trade\n.gw.syncexec[({select from x};t);`rdb`hdb]");
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  assert.deepStrictEqual(through("t:.gw.servers\ncount trade\ncount t"), ["t:.gw.servers", '.gw.syncexec["count trade";enlist `rdb]', "count t"]);
+  // A \d holds on both sides: for the gateway's statements where it is,
+  // and at the head of each call after it.
+  assert.deepStrictEqual(through("\\d .stats\nn:count .gw.servers\nf:{x+1}\n\\d .\ncount trade"), [
+    "\\d .stats",
+    "n:count .gw.servers",
+    '.gw.syncexec["system \\"d .stats\\"\\n ;f:{x+1}";enlist `rdb]',
+    "\\d .",
+    '.gw.syncexec["count trade";enlist `rdb]',
+  ]);
+  cut = statements("\\d .stats\ncount .gw.servers");
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  // None of the gateway's own: one call of all, as before.
+  assert.deepStrictEqual(through("n:count trade / rows\nn*10"), ['.gw.syncexec["n:count trade / rows\\n ;n*10";enlist `rdb]']);
+  assert.deepStrictEqual(through(""), []);
+});
+
+test("a query selected with one of the gateway's own statements still goes to its servers (#3059)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  lines.length = 0;
+  await live.run("n:count .gw.servers\nexec sym from trade");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["`a`b`c`d`e"]]);
+  assert.strictEqual(live.history()[0].code, 'n:count .gw.servers\n.gw.syncexec["exec sym from trade";`rdb`hdb]');
+  // Run again from the history, it goes as it was sent.
+  await stub.commands.get("q-lint.rerunQuery")(live.history()[0]);
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['n:count .gw.servers\n.gw.syncexec["exec sym from trade";`rdb`hdb]', "ok"]);
+  // What reads a name the gateway's statement set stays with it.
+  lines.length = 0;
+  await live.run("n:count .gw.servers\nn+1");
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome, lines.slice(1)], ["n:count .gw.servers\nn+1", "ok", ["3"]]);
+  // The servers' statement first, then the gateway's own count of them.
+  lines.length = 0;
+  await live.run("exec sym from trade\nn+count .gw.servers");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["4"]]);
 });
 
 test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the server types it came from (#2437)", { skip }, async (t) => {
