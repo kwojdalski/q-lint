@@ -143,7 +143,7 @@ export function registerProblemsDashboard(
           if (token.isCancellationRequested || !on()) {
             break;
           }
-          progress.report({ message: `${i + 1} of ${todo.length}: ${c.subject}`, increment: 100 / todo.length });
+          progress.report({ message: plainMessage(`${i + 1} of ${todo.length}: ${c.subject}`), increment: 100 / todo.length });
           points = withPoint(points, pointOf(await lintCommit(command, args, folder, c.commit), c.commit, c.date, c.subject));
           await context.workspaceState.update(trendKey(folder), points);
         }

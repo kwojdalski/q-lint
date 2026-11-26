@@ -300,7 +300,7 @@ export class LogViewer {
         }
       };
       if (big) {
-        await window.withProgress({ location: ProgressLocation.Notification, title: `q-lint: reading ${path.basename(view.files[0])}${view.files.length > 1 ? " and more" : ""}` }, read);
+        await window.withProgress({ location: ProgressLocation.Notification, title: plainMessage(`q-lint: reading ${path.basename(view.files[0])}${view.files.length > 1 ? " and more" : ""}`) }, read);
       } else {
         await read();
       }

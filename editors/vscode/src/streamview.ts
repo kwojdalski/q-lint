@@ -111,7 +111,7 @@ export class TableStreams {
     let connection: QConnection;
     try {
       // A notification, whose Cancel gives up a connect script that blocks (#2567).
-      connection = await window.withProgress({ location: ProgressLocation.Notification, title: `q-lint: connecting to ${process.label} to stream`, cancellable: true }, (_progress, token) => {
+      connection = await window.withProgress({ location: ProgressLocation.Notification, title: plainMessage(`q-lint: connecting to ${process.label} to stream`), cancellable: true }, (_progress, token) => {
         const cancel = new AbortController();
         token?.onCancellationRequested(() => cancel.abort());
         return this.live.openSeparate(process, undefined, cancel.signal);
