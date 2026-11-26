@@ -1646,8 +1646,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             )
         }
         // `reverse asc x` is `desc x` for a list or table, but not for a
-        // dictionary with tied values - q 5 orders the tied keys
-        // differently - so only in the editor.
+        // dictionary or keyed table with tied values - q 5 orders the tied
+        // keys differently, as the finding says (#2739) - so only in the
+        // editor.
         "QR001" => {
             let m = re!(concat!(r"^reverse", blank!(), r"+(asc|desc)\b"))
                 .captures(source.get(start..)?)?;

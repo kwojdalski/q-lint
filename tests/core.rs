@@ -998,6 +998,35 @@ fn string_equality_in_a_filter_names_the_row_count() {
     }
 }
 
+/// QR001 does not call the two the same outright: both sorts are stable,
+/// so with d:`a`b`c!1 1 2 q 5 gives `c`b`a for `key reverse asc d` and
+/// `c`a`b for `key desc d`, and 0b for `(reverse desc d)~asc d` (#2739).
+#[test]
+fn reverse_of_a_sort_is_the_other_sort_only_up_to_ties() {
+    for (source, claim) in [
+        (
+            "r:reverse asc d",
+            "`reverse asc` is `desc`, in one pass; on",
+        ),
+        (
+            "r:reverse desc d",
+            "`reverse desc` is `asc`, in one pass; on",
+        ),
+        (
+            "r:reverse asc d",
+            "differ in the order of keys whose values tie",
+        ),
+    ] {
+        let found = lint(source, "t.q", Profile::Style);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.code == "QR001" && f.detail.contains(claim)),
+            "{source:?}: QR001 should say {claim}: {found:?}"
+        );
+    }
+}
+
 /// QE009 names the iterator the way q 5's error does, whole: `b:,/:a` is
 /// '/:, `-':a` is ':, `f\:a` is '\:, and `{+/x}` is '/.
 #[test]

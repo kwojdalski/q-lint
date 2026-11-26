@@ -412,7 +412,11 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     let mut add = |at: usize, code_: &str, detail: String| {
         out.push(Finding::at(path, source, at, code_, detail));
     };
-    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
+    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x` -
+    // for a list or a table. Both sorts are stable, so a dictionary or keyed
+    // table with tied values gets their keys the other way round: q 5 gives
+    // 0b for `(reverse asc d)~desc d` with d:`a`b`c!1 1 2, and the message
+    // says so (#2739).
     for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
         if boundary(code, whole.start())
@@ -423,7 +427,11 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
             add(
                 whole.start(),
                 "QR001",
-                format!("`reverse {}` is `{other}`, in one pass", &m[1]),
+                format!(
+                    "`reverse {}` is `{other}`, in one pass; on a dictionary or keyed table \
+                     the two differ in the order of keys whose values tie",
+                    &m[1]
+                ),
             );
         }
     }
