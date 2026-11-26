@@ -366,6 +366,31 @@ test("a block comment nests: its inner \\ closes the inner one, and the outer \\
   assert.deepStrictEqual(await commentLines(`${script}\n\\\nz:1`), [...skipped, true, true]);
 });
 
+// q trims spaces, tabs and a carriage return before it asks whether a line
+// is a lone `/` or `\\`, and nothing else (#2279). On KDB-X the script
+// a:1, /<form feed>, b:2, /<no-break space>, d:4 defines b and d, and a `\\`
+// and a no-break space is a system command ('os), with the lines under it
+// still run.
+test("a / or a \\ and a no-break space or a form feed opens no block comment and ends no script (#2903)", async () => {
+  for (const blank of ["\u00a0", "\f"]) {
+    for (const k of [false, true]) {
+      const script = ["a:1", `/${blank}`, "b:2", `\\${blank}`, "c:3"].join("\n");
+      assert.deepStrictEqual(await commentLines(script, k), [false, true, false, false, false], JSON.stringify([blank, k]));
+      // And inside a block comment such a line closes nothing.
+      const inside = ["/", "x", `\\${blank}`, "y", "\\", "d:4"].join("\n");
+      assert.deepStrictEqual(await commentLines(inside, k), [true, true, true, true, true, false], JSON.stringify([blank, k]));
+    }
+    assert.deepStrictEqual(await scopesOf(`a:1\n/${blank}\nb:2`, "b"), ["variable.other.definition.q"]);
+    assert.deepStrictEqual(await scopesOf(`a:1\n\\${blank}\nb:2`, "b"), ["variable.other.definition.q"]);
+  }
+  // q's own blanks still do: a space, a tab, a carriage return.
+  for (const blank of [" ", "\t", "\r", " \t\r"]) {
+    for (const k of [false, true]) {
+      assert.deepStrictEqual(await commentLines(["a:1", `/${blank}`, "b:2", `\\${blank}`, "c:3", `\\${blank}`, "d:4"].join("\n"), k), [false, true, true, true, false, true, true], JSON.stringify([blank, k]));
+    }
+  }
+});
+
 // On KDB-X each of these is one literal (`-4!` one token, `type value` a
 // timestamp, timespan or datetime): the hours after D or T are any number of
 // digits, with a fraction, when nothing follows them - 1970.01.01D0 is
