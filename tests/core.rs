@@ -1919,6 +1919,28 @@ fn an_invalid_escape_at_a_line_end_is_named_in_words() {
     }
 }
 
+/// QB004 counts a message as q keeps it. In a script q drops the blanks and
+/// the CR that end each line of a string, and keeps the line break and the
+/// next line's indent: KDB-X 5 reads `"abc  \n  def \t \n  ghi"` from a file
+/// as "abc\n  def\n  ghi", in a CRLF file too (#2995).
+#[test]
+fn a_thrown_message_is_counted_without_the_blanks_ending_its_lines() {
+    let x = "x".repeat(120);
+    let thrown = |end: &str, last: &str| {
+        let source = format!("f:{{'\"{x}{end}  {x}{end}  {last}\"}}{end}");
+        lint(&source, "t.q", Profile::Style)
+            .into_iter()
+            .find(|f| f.code == "QB004")
+            .map(|f| f.detail)
+    };
+    for end in ["\n", "\r\n", "  \n", " \t\r\n"] {
+        // 120, a break, 2 + 120, a break, 2 + 8: the 254 q keeps.
+        assert_eq!(thrown(end, "yyyyyyyy"), None, "{end:?}");
+        let over = thrown(end, "yyyyyyyyy").expect("QB004");
+        assert!(over.contains("255 bytes"), "{end:?}: {over}");
+    }
+}
+
 /// A typed slot binds its pattern's names: q 5 defines `{[a:`j] a}` and checks
 /// the type at the call, so `a` is a parameter, not body text (#304). A slot
 /// that is no pattern at all is still reported.

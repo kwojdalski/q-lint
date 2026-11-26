@@ -4532,8 +4532,19 @@ pub fn shown(text: &str) -> Cow<'_, str> {
 /// The bytes q makes of a string literal's body, the text between its
 /// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
 /// one byte it stands for: `\n`, `\"`, `\012` (#226). A byte that was not
-/// UTF-8 is the one byte it is (#2862).
+/// UTF-8 is the one byte it is (#2862). Of a string written over several
+/// lines q keeps each line break and the next line's indent, and drops the
+/// blanks and the CR that end a line: KDB-X 5 reads `"abc  \n  def"` from a
+/// script as "abc\n  def", in a CRLF file too (#2995).
 pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
+    let kept;
+    let body = match body.contains('\n') {
+        true => {
+            kept = re!(r"[ \t\r]+\n").replace_all(body, "\n");
+            &*kept
+        }
+        false => body,
+    };
     let mut out = vec![];
     for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
         match m.as_str().strip_prefix('\\') {
