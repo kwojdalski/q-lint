@@ -106,6 +106,26 @@ x:`a+
 "a"
 y:`a+"a"+
 
+=== clean profile: general | a symbol atom beside the empty list is the empty list, and beside a dictionary of them that dictionary (#2880; q 5: () each, `x`y!(();()) for the last two)
+r:`a+()
+r1:()*`a
+r2:`a mod ( )
+r3:() xexp `a
+r4:+[`a;()]
+r5:&[();`a]
+r6:`a+`x`y!()
+r7:`a - `x`y ! ( )
+
+=== QT003 profile: general | but a vector beside it is 'length, and xlog, a minus with the list on its left, or a list that only starts empty, 'type (#2880; q 5: 'length, 'length, 'type each after)
+r:`a`b+()
+r1:()+`a`b
+r2:`a xlog ()
+r3:() xlog `a
+r4:()-`a
+r5:-[();`a]
+r6:`a+(),1
+r7:xlog[`a;()]
+
 === QT003 profile: general | xbar is arithmetic too, infix or applied with brackets (#2882; q 5: each is 'type)
 r:`a xbar 1 2
 r2:2 xbar `a

@@ -7356,6 +7356,32 @@ fn lint_rules(
         {
             continue;
         }
+        // A symbol atom beside the empty list makes the empty list, and
+        // beside a dictionary of them that dictionary: `` `a+() ``,
+        // `` ()*`a `` and `` `a+`x`y!() `` run (KDB-X, #2880). Not for a
+        // vector, which is 'length, nor for `xlog`, nor for `` ()-`a ``, the
+        // one glyph that is 'type with the list on its left.
+        let empty = re!(r"^(?:\([ \t]*\)|(?:`[A-Za-z][A-Za-z0-9_.]*){2,}[ \t]*![ \t]*\([ \t]*\))$");
+        let glyph = |c: char| c.is_whitespace() || "+-*%&|".contains(c);
+        if m.as_str().starts_with('`') {
+            let (symbol, operator) = m.as_str().split_at(m.as_str().find(glyph).unwrap());
+            let end = phrase_end(code, m.end());
+            let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);
+            if symbol.matches('`').count() == 1
+                && operator.trim() != "xlog"
+                && empty.is_match(code[m.end()..end].trim())
+            {
+                continue;
+            }
+        } else {
+            let (operator, symbol) = m.as_str().split_at(m.as_str().find('`').unwrap());
+            if symbol.matches('`').count() == 1
+                && !["-", "xlog"].contains(&operator.trim())
+                && re!(r"\([ \t]*\)[ \t]*$").is_match(&code[..at])
+            {
+                continue;
+            }
+        }
         if m.as_str().starts_with('`') {
             let end = phrase_end(code, m.end());
             let end = code[m.end()..end].find('\n').map_or(end, |n| m.end() + n);

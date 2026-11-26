@@ -584,6 +584,13 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
         let arithmetic = [
             "+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog", "xbar",
         ];
+        // A symbol atom beside the empty list makes the empty list: q 5
+        // `+[`a;()]` and `*[();`a]` are `()`. Not under `xlog`, nor for
+        // `-[();`a]`, which are 'type (#2880).
+        let atom = |s: &str| symbol(s) && s.matches('`').count() == 1;
+        let none = |s: &str| re!(r"^\([ \t]*\)$").is_match(s);
+        let empty_list = g != "xlog"
+            && ((atom(l) && none(r)) || (none(l) && atom(r) && g != "-"));
         let char_refused = matches!(g, "+" | "-" | "*")
             && match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
                 (Some(a), Some(b)) => {
@@ -605,7 +612,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 "QT006",
                 format!("`{g}` pairs a {a}-vector with a {b}-vector; that is a 'length error"),
             ),
-            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) => (
+            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) && !empty_list => (
                 "QT003",
                 "Arithmetic on a symbol literal is a 'type error at runtime".into(),
             ),
