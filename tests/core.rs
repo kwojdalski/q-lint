@@ -2075,3 +2075,27 @@ fn many_top_level_signals_lint_in_linear_time() {
         "2000 signals took {small:?} and 16000 {large:?}"
     );
 }
+/// A file of statements left open - a bad paste or merge. The line each
+/// unclosed bracket is reported before was counted from the start of the
+/// file; and with QE001 deselected, so that the other rules run, each line
+/// read on to the end of its statement, the file's (#2867).
+#[test]
+fn many_unclosed_statements_lint_in_linear_time() {
+    for structure in [true, false] {
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("a{i}:(1\n")).collect();
+            best_of_three(|| {
+                q_lint_rs::lint_every_rule(&source, "t.q", &Workspace::default(), structure)
+            })
+        };
+        time(2500); // warm the allocator and the regex caches
+        let (small, large) = (time(2500), time(20000));
+        eprintln!("2500 unclosed statements took {small:?} and 20000 {large:?}");
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk
+        // by four times.
+        assert!(
+            large < small * 16,
+            "2500 unclosed statements took {small:?} and 20000 {large:?}"
+        );
+    }
+}

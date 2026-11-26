@@ -5813,12 +5813,15 @@ fn problems(source: &str, v: &Views) -> Vec<(usize, String)> {
     let mut found = vec![];
     let mut stack: Vec<(u8, usize)> = vec![];
     let mut offset = 0;
-    for line in v.code.split_inclusive('\n') {
+    // The line's number is counted as the lines go by: counted from the
+    // start of the file for each unclosed bracket, a file of them - a bad
+    // paste or merge - took time quadratic in its length (#2867).
+    for (row, line) in v.code.split_inclusive('\n').enumerate() {
+        let row = row + 1;
         let raw = &source[offset..offset + line.len()];
         if let Some(&(c, at)) = stack.last()
             && begins(source, v, offset, line)
         {
-            let row = source[..offset].matches('\n').count() + 1;
             found.push((
                 at,
                 format!(
@@ -5862,7 +5865,6 @@ fn problems(source: &str, v: &Views) -> Vec<(usize, String)> {
                         Some((want, at)) if want != c => {
                             match stack.iter().rposition(|&(w, _)| w == c) {
                                 Some(outer) => {
-                                    let row = source[..offset].matches('\n').count() + 1;
                                     found.push((
                                         at,
                                         format!(
@@ -9697,6 +9699,21 @@ fn lint_rules(
         let (mut open, mut ends) = (0i32, vec![0; statements.len()]);
         let mut first = 0;
         for (n, &(start, end)) in statements.iter().enumerate() {
+            // A group at column 0 begins a statement whatever is open above
+            // it, which is QE001's to report and ends there: read as one
+            // statement to the end of the file, a file of statements left
+            // open was quadratic in its lines (#2867).
+            if open > 0
+                && begins(
+                    source,
+                    &v,
+                    start,
+                    code[start..end].lines().next().unwrap_or(""),
+                )
+            {
+                ends[first..n].fill(start);
+                open = 0;
+            }
             if open <= 0 {
                 first = n;
             }
@@ -9711,24 +9728,33 @@ fn lint_rules(
                 ends[first..=n].fill(end);
             }
         }
-        for (n, &(start, end)) in statements.iter().enumerate() {
-            let mut depth = code[start..end].bytes().fold(0i32, |d, b| match b {
-                b'(' | b'[' | b'{' => d + 1,
-                b')' | b']' | b'}' => d - 1,
-                _ => d,
-            });
-            depth = depth.max(0);
-            let rest = &code.as_bytes()[end..ends[n]];
-            for (i, &b) in rest.iter().enumerate() {
-                match b {
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' | b';' if depth == 0 => {
-                        ends[n] = end + i + 1;
-                        break;
-                    }
-                    b')' | b']' | b'}' => depth -= 1,
-                    _ => {}
+        // The first closer or `;` at the depth the group leaves off at, looked
+        // up among those at each depth rather than read on for: a file of
+        // statements left open read every group on to its end, quadratic in
+        // its lines (#2867).
+        let mut before = Vec::with_capacity(code.len() + 1);
+        let mut stops: std::collections::HashMap<i32, Vec<usize>> = Default::default();
+        let mut depth = 0i32;
+        for (i, b) in code.bytes().enumerate() {
+            before.push(depth);
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    stops.entry(depth).or_default().push(i);
+                    depth -= 1;
                 }
+                b';' => stops.entry(depth).or_default().push(i),
+                _ => {}
+            }
+        }
+        before.push(depth);
+        for (n, &(start, end)) in statements.iter().enumerate() {
+            let level = before[end] - (before[end] - before[start]).max(0);
+            let stop = stops
+                .get(&level)
+                .and_then(|at| at.get(at.partition_point(|&i| i < end)));
+            if let Some(&stop) = stop.filter(|&&stop| stop < ends[n]) {
+                ends[n] = stop + 1;
             }
         }
         ends
