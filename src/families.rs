@@ -624,6 +624,25 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     }
 }
 
+/// The words a comment labels a line of documentation with, before a colon:
+/// `/ usage: {x} 1` shows a call, and defines no `usage`.
+const DOC_LABELS: &[&str] = &[
+    "e.g",
+    "eg",
+    "example",
+    "examples",
+    "i.e",
+    "ie",
+    "note",
+    "notes",
+    "return",
+    "returns",
+    "see",
+    "signature",
+    "syntax",
+    "usage",
+];
+
 /// #11: things left in q that were never meant to ship. Both are taste rather
 /// than defects, so both are `styleq` - off in the default.
 ///
@@ -675,7 +694,14 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
                 || re!(r"^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*){2}")
                     .is_match(line[c..].trim())
         });
-        if in_comment(name.start()) && !prose {
+        // And a label of the documentation is no name being defined:
+        // `/ Example: {x+1} each 1 2 3`, `/ Returns: {[a;b] a+b}`,
+        // `/ e.g: {x}` (#2926). The words a comment labels its lines with,
+        // or any capitalised word with a blank after its colon.
+        let label = DOC_LABELS.contains(&name.as_str().to_ascii_lowercase().as_str())
+            || (re!(r"^[A-Z][a-z]+$").is_match(name.as_str())
+                && source[..brace].ends_with([' ', '\t']));
+        if in_comment(name.start()) && !prose && !label {
             out.push(Finding::at(
                 path,
                 source,
