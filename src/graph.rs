@@ -249,7 +249,7 @@ impl<'a> Tree<'a> {
         // `.Q.lo`), so it leads to each of them (#533).
         let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
         for (i, p) in files.iter().enumerate() {
-            if let Some(dir) = p.parent() {
+            if let Some(dir) = p.parent().filter(|_| !partition_named(p)) {
                 scripts_in.entry(dir).or_default().push(i);
             }
         }
@@ -274,14 +274,27 @@ impl<'a> Tree<'a> {
     }
 }
 
+/// Whether a directory's load takes the file at `path` for a partition and
+/// not a script, by its name: `.Q.lo` runs no entry that starts with a digit,
+/// nor `par.txt`. KDB-X's `\l db` with a db/1b.q stops with 'part and never
+/// runs it (#2815).
+pub fn partition_named(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name == "par.txt"
+            || name
+                .as_encoded_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_digit)
+    })
+}
+
 /// The files `\l load` in the file at `from` leads to, as the graph follows
 /// it: the first place q tries that `file` finds, under the path tried or
 /// the real path it names, or else the scripts `scripts_in` finds directly
 /// in the directory at the first place - a directory only where q looks, the
-/// current one: `\l .`, a database reloading itself, is no load of the
-/// scripts beside the file that says it. Nothing for a load that reaches no
-/// file. The language server follows a load line with this too, over the
-/// files it indexes.
+/// current one, and never `\l .`, a database reloading itself, which runs
+/// no script. Nothing for a load that reaches no file. The language server
+/// follows a load line with this too, over the files it indexes.
 pub fn loaded<T>(
     from: &Path,
     load: &str,
@@ -289,6 +302,12 @@ pub fn loaded<T>(
     file: impl Fn(&Path) -> Option<T>,
     scripts_in: impl FnOnce(&Path) -> Vec<T>,
 ) -> Vec<T> {
+    // `.Q.lo` runs a directory's scripts unless the load is of `.` itself:
+    // KDB-X, started beside b.q, runs it for `\l ./` and `\l ../here` and
+    // not for `\l .` (#2814).
+    if load == "." {
+        return vec![];
+    }
     let candidates = load_targets(from, load, cwd);
     candidates
         .iter()

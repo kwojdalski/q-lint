@@ -329,6 +329,7 @@ impl<'a> Sources<'a> {
             self.keys()
                 .into_iter()
                 .filter(|key| Path::new(key).parent() == Some(Path::new(&dir)))
+                .filter(|key| !graph::partition_named(Path::new(key)))
                 .map(str::to_string)
                 .collect()
         };

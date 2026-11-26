@@ -976,18 +976,66 @@ fn a_loaded_directory_leads_to_the_scripts_in_it() {
         false,
     );
     assert_eq!(deps(&g, "main.q"), ["init.q"]);
-    // Not the head of a path joined at run time; and `\l .` is the current
-    // directory, not the one beside the file that says it.
+    // Not the head of a path joined at run time.
     let g = graph(
         &[
             ("db/init.q", "fromdir:42\n"),
-            ("db/reload.q", "f:{system \"l .\"}\n"),
             ("main.q", "L:{system \"l db/\",x}\n"),
         ],
         false,
     );
     assert!(deps(&g, "main.q").is_empty());
-    assert_eq!(deps(&g, "db/reload.q"), ["main.q"]);
+}
+
+#[test]
+fn a_load_of_the_current_directory_itself_runs_no_script() {
+    // KDB-X, started beside b.q (`bx:1`): after `\l .` or `system "l ."`,
+    // `` `bx in key`. `` is 0b - `.Q.lo` runs scripts unless the load is of
+    // `.` - where `\l ./` and `\l ../here` run b.q (#2814).
+    for load in ["\\l .\n", "system \"l .\"\n", "\\d .db\n\\l .\n"] {
+        let g = graph(
+            &[
+                ("a.q", load),
+                ("b.q", "bx:1\n"),
+                ("db/reload.q", "f:{system \"l .\"}\n"),
+            ],
+            false,
+        );
+        assert!(deps(&g, "a.q").is_empty(), "{load:?}");
+        assert!(deps(&g, "db/reload.q").is_empty(), "{load:?}");
+    }
+    let g = graph(&[("a.q", "\\l ./\n"), ("b.q", "bx:1\n")], false);
+    assert_eq!(deps(&g, "a.q"), ["b.q"]);
+    // b.q is not put in `.db` by a load that does not run it, so its `bx`
+    // stays the root's, which c.q reads.
+    let g = graph(
+        &[
+            ("a.q", "\\d .db\n\\l .\n"),
+            ("b.q", "bx:1\n"),
+            ("sub/c.q", "r:bx\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "sub/c.q"), ["b.q"]);
+}
+
+#[test]
+fn a_loaded_directory_runs_no_script_named_as_a_partition() {
+    // KDB-X: `\l db` with db/a.q and db/1b.q stops with 'part and never
+    // runs 1b.q - `.Q.lo` takes an entry starting with a digit for a
+    // partition, as it takes `par.txt` (#2815).
+    let g = graph(
+        &[
+            ("db/a.q", "aa:1\n"),
+            ("db/1b.q", "bb:1\n"),
+            ("main.q", "\\l db\n"),
+            // Loaded by its own path it is a script like any other.
+            ("named.q", "\\l db/1b.q\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "main.q"), ["a.q"]);
+    assert_eq!(deps(&g, "named.q"), ["1b.q"]);
 }
 
 #[test]
