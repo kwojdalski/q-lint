@@ -7286,8 +7286,9 @@ fn lint_rules(
     // but an indented line continues it, on either side of the operator and
     // past blank and comment lines (#224, #688).
     // `&` and `|` are min and max, and 'type on a symbol too, as are the
-    // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a). Not `^`: a
-    // symbol fills a symbol list (`none^s).
+    // word operators (q 5: `a&`b, `a mod 2, 2 xexp `a, and `a xbar 1 2
+    // and 2 xbar `a, #2882). Not `^`: a symbol fills a symbol list
+    // (`none^s).
     // The null symbol, a lone backtick, is one too: q 5 `` ` + 1 `` is 'type.
     // So is a name that starts with `.` or holds a `:` past its first
     // character: `` `.a+1 `` and `` `a:b+1 `` (q 5: 'type, #600).
@@ -7296,7 +7297,7 @@ fn lint_rules(
         blank!(),
         r"*[+\-*%&|]|",
         blank!(),
-        r"+(?:mod|div|xexp|xlog|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
+        r"+(?:mod|div|xexp|xlog|xbar|and|or)[ \t])|(?:[+\-*%&|][ \t]*(?:(?:\r?\n[ \t]*)*\r?\n[ \t]+)?|[ \t](?:mod|div|xexp|xlog|xbar|and|or)(?:[ \t]*(?:\r?\n[ \t]*)*\r?\n[ \t]+|[ \t]+))(?:`(?:\.?[A-Za-z][A-Za-z0-9_.:]*)?)+"
     ));
     // Searched one match at a time: a symbol rejected as the right operand
     // may still be the left one of the operator after it - `` 1+`a+1 `` is

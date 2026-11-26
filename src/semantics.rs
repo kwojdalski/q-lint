@@ -552,7 +552,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
     let number =
         |s: &str| re!(r"^-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*$").is_match(s);
     for m in re!(
-        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog)(?P<we>')?\["
+        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog|xbar)(?P<we>')?\["
     )
     .captures_iter(code)
     {
@@ -581,7 +581,9 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
         }
         let g = glyph.as_str();
         let text = &raw[whole.start()..close];
-        let arithmetic = ["+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog"];
+        let arithmetic = [
+            "+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog", "xbar",
+        ];
         let char_refused = matches!(g, "+" | "-" | "*")
             && match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
                 (Some(a), Some(b)) => {

@@ -94,6 +94,18 @@ z:f[`a%]
 w:`b-
 u:`a mod
 
+=== QT003 profile: general | xbar is arithmetic too, infix or applied with brackets (#2882; q 5: each is 'type)
+r:`a xbar 1 2
+r2:2 xbar `a
+r3:xbar[2;`a]
+r4:xbar[`a;2]
+
+=== QT006 profile: general | and its bracket form checks lengths first (#2882; q 5: 'length)
+r:xbar[1 2 3;4 5]
+
+=== clean profile: general | while xbar in a parse tree is an item of a list (#2882)
+r:(xbar;5;`time)
+
 === clean | a char meets a float, or sits right of minus, or is divided: q 5 runs all three
 r1:1.5+"a"
 r2:"ab"%2
