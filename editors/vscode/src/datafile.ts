@@ -221,20 +221,79 @@ export function csvLoad(types: string[], delimiter: string, source: string): str
   return `(${qString(types.join(""))};enlist ${charLiteral(delimiter)})0:${source}`;
 }
 
-/// Lines as a q list of strings, for a process that cannot read the file.
-export function linesLiteral(text: string): string {
-  const lines = text.replace(/^﻿/, "").split(/\r?\n/);
+/// Bytes as a q string literal, byte for byte: a UTF-8 character as it is,
+/// any other byte - a Latin-1 export's `\374` - as its octal escape, which
+/// a decode as UTF-8 would have made U+FFFD (#2468). One byte is enlisted.
+export function bytesLiteral(bytes: Uint8Array): string {
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  let out = "";
+  for (let i = 0; i < bytes.length; ) {
+    const b = bytes[i];
+    const length = b < 0x80 ? 1 : b >= 0xc2 && b <= 0xdf ? 2 : b >= 0xe0 && b <= 0xef ? 3 : b >= 0xf0 && b <= 0xf4 ? 4 : 0;
+    let char: string | undefined;
+    try {
+      char = length > 0 && i + length <= bytes.length ? utf8.decode(bytes.subarray(i, i + length)) : undefined;
+    } catch {
+      char = undefined;
+    }
+    if (char === undefined) {
+      out += `\\${b.toString(8).padStart(3, "0")}`;
+      i++;
+    } else {
+      out += stringLiteral(char).slice(1, -1);
+      i += length;
+    }
+  }
+  return bytes.length === 1 ? `enlist "${out}"` : `"${out}"`;
+}
+
+const BOM = [0xef, 0xbb, 0xbf];
+const unmarked = (bytes: Uint8Array): Uint8Array => (BOM.every((b, i) => bytes[i] === b) ? bytes.subarray(3) : bytes);
+
+/// Lines as a q list of strings, for a process that cannot read the file:
+/// its text, or its bytes, sent as they are (#2468).
+export function linesLiteral(text: string | Uint8Array): string {
+  let lines: string[];
+  if (typeof text === "string") {
+    lines = text.replace(/^\ufeff/, "").split(/\r?\n/);
+  } else {
+    const bytes = unmarked(text);
+    const parts: Uint8Array[] = [];
+    for (let at = 0; at <= bytes.length; ) {
+      const end = bytes.indexOf(0x0a, at) === -1 ? bytes.length : bytes.indexOf(0x0a, at);
+      parts.push(bytes.subarray(at, end > at && bytes[end - 1] === 0x0d ? end - 1 : end));
+      at = end + 1;
+    }
+    lines = parts.map((p) => Buffer.from(p).toString("latin1"));
+    while (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    const literals = parts.slice(0, lines.length).map(bytesLiteral);
+    return literals.length === 1 ? `enlist ${literals[0]}` : `(${literals.join(";")})`;
+  }
   while (lines.length > 0 && lines[lines.length - 1] === "") {
     lines.pop();
   }
   return lines.length === 1 ? `enlist ${qString(lines[0])}` : `(${lines.map(qString).join(";")})`;
 }
 
+/// A JSON file's text for `.j.k`, its newlines as spaces: its bytes as they
+/// are (#2468), and with no byte order mark, which `.j.k` refuses (#2448).
+function jsonLiteral(text: string | Uint8Array): string {
+  if (typeof text === "string") {
+    return stringLiteral(text.replace(/^\ufeff/, "").replace(/\r?\n/g, " "));
+  }
+  const bytes = Buffer.from(unmarked(text));
+  const spaced = Buffer.from(bytes.toString("latin1").replace(/\r?\n/g, " "), "latin1");
+  return bytesLiteral(spaced);
+}
+
 /// The expression that loads a data file: by its path when the process
-/// can read it (`local`), or else from its text, which must then be given.
-export function loadExpression(kind: DataKind, path: string, local: boolean, sample: Pick<Sample, "types" | "delimiter"> & { bom?: boolean }, text?: string): string {
+/// can read it (`local`), or else from its text or bytes, which must then be given.
+export function loadExpression(kind: DataKind, path: string, local: boolean, sample: Pick<Sample, "types" | "delimiter"> & { bom?: boolean }, text?: string | Uint8Array): string {
   if (kind === "json") {
-    return local ? `.j.k raze read0 ${fileHandle(path)}` : `.j.k ${stringLiteral((text ?? "").replace(/\r?\n/g, " "))}`;
+    // A byte order mark first is dropped: `.j.k` refuses it (#2448).
+    return local ? `.j.k {$["\\357\\273\\277"~3#x;3_x;x]}raze read0 ${fileHandle(path)}` : `.j.k ${jsonLiteral(text ?? "")}`;
   }
   return csvLoad(sample.types, sample.delimiter, local ? fileSource(path, sample.bom === true) : linesLiteral(text ?? ""));
 }

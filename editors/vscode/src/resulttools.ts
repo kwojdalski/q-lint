@@ -402,7 +402,8 @@ export class ResultTools {
       );
       return;
     }
-    const text = local ? undefined : await readFile(file.fsPath, "utf8");
+    // Its bytes, not their decode as UTF-8, which makes a Latin-1 byte U+FFFD (#2468).
+    const text = local ? undefined : await readFile(file.fsPath);
     const sample = kind.kind === "csv" ? sampleText(head.text, kind.delimiter, head.cut) : { types: [], delimiter: "" };
     if (kind.kind === "csv" && sample.types.length === 0) {
       void window.showInformationMessage(plainMessage(`q-lint: ${basename(file.fsPath)} has no header line to name its columns.`));
