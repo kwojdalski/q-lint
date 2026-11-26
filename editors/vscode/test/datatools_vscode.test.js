@@ -147,6 +147,15 @@ test("Wrangle Result applies a step over the result's query on its process, in t
   assert.strictEqual(live.ran.at(-1).code, `delete sym from (${NOT_PARTITIONED}t)`);
 });
 
+test("a wrangle step on a column named i is refused: a filter or a cast of it reads the row's index (#3089)", async () => {
+  const { live } = setUp();
+  live.shown = { process: "rdb", code: "t", payload: { ...payload, names: ["i", "px"], types: [7, 9], cells: [["10", "20"], ["1.5", "2"]], raw: [[10, 20], [1.5, 2]] } };
+  stub.picks.push("$(filter) Filter rows...");
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 0 });
+  assert.deepStrictEqual(stub.messages.at(-1), ["warning", "q-lint: the column i cannot be named in q-sql (i there is the row's index, not the column)."]);
+  assert.deepStrictEqual(live.ran, []);
+});
+
 // A gateway's result carries its code as sent; its steps are built over the
 // query inside and go to the same servers, not wrapped again (#2436), and a
 // cell edit goes there too (#2437).

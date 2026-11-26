@@ -163,6 +163,16 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(w.guessTable('select from trade where s like "from quote"'), "trade");
 });
 
+test("a column named i is refused: in q-sql i is the row's index, whatever the table holds (#3081, #3089)", () => {
+  assert.match(w.columnProblem("i"), /the column i cannot be named in q-sql \(i there is the row's index/);
+  assert.strictEqual(w.columnProblem("ix"), undefined);
+  // An edit would find its row by the index: (i~\:(1)) is the second row, not the one whose i is 1.
+  const table = { count: 2, keys: 0, names: ["i", "v"], types: [7, 7], cells: [["1", "0"], ["5", "5"]], raw: [[1, 0], [5, 5]], rank: [] };
+  assert.match(w.editStatement(table, 1, 0, "tt", "99").error, /the column i cannot be named in q-sql/);
+  assert.match(w.editStatement({ ...table, keys: 1, names: ["k", "i"] }, 1, 0, "tt", "99").error, /the column i cannot be named in q-sql/);
+  assert.strictEqual(w.editStatement({ ...table, keys: 1, names: ["k", "v"] }, 1, 0, "tt", "99").code, "update v:(99) from `tt where (k~\\:(1))");
+});
+
 test("an unwrapped grid's cell edit finds its row by a long past 2^53 exactly (#1276)", () => {
   const { gridOfQ } = require("../out/qformat.js");
   const grid = gridOfQ(

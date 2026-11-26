@@ -98,8 +98,14 @@ export function wrangleBase(code: string): string | undefined {
   return undefined;
 }
 
-/// Why `name` cannot be written in q-sql as a column, or undefined.
+/// Why `name` cannot be written in q-sql as a column, or undefined. `i`
+/// there is the row's index, whatever column the table has of that name: a
+/// filter or a cast of it read the index, and a cell edit found its row by
+/// it (#3081, #3089).
 export function columnProblem(name: string): string | undefined {
+  if (name === "i") {
+    return "the column i cannot be named in q-sql (i there is the row's index, not the column)";
+  }
   return plainName(name) ? undefined : `the column ${name} cannot be named in q-sql (it is not a plain name, or it is a reserved word)`;
 }
 
