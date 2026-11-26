@@ -159,6 +159,9 @@ export class Launcher {
     this.starting.add(label);
     let problem: string | undefined;
     try {
+      // Closed first, as Stop Process closes it: not a drop to reconnect
+      // after (#2564).
+      await this.live.stopping(label, this.started.get(label)!.port);
       await this.end(label);
       problem = await this.launch(process);
     } finally {
@@ -348,7 +351,8 @@ export class Launcher {
   private stopAll(): void {
     const channels = [...this.channels.values()];
     this.channels.clear();
-    void Promise.all([...this.started.keys()].map((label) => this.end(label))).then(() => {
+    // Each connection closed first, as Stop Process closes it (#2564).
+    void Promise.all([...this.started].map(([label, { port }]) => this.live.stopping(label, port).then(() => this.end(label)))).then(() => {
       for (const channel of channels) {
         channel.dispose();
       }
