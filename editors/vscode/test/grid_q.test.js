@@ -264,6 +264,20 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     }
   });
 
+  // -3! writes the join verb and its derived functions bare - (,;1), (,/;1),
+  // ,, for enlist(,) - and each became enlist: another value, or 'parse (#2409).
+  await t.test("an exported q literal rebuilds the join verb and its iterator forms, not enlist (#2409)", async () => {
+    const { tableLiteral } = require("../out/qliteral.js");
+    const items = ["(,)", "(,/)", "(,')", "(,\\)", "(,/:)", "(,\\:)", "(,':)", "`a`b!((,/);(+))"];
+    const tables = items.flatMap((v) => [`([] c:(${v};1))`, `([] c:enlist ${v})`, `([] c:enlist enlist ${v})`]);
+    for (const code of tables) {
+      const grid = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      const literal = tableLiteral(grid).code;
+      const same = await connection.query(statements(`(${code})~${literal}`), SIZE);
+      assert.deepStrictEqual(same.text, ["1b"], `${code}\nwritten as\n${literal}`);
+    }
+  });
+
   await t.test("an exported q literal rebuilds a one-character string in a list, a symbol starting with _ and the other awkward cells (0.29.0 bug)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
     const tables = [

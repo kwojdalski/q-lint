@@ -93,10 +93,16 @@ export function symbolLiteral(name: string): string {
   return /^(?:[A-Za-z0-9.][A-Za-z0-9_.]*)?$/.test(name) ? `\`${name}` : `\`$${stringLiteral(name)}`;
 }
 
-/// `::`, or an operator with its iterators, where an item ends. `,:`, `,'`
-/// and `,/` are left out: `-3!` writes the monadic `,`, join-each and raze
-/// so too.
+/// `::`, or an operator with its iterators, where an item ends. `,` is
+/// left out: `JOIN` reads it.
 const VERB = /^(?:::|[-+*%&|^=<>~#_$?@.!][:/\\']*)(?=[;)\]]|$)/;
+
+/// The join verb `,` as an item, where it ends: bare or with its iterators -
+/// `-3!` writes `(,;1)`, `(,/;1)`, `(,':;1)`, and `,,` for `enlist(,)`
+/// (#2409). It writes an enlisted iterator alike (`,/` is also `enlist(/)`),
+/// and the join is read: a value holding a lone iterator is rarer. `,:` is
+/// left to be `enlist :`.
+const JOIN = /^,((?:[/\\]:?|':?)*)(?=[;)\]]|$)/;
 
 /// A guid as `-3!` writes it, or a run of them, where it ends.
 const GUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -136,6 +142,15 @@ export function readable(code: string): string {
     if (ch === '"') {
       inString = true;
     } else if (ch === "," && (last === "" || "(;[{!,".includes(last))) {
+      // The join verb itself, not an enlist: in parentheses, so q reads its
+      // iterators as its own (`enlist (,)/` is enlist, over).
+      const join = JOIN.exec(code.slice(i));
+      if (join !== null) {
+        out += join[1] === "" ? "(,)" : `((,)${join[1]})`;
+        i += join[0].length - 1;
+        last = ")";
+        continue;
+      }
       // No noun - `::`, an operator - is taken in parentheses (#1968).
       const verb = VERB.exec(code.slice(i + 1))?.[0];
       if (verb !== undefined) {

@@ -133,6 +133,12 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(readable(',"a,(,b"'), 'enlist "a,(,b"');
   assert.strictEqual(readable("(,1;,`a)"), "(enlist 1;enlist `a)");
   assert.strictEqual(readable("1,2"), "1,2");
+  // The join verb as an item, with its iterators, is not an enlist (#2409).
+  assert.strictEqual(readable("(,;1)"), "((,);1)");
+  assert.strictEqual(readable("(,/;1)"), "(((,)/);1)");
+  assert.strictEqual(readable("(,':;1)"), "(((,)':);1)");
+  assert.strictEqual(readable(",,"), "enlist (,)");
+  assert.strictEqual(readable("`a`b!(,/;+)"), "`a`b!(((,)/);+)");
   assert.strictEqual(w.guessTable("trade"), "trade");
   assert.strictEqual(w.guessTable("select from .ns.trade where sym=`a"), ".ns.trade");
   assert.strictEqual(w.guessTable("select sum px by sym from trade"), "trade");
