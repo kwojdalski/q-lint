@@ -398,6 +398,40 @@ test("a query selected with one of the gateway's own statements still goes to it
   assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["4"]]);
 });
 
+// The Process Explorer lists and reads the gateway's own tables, TorQ's
+// root `logmsg` among them. Preview and the templates that run then went
+// through .gw.syncexec: the grid showed a server's `logmsg` under the
+// gateway's table, or failed for a table only the gateway has (#3061).
+test("Preview and Table Templates of a table the Process Explorer lists on a gateway read the gateway's (#3061)", { skip }, async (t) => {
+  const gw = await torq(t, "logmsg:([] msg:enlist `server)");
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.run("logmsg:([] msg:`gw1`gw2)\nonlyhere:([] n:1 2 3)", undefined, []);
+  const context = stub.newContext();
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const { EXPLORER } = require("../out/explorer.js");
+  const { SchemaTools } = require("../out/schemaview.js");
+  const { SCHEMA_COMMANDS } = require("../out/schema.js");
+  new ProcessExplorer(context, live);
+  new SchemaTools(context, live);
+  lines.length = 0;
+  await stub.commands.get(EXPLORER.preview)({ kind: "table", name: "logmsg", partitioned: false });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["5 sublist logmsg", "ok"]);
+  assert.match(lines.join("\n"), /gw1\ngw2/);
+  await stub.commands.get(EXPLORER.preview)({ kind: "table", name: "onlyhere", partitioned: false });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["5 sublist onlyhere", "ok"]);
+  lines.length = 0;
+  stub.picks.push("Select first 100");
+  await stub.commands.get(SCHEMA_COMMANDS.templates)({ kind: "table", label: "logmsg", name: "logmsg" });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["select[100] from logmsg", "ok"]);
+  assert.match(lines.join("\n"), /gw1\ngw2/);
+  // The same code from the editor is still a query for the servers.
+  lines.length = 0;
+  await live.run("select[100] from logmsg");
+  assert.match(lines.join("\n"), /server/);
+});
+
 test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the server types it came from (#2437)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);

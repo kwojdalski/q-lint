@@ -944,8 +944,9 @@ a result goes to the server types it came from. Features that evaluate the
 code inside q-lint's own q - Run Query Asynchronously, Record Query Snapshot
 and snapshot tests, Explain aj Match, Benchmark, Time Lines on Process,
 Profile Functions and the Join Assistant - refuse code a gateway would send
-to its servers, and
-say so, rather than run it on the gateway itself.
+to its servers, and say so, rather than run it on the gateway itself. The
+Process Explorer lists the gateway's own names, so its **Preview** and the
+reads of **Table Templates** run on the gateway itself.
 `q-lint.connection.torqGateway.enable` off sends every query as written and
 hides both commands.
 

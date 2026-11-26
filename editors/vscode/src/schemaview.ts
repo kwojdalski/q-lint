@@ -109,7 +109,9 @@ export class SchemaTools {
       return;
     }
     if (picked.template.runs) {
-      await this.live.run(picked.template.code);
+      // On the process the table was read on: a TorQ gateway itself, not
+      // its servers, whose table of that name is another (#3061).
+      await this.live.run(picked.template.code, undefined, []);
     } else {
       const document = await workspace.openTextDocument({ language: "q", content: picked.template.code });
       await window.showTextDocument(document);
