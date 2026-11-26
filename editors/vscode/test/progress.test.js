@@ -20,11 +20,13 @@ test("the running time is whole seconds, then minutes, then hours", () => {
   assert.strictEqual(elapsedText(-5), "0s");
 });
 
-test("notifyAfter is read as a positive number of seconds, else never", () => {
+test("notifyAfter is read as a positive number of seconds, 0 or less never, anything else the default", () => {
   const read = (v) => readProgress((key, fallback) => (key === "query.notifyAfter" && v !== undefined ? v : fallback));
   assert.deepStrictEqual(read(undefined), { enabled: true, notifyAfter: 10 });
   assert.deepStrictEqual(read(2.5).notifyAfter, 2.5);
-  for (const off of [0, -1, "10", null, NaN, Infinity]) assert.deepStrictEqual(read(off).notifyAfter, 0, String(off));
+  for (const off of [0, -1]) assert.deepStrictEqual(read(off).notifyAfter, 0, String(off));
+  // #2524: a value of the wrong type is the default, not "never".
+  for (const bad of ["30", "10", null, true, NaN, Infinity, {}]) assert.deepStrictEqual(read(bad).notifyAfter, 10, String(bad));
   assert.deepStrictEqual(read(1e9).notifyAfter, 86_400);
   assert.strictEqual(readProgress((key, fallback) => (key === "query.progress.enable" ? false : fallback)).enabled, false);
 });

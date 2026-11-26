@@ -10,12 +10,16 @@ export interface ProgressSettings {
   notifyAfter: number;
 }
 
-/// The settings read as `readLive` reads the query ones, at each query.
+/// The settings read as `readLive` reads the query ones, at each query. A
+/// `notifyAfter` that is not a finite number (`"30"`, `null`) is the default
+/// 10 s, as every other numeric reader falls back (#2524); only a number of
+/// 0 or less is "never".
 export function readProgress(get: <T>(key: string, fallback: T) => T): ProgressSettings {
-  const after = get<unknown>("query.notifyAfter", 10);
+  const read = get<unknown>("query.notifyAfter", 10);
+  const after = typeof read === "number" && Number.isFinite(read) ? read : 10;
   return {
     enabled: get<unknown>("query.progress.enable", true) !== false,
-    notifyAfter: typeof after === "number" && Number.isFinite(after) && after > 0 ? Math.min(after, 86_400) : 0,
+    notifyAfter: after > 0 ? Math.min(after, 86_400) : 0,
   };
 }
 
