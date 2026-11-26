@@ -1405,28 +1405,61 @@ pub fn working_dir(within: Option<&Path>) -> Result<PathBuf, String> {
 /// A symlink itself is not resolved, only the directories it sits in: a link
 /// is governed, excluded and reported where it is and by its own name, as
 /// Ruff matches a path as walked, not by wherever its target happens to be.
+/// Nor is a directory it sits in that is a link out of the directory holding
+/// it - a shared tree linked into a project: what is under that link is in
+/// the project, where it was resolved out to the target, which the
+/// project's configuration does not govern and its excludes cannot name
+/// (#2857). A link to somewhere under the directory holding it is resolved
+/// as before: `/var` on macOS, or a second name for a directory the walk
+/// reaches anyway, which stays the one path.
 pub fn absolute(path: &Path) -> PathBuf {
-    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    if is_link(path)
         && let Some(name) = path.file_name()
     {
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        return absolute(parent).join(name);
+        return absolute(holder(path)).join(name);
+    }
+    if let Some(kept) = under_link(path) {
+        return kept;
     }
     if let Ok(p) = fs::canonicalize(path) {
         return p;
     }
     let lexical = lexical(path);
     for ancestor in lexical.ancestors().skip(1) {
-        if let Ok(real) = fs::canonicalize(ancestor)
+        if ancestor.exists()
             && let Ok(rest) = lexical.strip_prefix(ancestor)
         {
-            return real.join(rest);
+            return absolute(ancestor).join(rest);
         }
     }
     lexical
+}
+
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// The directory `path` is in, `.` for a bare name.
+fn holder(path: &Path) -> &Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// `path` under the nearest directory above it that is a link out of the
+/// directory holding it, with that link kept and only the rest resolved.
+/// None when there is no such link, or `path` leaves it again by a `..`.
+fn under_link(path: &Path) -> Option<PathBuf> {
+    let (link, target) = path.ancestors().skip(1).find_map(|dir| {
+        if !is_link(dir) {
+            return None;
+        }
+        let target = fs::canonicalize(dir).ok()?;
+        let outside = !target.starts_with(fs::canonicalize(holder(dir)).ok()?);
+        outside.then_some((dir, target))
+    })?;
+    let real = fs::canonicalize(path).ok()?;
+    Some(absolute(link).join(real.strip_prefix(target).ok()?))
 }
 
 fn lexical(path: &Path) -> PathBuf {

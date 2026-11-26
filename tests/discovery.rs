@@ -746,6 +746,64 @@ fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
     }
 }
 
+/// And so is what is under a linked directory: a shared tree linked into
+/// the project was resolved out to its target, which the project's
+/// configuration does not govern, no exclude of the link can name, and a
+/// report places outside the repository (#2857). A link to a directory
+/// under the one holding it is still the one path its target is.
+#[cfg(unix)]
+#[test]
+fn a_file_under_a_linked_directory_is_governed_excluded_and_reported_there() {
+    let repo = Repo::new();
+    repo.write("shared/sub/r.q", SOURCE)
+        .write(
+            "proj/qlinter.toml",
+            "profile = \"style\"\n[lint.per-file-ignores]\n\"vendor/*\" = [\"QF016\"]\n",
+        )
+        .write("proj/lib/in.q", SOURCE);
+    std::os::unix::fs::symlink("../shared", repo.path("proj/vendor")).unwrap();
+    std::os::unix::fs::symlink("lib", repo.path("proj/alias")).unwrap();
+    assert_eq!(
+        repo.codes("proj", &["vendor/sub/r.q"]),
+        Vec::<String>::new()
+    );
+    let root = repo.path(".").canonicalize().unwrap();
+    for named in [
+        "vendor/sub/r.q".to_string(),
+        "vendor/sub/../sub/r.q".to_string(),
+        repo.path("proj/vendor/sub/r.q").display().to_string(),
+        root.join("proj/vendor/sub/r.q").display().to_string(),
+    ] {
+        assert_eq!(
+            linted_from(&repo, "proj", &["--isolated", &named]),
+            ["proj/vendor/sub/r.q"],
+            "{named}"
+        );
+    }
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "vendor"]),
+        ["proj/vendor/sub/r.q"]
+    );
+    for exclude in ["vendor", "vendor/sub"] {
+        let args = ["--isolated", "--force-exclude", "--exclude", exclude];
+        assert_eq!(
+            linted_from(&repo, "proj", &[&args[..], &["vendor/sub/r.q"]].concat()),
+            Vec::<String>::new(),
+            "{exclude}"
+        );
+    }
+    // Out of the link again by `..`, it is the file beside the target.
+    repo.write("top.q", SOURCE);
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "vendor/../top.q"]),
+        ["top.q"]
+    );
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "alias/in.q"]),
+        ["proj/lib/in.q"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
