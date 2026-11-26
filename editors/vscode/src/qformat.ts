@@ -245,7 +245,12 @@ function temporalText(x: number | bigint | LongLike, t: number): string | undefi
     case 15: {
       // KDB-X rounds the float days to the microsecond and cuts that to the
       // millisecond: 0.99999999999 is 23:59:59.999, not the next day (#1757).
-      return ymdhms(new Date(EPOCH_MS + Math.floor(Math.round(n * DAY_MS * 1000) / 1000)));
+      // The microseconds are the days times 8.64e10 in one product, rounded
+      // half away from zero as C's llround rounds: days times 86400000 and
+      // then 1000 rounds twice, a millisecond out far from 2000 (#2577).
+      const product = n * 8.64e10;
+      const micros = Math.trunc(product + Math.sign(product) * 0.5);
+      return ymdhms(new Date(EPOCH_MS + Math.floor(micros / 1000)));
     }
     case 17:
       return clock(n, "minute");

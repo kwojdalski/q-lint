@@ -615,3 +615,11 @@ test("an unwrapped line cut at the width never ends in half an astral character 
   assert.deepStrictEqual(cutLines(["a".repeat(76) + smile + smile + "b"], [25, 80]), ["a".repeat(76) + smile + ".."]);
   assert.deepStrictEqual(cutLines(["a".repeat(78) + smile], [25, 80]), ["a".repeat(78) + smile]);
 });
+
+test("a datetime far from 2000 is cut to the millisecond as KDB-X cuts it, not a millisecond out (#2577)", () => {
+  // KDB-X: "z"$82203.9 -43797.3 -101962.1 73121.93
+  assert.deepStrictEqual(
+    [82203.9, -43797.3, -101962.1, 73121.93].map((n) => atomText(n, -15)),
+    ["2225.01.24T21:36:00.000", "1880.02.01T16:47:59.999", "1720.11.01T21:35:59.999", "2200.03.14T22:19:12.000"],
+  );
+});
