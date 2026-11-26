@@ -280,6 +280,29 @@ test("the q of the data tools against a real q process", { skip }, async (t) => 
     assert.deepStrictEqual((await grid(d.loadExpression("csv", csv, true, { types: ["J", "J"], delimiter: ",", bom: true }))).grid.names, ["a", "b"]);
   });
 
+  // .j.k refuses a byte order mark, by the file's path and from its text (#2448).
+  await t.test("a JSON file that starts with a byte order mark loads by its path and from its bytes (#2448)", async () => {
+    const json = path.join(q.dir, "bom.json");
+    fs.writeFileSync(json, '\ufeff[{"a":1,"b":"x"}]\n');
+    for (const local of [true, false]) {
+      const out = await grid(d.loadExpression("json", json, local, { types: [], delimiter: "" }, local ? undefined : fs.readFileSync(json)));
+      assert.deepStrictEqual([out.grid.names, cells(out, "a")], [["a", "b"], ["1"]], `local ${local}`);
+    }
+  });
+
+  // A file read as UTF-8 for a remote process had each Latin-1 byte made
+  // U+FFFD, where a load by its path keeps the byte (#2468).
+  await t.test("a Latin-1 CSV loads byte for byte from its bytes as by its path (#2468)", async () => {
+    const csv = path.join(q.dir, "latin1.csv");
+    const bytes = Buffer.from("city,n\r\nZ\xfcrich,1\r\nK\xf6ln,2\r\na\\b\xe9,3\n", "latin1");
+    fs.writeFileSync(csv, bytes);
+    const sample = { ...d.sampleText(bytes.toString("utf8")), types: ["*", "J"] };
+    for (const local of [true, false]) {
+      await run(`lat:${d.loadExpression("csv", csv, local, sample, local ? undefined : fs.readFileSync(csv))}`);
+      assert.strictEqual(await text('(lat`city)~("Z\\374rich";"K\\366ln";"a\\\\b\\351")'), "1b", `local ${local}`);
+    }
+  });
+
   await t.test("a one-column CSV loads by its path and from its text, its one-character lines too (#1262)", async () => {
     const csv = path.join(q.dir, "one.csv");
     const text = "x\n1\n22\n";
