@@ -639,6 +639,25 @@ fn a_typed_parameter_is_documented_and_hinted_by_its_name() {
     );
 }
 
+/// The block's lines end as the file's own do: a CRLF file is left with no
+/// bare LF (#2795).
+#[test]
+fn a_qdoc_block_ends_its_lines_as_the_file_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "a.q", "a:1\r\nf:{[a;b] a+b}\r\ng:2\r\n");
+    let actions = actions_at(&mut server, &uri, 1, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri),
+        Some((
+            "Generate qDoc for f".to_string(),
+            "/ @param a\r\n/ @param b\r\n/ @return\r\n".to_string(),
+            (1, 0)
+        )),
+        "{actions:?}"
+    );
+}
+
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();

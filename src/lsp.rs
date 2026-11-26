@@ -3014,6 +3014,12 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     if above.contains("@param") || above.contains("@return") {
         return None;
     }
+    // A file written with CRLF gets CRLF (#2795).
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     // The names each slot binds: `` x:`j `` is x, and the pattern `(a;b)` a
     // and b, as QS007 reads the block back (#2778). An empty slot, the
     // second of `{[a;] a}`, has no name to document (#2779).
@@ -3021,9 +3027,10 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
         .params
         .iter()
         .flat_map(|param| q_lint_rs::slot_names(param))
-        .map(|name| format!("/ @param {name}\n"))
+        .map(|name| format!("/ @param {name}{newline}"))
         .collect();
-    block.push_str("/ @return\n");
+    block.push_str("/ @return");
+    block.push_str(newline);
     let at = lines.json(m.at);
     let mut changes = serde_json::Map::new();
     changes.insert(
