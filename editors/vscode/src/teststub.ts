@@ -17,6 +17,7 @@
 import { definitions } from "./definitions";
 import { globLiteral } from "./globliteral";
 import { argumentNames, codeMask, lambdas } from "./paramcache";
+import { contextAfter, scriptCode, statements } from "./statements";
 
 export const TEST_STUB_COMMAND = "q-lint.generateTestStub";
 
@@ -51,8 +52,11 @@ export interface Style {
   qunitAsserts: boolean;
 }
 
-/// The style of a test file's text.
-export function detectStyle(text: string): Style {
+/// The style of a test file's text: of the statements q runs of it, so a
+/// test commented out, in a block comment or after the script's end, sets
+/// none (#2909).
+export function detectStyle(file: string): Style {
+  const text = statements(scriptCode(file)).join("\n");
   const qunitAsserts = /\.qunit\.assert/.test(text);
   const qt = /^(\.qt(?:\.[A-Za-z][A-Za-z0-9_]*)+)\.test_[A-Za-z0-9_]*\s*:/m.exec(text);
   if (qt !== null) {
@@ -107,13 +111,11 @@ export function stubText(target: Target, name: string, style: Style, context = "
   return `${lines.join("\n")}\n`;
 }
 
-/// The context a script's text ends in: its last `\d .ns`, or `.`.
+/// The context a script's text ends in: its last `\d .ns`, or `.`. As q
+/// runs it, so a `\d` in a block comment or after the script's end is none,
+/// and a `system "d .ns"` is one (#2909).
 export function endContext(text: string): string {
-  let context = ".";
-  for (const m of text.matchAll(/^\\d[ \t]+(\S+)[ \t]*$/gm)) {
-    context = m[1];
-  }
-  return context;
+  return contextAfter(scriptCode(text));
 }
 
 /// Where a new test file for `source` (a path) goes: `tests/test_<name>.q`

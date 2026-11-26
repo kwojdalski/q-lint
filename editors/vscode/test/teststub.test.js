@@ -258,6 +258,23 @@ test("a stub appended under a trailing \\d calls a root function at the root (#1
   assert.match(stubText({ name: ".fx.mid", params: [] }, "testMid", detectStyle(file), ".tests"), /assertEquals\[\.fx\.mid\[\]/);
 });
 
+test("a \\d or a test q does not read - in a block comment, after the script's end - sets no context and no style (#2909)", () => {
+  assert.strictEqual(endContext("\\d .foo\nx:1\n/\n\\d .bar\n\\\n"), ".foo");
+  assert.strictEqual(endContext("\\d .foo\nx:1\n\\\n\\d .bar\n"), ".foo");
+  assert.strictEqual(endContext("/\r\n\\d .bar\r\n\\\r\n\\d .foo\r\nx:1\r\n"), ".foo");
+  // `system "d .ns"` switches as `\d .ns` does.
+  assert.strictEqual(endContext('system "d .tests"\ntestA:{[] 1b}\n'), ".tests");
+  const f = functionAt("f:{[a;b] a+b}\n", 0);
+  const file = "\\d .foo\ntest_a:{[] 1b}\n/\n\\d .\n\\\n";
+  assert.match(stubText(f, "test_f", detectStyle(file), endContext(file)), /\n  `\.\[`f\]\[a;b\]~expected\}/);
+  // A commented-out suite, or assertion, is not the file's style.
+  const plain = { naming: { kind: "plain" }, qunitAsserts: false };
+  assert.deepStrictEqual(detectStyle('/\n.qt.old.test_a:{[] .qunit.assertEquals[1;1;"a"]}\n\\\ntest_b:{[] 1b}\n'), plain);
+  assert.deepStrictEqual(detectStyle('test_b:{[] 1b}\n\\\ntestOld:{ .qunit.assertEquals[1;1;"a"] }\n'), plain);
+  assert.deepStrictEqual(detectStyle('/ .qt.old.test_a:{[] .qunit.assertEquals[1;1;"a"]}\ntest_b:{[] 1b}\n'), plain);
+  assert.deepStrictEqual(detectStyle("/\nnote\n\\\n.qt.lib.test_a:{[] 1b}\n").naming, { kind: "qt", suite: ".qt.lib" });
+});
+
 test("an untitled editor is offered no stub, and the command writes none at the filesystem's root (#1600)", async () => {
   const files = { "Untitled-1": "f:{x}\n" };
   const s = setup(files);
