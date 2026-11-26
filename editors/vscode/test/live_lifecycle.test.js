@@ -943,3 +943,47 @@ test("a reconnect to a discovered process dials the address its server lists now
   await until(() => live.activeLabel() === "disc/rdb");
   assert.deepStrictEqual([live.activeProcess()?.port, again.logins.length], [again.port, 1]);
 });
+
+/// A context whose workspace state is kept, as a window's is.
+function keeping(context) {
+  const kept = new Map();
+  context.workspaceState = { get: (k, d) => (kept.has(k) ? kept.get(k) : d), update: async (k, v) => void kept.set(k, v), keys: () => [...kept.keys()] };
+  return context;
+}
+
+/// What another window's rename of the saved process `from` to `to`, or its
+/// deletion (`to` undefined), leaves in the state every window shares.
+async function elsewhere(context, from, to) {
+  const saved = context.globalState.get("q-lint.processes");
+  await context.globalState.update("q-lint.processes", to === undefined ? saved.filter((p) => p.label !== from) : saved.map((p) => (p.label === from ? { ...p, label: to } : p)));
+  const log = context.globalState.get("q-lint.processRelabels", []);
+  await context.globalState.update("q-lint.processRelabels", [...log, { n: log.length + 1, from, to: to ?? null }]);
+}
+
+// The process was renamed in another window: the reconnect after a drop
+// found no saved process of the old label and ended without a word, the
+// status bar going to "not connected" after "Reconnecting.".
+test("an automatic reconnect follows a rename made in another window, and says why it stops when the process was deleted there (#3036)", async (t) => {
+  const a = await fakeQ(() => ({ ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("rdb", a.port)], { "connection.autoReconnect.enable": true });
+  keeping(context);
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  await elsewhere(context, "rdb", "rdb-eu");
+  a.drop();
+  await until(() => live.activeLabel() === undefined);
+  await until(() => live.activeLabel() !== undefined, 3000);
+  assert.strictEqual(live.activeLabel(), "rdb-eu");
+  assert.deepStrictEqual(stub.messages.map((m) => m[1]), ["q-lint: the connection to rdb closed. Reconnecting.", "q-lint: reconnected to rdb-eu."]);
+  // Answered, the connection held: the next reconnect's tries start again.
+  await live.run("1+1");
+  stub.messages.length = 0;
+  await elsewhere(context, "rdb-eu", undefined);
+  a.drop();
+  await until(() => stub.messages.length === 2, 3000);
+  assert.deepStrictEqual(stub.messages, [
+    ["warning", "q-lint: the connection to rdb-eu closed. Reconnecting."],
+    ["warning", "q-lint: stopped reconnecting to rdb-eu: it is no longer in the process list."],
+  ]);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});

@@ -1872,6 +1872,27 @@ export class Live {
     await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
     for (const r of pending) {
       await this.retarget(r.from, r.to ?? undefined);
+      this.renamedElsewhere(r.from, r.to);
+    }
+  }
+
+  /// The process connected to, or being reconnected to, is one another
+  /// window renamed `to`: it goes on under that label, as after a rename
+  /// made here, and a reconnect finds it saved (#3036).
+  private renamedElsewhere(from: string, to: string | null): void {
+    const active = this.active;
+    const now = to === null ? undefined : this.processes().find((p) => p.label === to);
+    if (now === undefined || active?.label !== from || active.server !== undefined) {
+      return;
+    }
+    this.active = stillOpen(active, now);
+    if (this.reconnecting?.label === from) {
+      this.reconnecting = { ...this.reconnecting, label: now.label };
+    }
+    this.showStatus();
+    this.processesView.refresh();
+    if (this.activeLabel() !== undefined) {
+      this.changed.fire("connected");
     }
   }
 
@@ -2789,6 +2810,11 @@ export class Live {
         break;
       }
       tried = attempt;
+      // Renamed in another window, it is reconnected to under its new label (#3036).
+      await this.applyRelabels();
+      if (run !== this.reconnectRun || this.connection !== undefined) {
+        return;
+      }
       // Each try connects to it as it is now - renamed, tagged, given a
       // connect script meanwhile - and as saved or listed now (#1699, #3021).
       const now = this.active ?? process;
@@ -2796,6 +2822,8 @@ export class Live {
       if (saved === undefined) {
         this.reconnecting = undefined;
         this.showStatus();
+        // Said: "Reconnecting." was, and nothing else will be (#3036).
+        void window.showWarningMessage(plainMessage(`q-lint: stopped reconnecting to ${now.label}: it is no longer in the process list.`));
         return;
       }
       process = saved;
