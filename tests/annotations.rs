@@ -719,6 +719,27 @@ fn a_selection_is_extracted_into_a_lambda_of_the_locals_it_reads() {
     );
 }
 
+/// The new lambda's name is one no file of the workspace defines: a file
+/// this one loads defining `extracted` would have it replaced for every
+/// caller (#2793).
+#[test]
+fn an_extracted_lambda_takes_no_name_another_file_defines() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [("lib.q", "extracted:{x*100}\n\\d .u\nextracted2:{x}\n")];
+    let mut server = Server::start(dir.path(), &files);
+    let text = "\\l lib.q\nf:{[a;b] 1+a*b}\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let actions = actions_over(&mut server, &uri, (1, 11), (1, 14), None);
+    assert_eq!(
+        extracted(&actions, &uri, text),
+        Some((
+            "Extract function as extracted3".to_string(),
+            "\\l lib.q\nextracted3:{[a;b] a*b}\nf:{[a;b] 1+extracted3[a;b]}\n".to_string()
+        )),
+        "{actions:?}"
+    );
+}
+
 #[test]
 fn a_refused_extraction_says_why_to_a_client_that_shows_it() {
     let dir = tempfile::tempdir().unwrap();

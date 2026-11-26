@@ -59,6 +59,13 @@ impl Extraction {
 /// spells nowhere as a word: a name for the new lambda that neither hides
 /// nor is hidden by one already there.
 pub fn fresh_name(source: &str, base: &str) -> String {
+    fresh_name_but(source, base, |_| false)
+}
+
+/// `fresh_name`, passing over each name `taken` says is in use where
+/// `source` does not show it: a global another file defines, which a new
+/// definition of the same name would replace for every caller (#2793).
+pub fn fresh_name_but(source: &str, base: &str, taken: impl Fn(&str) -> bool) -> String {
     let used = |name: &str| {
         re!(r"[A-Za-z0-9_]+")
             .find_iter(source)
@@ -66,7 +73,7 @@ pub fn fresh_name(source: &str, base: &str) -> String {
     };
     let mut name = base.to_string();
     let mut n = 1;
-    while used(&name) || crate::is_reserved(&name) {
+    while used(&name) || crate::is_reserved(&name) || taken(&name) {
         n += 1;
         name = format!("{base}{n}");
     }

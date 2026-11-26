@@ -416,7 +416,7 @@ pub fn on_k_line(source: &str, offsets: &[usize]) -> Option<usize> {
 }
 
 /// What Extract Function writes for a selection: see `extract`.
-pub use semantics::extract::{Extraction, fresh_name};
+pub use semantics::extract::{Extraction, fresh_name, fresh_name_but};
 
 /// The selection `from..to` of `source` made a lambda of its own - its
 /// trimmed range, the lambda's parameters (the locals of the lambda around

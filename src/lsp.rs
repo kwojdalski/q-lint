@@ -2751,7 +2751,7 @@ fn code_actions(
         // The reason it is refused only to a menu that asked for refactors
         // by name: the lightbulb asks as the cursor moves.
         let why = opts.disabled_actions && only.is_some();
-        actions.extend(extract_action(params, docs, why));
+        actions.extend(extract_action(params, docs, ws, why));
     }
     if only
         .as_ref()
@@ -3114,7 +3114,7 @@ fn functional_actions(params: &Value, docs: &Documents, why: bool) -> Vec<Value>
 /// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
 /// empty selection; for one it refuses, nothing, or with `why` the action
 /// disabled with the reason.
-fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> {
+fn extract_action(params: &Value, docs: &Documents, ws: &Workspace, why: bool) -> Option<Value> {
     let uri = uri_of(&params["textDocument"]);
     let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
     let lines = Lines::new(source);
@@ -3131,7 +3131,11 @@ fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> 
     let title = "Extract function";
     match q_lint_rs::extract(source, from, to) {
         Ok(found) => {
-            let name = q_lint_rs::fresh_name(source, "extracted");
+            // A name another file defines is in use as well, under whatever
+            // namespace: this file may load that one, or be loaded by it,
+            // into the context the new definition is made in (#2793).
+            let taken = |name: &str| ws.names().any(|(n, _)| n.rsplit('.').next() == Some(name));
+            let name = q_lint_rs::fresh_name_but(source, "extracted", taken);
             let insert = lines.json(found.insert_at);
             let mut changes = serde_json::Map::new();
             // Both edits are in the original's positions, as LSP has them;
