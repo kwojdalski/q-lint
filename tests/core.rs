@@ -343,6 +343,29 @@ fn a_k_line_stands_down_only_the_names_it_may_write() {
 }
 
 #[test]
+fn a_lambda_another_file_defines_is_no_handle() {
+    // #3002. `.log.info "select from t returned ",string n` logs a line
+    // when log.q, which this file loads, holds `.log.info:{-1 x}`; QX001
+    // knew only the lambdas of the file it was reading.
+    use q_lint_rs::{Workspace, index, lint_in};
+    let app = "f:{[n] .log.info \"select from t returned \",string n}\n";
+    let injected = |ws: &Workspace| {
+        lint_in(app, "app.q", Profile::Style, ws)
+            .iter()
+            .any(|f| f.code == "QX001")
+    };
+    let mut ws = Workspace::default();
+    ws.add(&index(app));
+    assert!(injected(&ws));
+    ws.add(&index(".log.info:{-1 x}\n"));
+    assert!(!injected(&ws));
+    // A name another file gives a handle is still one.
+    let mut ws = Workspace::default();
+    ws.add(&index(".log.info:hopen 5000\n"));
+    assert!(injected(&ws));
+}
+
+#[test]
 fn a_string_sent_to_handle_zero_is_evaluated() {
     // #3011. Handle 0 is the process itself: KDB-X 5 runs `f:{x}`,
     // `0 "f:{x+y}"`, `f[1;2]` to 3, and QA012 called it an error.

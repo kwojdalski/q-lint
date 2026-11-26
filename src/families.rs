@@ -10,9 +10,10 @@ pub fn check(
     code: &str,
     comments: &str,
     foreign: &[usize],
+    ws: &crate::Workspace,
 ) -> Vec<Finding> {
     let mut out = vec![];
-    query_injection(path, source, code, comments, &mut out);
+    query_injection(path, source, code, comments, ws, &mut out);
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, comments, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
@@ -171,19 +172,27 @@ fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) ->
 /// level) a string that names a qSQL statement with something that is not a
 /// string literal. `value "select from t"` is a constant, and `value x` says
 /// nothing about where `x` came from.
-fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+fn query_injection(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    ws: &crate::Workspace,
+    out: &mut Vec<Finding>,
+) {
     // `get` of a string evaluates it as `value` does (q 5), and a string sent
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
     // query string is taken for a handle unless it is one of q's own, or a
-    // lambda this file defines, with `:` or `::`: `lg "update finished"` logs
-    // a line (#345, #654).
+    // lambda this file or another of the run defines, with `:` or `::`:
+    // `lg "update finished"` logs a line (#345, #654, #3002).
     let lambda = |name: &str| {
-        regex::Regex::new(&format!(
-            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
-            regex::escape(name)
-        ))
-        .is_ok_and(|r| r.is_match(code))
+        ws.is_lambda(name)
+            || regex::Regex::new(&format!(
+                r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
+                regex::escape(name)
+            ))
+            .is_ok_and(|r| r.is_match(code))
     };
     // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
     // the async `neg[h]` and `(neg h)` (#652). What it is sent may stand in
@@ -241,6 +250,20 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         // hsym `$"/data/update/",d` reads the file of that name, and sent
         // over a handle it names a variable there (#3012).
         if given.starts_with('`') || re!(r"^hsym\b").is_match(given) {
+            continue;
+        }
+        // A name applied to text is a handle only on the evidence that the
+        // text is a query, and a query reads `from` something: `.log.info
+        // "update complete: ",string n` logs a line (#3002). The word has to
+        // be in a string, which the code view has blank.
+        let handle = !matches!(word, "value" | "eval" | "get");
+        if handle
+            && !re!(r"\bfrom\b").find_iter(&comments[start..end]).any(|f| {
+                code[start + f.start()..start + f.end()]
+                    .bytes()
+                    .all(|b| b == b' ')
+            })
+        {
             continue;
         }
         // Built where it is run, or into a local this lambda runs on a later

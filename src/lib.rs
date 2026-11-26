@@ -7120,6 +7120,7 @@ fn lint_rules(
         code,
         &v.comments,
         &v.foreign_offsets,
+        ws,
     ));
     out.extend(refusals::check(path, source, code, &v.comments));
     out.extend(semantics::typelint::check(path, code, source, &v.comments));

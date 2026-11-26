@@ -178,6 +178,14 @@ k:{[s] q:"select from t where a=",s; eval q}
 f:{[d] get hsym `$"/data/update/",d}
 g:{[d] get `$":/data/delete/",d}
 
+=== clean | a message that starts with a query word and reads from nothing is no query sent over a handle (#3002)
+f:{[n] .log.info "update complete: ",string n}
+h:{[n] lg "select returned ",string n}
+k:{[n] .log.out "exec time ",string n}
+
+=== QX001 | while a query whose from comes in a later piece is one (#3002)
+f:{[h;c] h "select ",c," from t"}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}
