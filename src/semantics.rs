@@ -2920,6 +2920,13 @@ pub fn check(
         // an adapter. Those are not drift and there is nothing to remove. A
         // lambda that reads some but not others is the one that changed.
         let named: Vec<&String> = scope.params.iter().filter(|p| !p.is_empty()).collect();
+        // A slot starting with `_` is refused where the lambda is defined,
+        // which QF002 says; it binds no parameter to leave unread, and the
+        // name inside it is not one (#2695).
+        let signature = &code[scope.start..scope.body];
+        if re!(r"[\[;(][ \t]*_").is_match(signature) {
+            continue;
+        }
         let used = named
             .iter()
             .filter(|p| mentioned.contains(p.as_str()))
@@ -2937,8 +2944,7 @@ pub fn check(
             if !mentioned.contains(param.as_str()) {
                 // On the parameter itself, spanning exactly its name, so an
                 // editor can fade the name rather than the whole signature.
-                let signature = &code[scope.start..scope.body];
-                let at = re!(r"[A-Za-z][A-Za-z0-9_]*")
+                let at = re!(r"[A-Za-z_][A-Za-z0-9_]*")
                     .find_iter(signature)
                     .find(|m| m.as_str() == param.as_str())
                     .map_or(scope.start, |m| scope.start + m.start());
