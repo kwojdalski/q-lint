@@ -6884,12 +6884,19 @@ fn lint_rules(
         // `{[(a;a)] a}` and `{[a;(a;b)] a}`, and one binding overwrites the
         // other (#635).
         let mut seen = std::collections::HashSet::new();
-        let repeated: Vec<&&str> = bound.iter().filter(|p| !seen.insert(**p)).collect();
+        let repeated: Vec<String> = bound
+            .iter()
+            .filter(|p| !seen.insert(**p))
+            .map(|p| format!("`{p}`"))
+            .collect();
         if !repeated.is_empty() {
             add(
                 at,
                 "QF008",
-                format!("Parameter {repeated:?} is declared more than once"),
+                format!(
+                    "Parameter {} is declared more than once",
+                    repeated.join(", ")
+                ),
             );
         }
         // `{[] ...}` is the one empty slot that means what it looks like.
