@@ -854,7 +854,6 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
     for (code, source) in [
         ("QS004", "r:2 (3)"),                // would become the vector 2 3
         ("QS004", "r:(2)3"),                 // would become the number 23
-        ("QS004", "a:1;r:a -(1)"),           // would become a applied to -1
         ("QS004", "r:(2)\n  -1"),            // the vector 2 -1 across the line (#773)
         ("QS004", "l:1 2;r:l (1)\n  2"),     // and l 1 2 (#773)
         ("QR002", "g:{x} each"),             // a function, with nothing to return

@@ -9997,13 +9997,16 @@ fn lint_rules(
             // So is one held in parentheses of its own: `(1.5)(2)` is 'type,
             // and with both pairs gone it would be the vector `1.5 2`. The
             // first pair alone can go - `1.5(2)` is the same application -
-            // so only the second is left (#516).
+            // so only the second is left (#516). And after a blank and a
+            // minus they keep it a subtraction: `x -(1)` is `x-1`, where
+            // `x -1` applies `x` to -1 and `3 -1` is a vector (#2724).
             let numeric = m[1]
                 .trim()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit());
             if numeric
                 && (re!(r"(?:^|[^A-Za-z0-9_.])-?\d[A-Za-z0-9.:]*$|\(\s*-?\d[A-Za-z0-9.:]*\s*\)$")
                     .is_match(line[..whole.start()].trim_end())
+                    || re!(r"\s-$").is_match(&line[..whole.start()])
                     || line[whole.end()..]
                         .trim_start_matches([' ', '\t'])
                         .starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.'))
