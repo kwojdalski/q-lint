@@ -556,6 +556,20 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QV003", "r:1 2\ndo[3; r:r,4]", "r:1 2\ndo[3; r,:4]", false),
+    // A symbol runs on over `:` and `/`: the word in a file handle is no
+    // use of the parameter (#2799).
+    (
+        "QF001",
+        "f:{[count] (count;`:count;`:dir/count)}",
+        "f:{[countArg] (countArg;`:count;`:dir/count)}",
+        false,
+    ),
+    (
+        "QF001",
+        "g:{[type] (type;`:db/type;`a:type;`type)}",
+        "g:{[typeArg] (typeArg;`:db/type;`a:type;`type)}",
+        false,
+    ),
     ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
     ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
     ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),

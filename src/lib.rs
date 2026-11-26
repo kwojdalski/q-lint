@@ -2663,7 +2663,9 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
             {
                 return None;
             }
-            let text = &v.code[start..close];
+            // Not inside a symbol, which runs on over `:` and `/`:
+            // `` `:db/count `` is a file, and renamed another one (#2799).
+            let text = unsymbolled(&v.code[start..close]);
             let mut depth = 0i32;
             let mut out = String::new();
             let mut at = 0;
