@@ -649,6 +649,20 @@ while["ab";1]
 do[1.5;1]
 f:{if[101b;:1]; do[1 2;x+:1]; x}
 
+=== QA011 profile: general | a general list, enlist of an item or a comparison of vectors there, as in $[...] (KDB-X: each is 'type, #2932)
+f:{if[(1;2);x+:1];x}
+g:{if[enlist 1b;x+:1];x}
+h:{while[enlist 1b;:x];x}
+k:{while[(1;2);:x];x}
+l:{do[enlist 2;x+:1];x}
+m:{do[(1;2);x+:1];x}
+n:{[a] if[a>1 2 3;a+:1];a}
+
+=== clean profile: general | parentheses around one item are that item (KDB-X: {if[(1b);x+:1];x}0 is 1)
+f:{if[(1b);x+:1];x}
+g:{do[(2);x+:1];x}
+h:{[a] if[enlist[a]~1;a+:1];a}
+
 === clean profile: general | a name, a null long, a char, a boolean, a short or a date (q 5: each runs)
 if[x;1]
 if[0N;1]

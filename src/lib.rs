@@ -3526,9 +3526,10 @@ fn same_test(comments: &str, code: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Whether a `$[...]` test is a literal q 5 refuses with 'type: an atom
-/// `refused_atom_condition` names, `()`, a boolean vector, a spaced numeric
-/// vector, a comparison of vectors, a general list or `enlist` of an item.
+/// Whether a test - of `$[...]`, `if` or `while`, or the count of `do` - is
+/// a literal q 5 refuses with 'type: an atom `refused_atom_condition`
+/// names, `()`, a boolean vector, a spaced numeric vector, a comparison of
+/// vectors, a general list or `enlist` of an item.
 /// `raw` is the test with strings still in it, `cond` the same text from
 /// the masked view. q 5: `$[(1;2);1;2]` and `$[enlist 1b;1;2]` are 'type
 /// (#633).
@@ -7570,13 +7571,11 @@ fn lint_rules(
         if parts.len() < 2 {
             continue;
         }
+        // And for a general list, `enlist` of an item or a comparison of
+        // vectors, as `$[...]` is: KDB-X `if[(1;2);1]`, `while[enlist 1b;1]`,
+        // `do[enlist 2;1]` and `if[1 2 3>2;1]` are each 'type (#2932).
         let raw = v.comments[open + 1..open + 1 + parts[0].len()].trim();
-        if refused_atom_condition(raw)
-            || re!(r"^\(\s*\)$").is_match(raw)
-            || re!(r"^[01]{2,}b$").is_match(raw)
-            || (re!(r"^-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+$").is_match(raw)
-                && !raw.ends_with('b'))
-        {
+        if refused_test(raw, parts[0].trim()) {
             let what = if &m[1] == "do" { "count" } else { "test" };
             add(
                 at,
