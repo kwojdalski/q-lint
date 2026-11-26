@@ -836,6 +836,9 @@ s:"/" sv string a,("ab";"cd")
 === QB003 | after another joined name too
 p:"/" sv string a,b,"xy"
 
+=== QB003 | one character of more than one byte is more than one item (q 5: "/" sv string `a`b,"é" is "a/b/\303/\251", #2696)
+p:"/" sv string a,"é"
+
 === clean | parenthesised, the string joins the result of sv
 m:"claimed by ",(", " sv string clash)," - two workers share it"
 

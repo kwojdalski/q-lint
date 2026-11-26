@@ -10662,7 +10662,9 @@ fn lint_rules(
                             && line.as_bytes().get(quote) != Some(&b'"')
                             && let Some(lit) =
                                 re!(r#"^"((?:[^"\\]|\\.)*)""#).captures(&literals[quote..])
-                            && re!(r"\\.|[^\\]").find_iter(&lit[1]).count() > 1
+                            // Counted in bytes, as q holds a string: `"é"`
+                            // is two items, joined apart (#2696).
+                            && q_bytes(&lit[1]).len() > 1
                             && (!paren
                                 || literals[quote + lit.get(0).unwrap().len()..]
                                     .trim_start()
