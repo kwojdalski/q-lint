@@ -216,6 +216,16 @@ test("a result exported is read back as the value it is, on a real q", { skip },
     }
   });
 
+  await t.test("a Parquet datetime is the millisecond q shows for it, not the next (#3083)", async () => {
+    const g = await grid("([] a:2000.01.01T00:00:00.000 + 0.0000000058 0.0000000116 0.5 0.99999999999 -0.0000000058 8000.123456789 -8000.987654321)");
+    for (let r = 0; r < g.cells[0].length; r++) {
+      const shown = /^(\d{4})\.(\d\d)\.(\d\d)T(\d\d):(\d\d):(\d\d)\.(\d{3})$/.exec(g.cells[0][r]).slice(1).map(Number);
+      const want = Buffer.alloc(8);
+      want.writeBigInt64LE(BigInt(Date.UTC(shown[0], shown[1] - 1, shown[2], shown[3], shown[4], shown[5], shown[6])));
+      assert.ok(exportResult("parquet", g, -1, [r]).data.includes(want), `${g.cells[0][r]} of ${g.raw[0][r]}`);
+    }
+  });
+
   await t.test("a symbol of bytes that are no UTF-8 exports as its characters, not U+FFFD (#2083)", async () => {
     const json = JSON.parse(exportResult("json", await grid('([k:`$("caf\\351";"ok")] s:`$("\\377x";"caf\\303\\251"))'), -1).data.toString("utf8"));
     assert.deepStrictEqual(json, [{ k: "café", s: "\u00ffx" }, { k: "ok", s: "café" }]);

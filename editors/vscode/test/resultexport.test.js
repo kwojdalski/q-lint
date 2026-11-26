@@ -812,3 +812,22 @@ test("a drill-down literal that is no single token is one operand, in parenthese
   assert.strictEqual(fillDrilldown("{{value}}", t, 6, 0).code, '"abc"');
   assert.strictEqual(fillDrilldown("{{value}}", t, 6, 1).code, "`x`y");
 });
+
+test("a Parquet datetime is the millisecond the grid shows: one a fraction under the next is not rounded up to it (#3083)", () => {
+  /// Whether the file holds `ms` since 1970 as an INT64.
+  const holds = (raw, ms) => {
+    const z = { count: 1, keys: 0, names: ["z"], types: [15], cells: [["2000.01.01T00:00:00.000"]], raw: [[raw]], rank: [[0]] };
+    const want = Buffer.alloc(8);
+    want.writeBigInt64LE(BigInt(ms));
+    return toParquet(z, [0]).data.includes(want);
+  };
+  const y2k = Date.UTC(2000, 0, 1);
+  // KDB-X: 2000.01.01T00:00:00.000 + 0.0000000058 shows 00:00:00.000, + 0.0000000116 00:00:00.001.
+  assert.ok(holds(0.0000000058, y2k));
+  assert.ok(!holds(0.0000000058, y2k + 1));
+  assert.ok(holds(0.0000000116, y2k + 1));
+  assert.ok(holds(0.5, y2k + 432e5));
+  // 0.99999999999 is 23:59:59.999, not the next day.
+  assert.ok(holds(0.99999999999, y2k + 864e5 - 1));
+  assert.ok(holds(-0.0000000058, y2k - 1));
+});
