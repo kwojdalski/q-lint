@@ -1082,6 +1082,35 @@ fn a_name_read_through_one_the_workspace_defines_is_not_listed() {
     );
 }
 
+#[test]
+fn a_column_in_parentheses_or_brackets_of_a_query_is_not_listed() {
+    // KDB-X runs each of these over the columns `a` and `b` (#2822). The
+    // list on the last line is in no query, and a lambda's names are its own.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "t:([]a:1 2;b:3 4)\n\
+                r1:select from t where a=(max;a) fby b\n\
+                r2:select from t where (a>1),b>2\n\
+                r3:select from t where b in (a;b)\n\
+                r4:select x:(a;b) from t\n\
+                r5:select from t where a within (1;b)\n\
+                r6:select[>a] from t\n\
+                r7:select[2;<b] a from t\n\
+                r8:select from t where a in (exec a from u where (b>3))\n\
+                r9:select from t where (a>1),{x>lim} each b\n\
+                r10:(a;b)\n";
+    let uri = server.open(dir.path(), "doc.q", text);
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [
+            ("u".to_string(), 8, 41),
+            ("lim".to_string(), 9, 32),
+            ("a".to_string(), 10, 5),
+            ("b".to_string(), 10, 7),
+        ]
+    );
+}
+
 /// The one qSQL layout action among `actions`: its title and new text.
 fn qsql(actions: &[Value], uri: &str) -> Option<(String, String)> {
     let action = actions

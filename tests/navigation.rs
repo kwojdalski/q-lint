@@ -2164,6 +2164,34 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
     );
     let why = refused(&reply);
     assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    // In parentheses or the brackets of `select[>a]` it is a column too:
+    // KDB-X `select from t where (af>1),b>2` over a function `af` is 'type
+    // (#2823).
+    for (n, phrase) in [
+        "select from t where (a>1),b>2",
+        "select[>a] from t",
+        "select from t where b in (a;b)",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("paren{n}.q");
+        let text = format!("a:{{x}}\nt:([]a:1 2;b:3 4)\nr7:{phrase}\nr8:a 1\n");
+        let puri = server.open(dir.path(), &name, &text);
+        let reply = server.ask(
+            "textDocument/rename",
+            &puri,
+            &text,
+            "a:{",
+            0,
+            json!({"newName": "af"}),
+        );
+        let why = refused(&reply);
+        assert!(
+            why.contains("qSQL") && why.contains(":3"),
+            "{phrase}: {why}"
+        );
+    }
     let reply = server.ask(
         "textDocument/rename",
         &quri,
