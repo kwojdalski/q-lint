@@ -202,12 +202,12 @@ function fakePanels() {
   return panels;
 }
 
-async function setUp(t, tags, config = {}) {
+async function setUp(t, tags, config = {}, more = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
   const q = await fakeQ(RAW);
   const context = stub.newContext();
-  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags }]);
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags, ...more }]);
   const live = new Live(context);
   const profile = registerFunctionProfile(context, live);
   t.after(async () => {
@@ -253,6 +253,28 @@ test("off, the command refuses and sends nothing; on, the profile runs, is clean
   assert.strictEqual(profile.panelOpen(), false);
   await stub.commands.get(PROFILE_FUNCTIONS)(".ns", ".ns.top[]");
   assert.strictEqual(q.sent.length, sent);
+});
+
+// The wrappers and the statements went to the gateway as they were, where
+// Run Query sends the same code to its servers: it profiled the gateway's
+// functions, or failed there on the servers' table (#3060).
+test("on a TorQ gateway the profile refuses code Run Query sends to the servers, and sends nothing (#3060)", async (t) => {
+  const panels = fakePanels();
+  const { q, live } = await setUp(t, [], {}, { gateway: ["rdb"] });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  assert.strictEqual(
+    await stub.commands.get(PROFILE_FUNCTIONS)(".stats", ".stats.vwap[select from trade where sym=`AAPL]"),
+    "q-lint: Profile Functions runs the code in q-lint's own q, which on the TorQ gateway rdb would run it on the gateway itself, not through .gw.syncexec on its servers as Run Query does. Use Run Query there.",
+  );
+  assert.strictEqual(q.sent.length, before);
+  assert.strictEqual(panels.length, 0);
+  // The gateway's own code is profiled there, as Run Query runs it there.
+  await stub.commands.get(PROFILE_FUNCTIONS)(".gw", ".gw.getserverids[`rdb]");
+  assert.deepStrictEqual(q.sent.slice(before), [
+    [PROFILE, ".gw", [".gw.getserverids[`rdb]"]],
+    [PROFILE_CLEANUP, 0],
+  ]);
 });
 
 test("on a guarded process the run is held until confirmed, even for a query that only reads", async (t) => {

@@ -95,6 +95,11 @@ export function registerFunctionProfile(
     if (!(await live.toFileBinding(file))) {
       return "nothing was run";
     }
+    // Run inside q-lint's lambda, it would profile the gateway (#3060).
+    const refused = live.gatewayRefusal("Profile Functions", code);
+    if (refused !== undefined) {
+      return say(refused);
+    }
     let ran: { process: string; value: unknown } | undefined;
     try {
       ran = await live.runOnActive(guardedCode(ns, code), async (connection) => {
