@@ -156,8 +156,13 @@ async function queryGrid(args: CliArgs): Promise<Grid> {
       connection.direct = () => ({ label: `${args.host}:${args.port}`, from: "process" });
       answer = await runUnwrapped(connection, statements(args.query!), { size: [25, 200], limit: 100_000, unlimited: false, grid: true });
     } else {
+      // Under `reval`, so q holds the promise that a chart only reads when
+      // the guard's reading misses a write; a process without it is sent
+      // the plain lambda (#2642).
+      connection.readOnly = true;
       answer = await connection.queryGrid(statements(args.query!), [25, 200], 100_000);
     }
+    if (connection.refused !== undefined) throw new Error(`the query would change the process (refused by its read-only evaluation: '${connection.refused}): a chart only reads`);
     if (!answer.ok) throw new Error(`the query failed: ${answer.error}`);
     if (answer.grid === undefined) throw new Error("the query's answer is not a table");
     return gridFromPayload(answer.grid);
