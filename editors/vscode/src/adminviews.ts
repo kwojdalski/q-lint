@@ -75,8 +75,15 @@ export class AdminView implements TreeDataProvider<AdminNode> {
         if (what === "disconnected") {
           this.kept = undefined;
           this.show();
-        } else if (what === "connected" && this.view.visible) {
-          void this.refresh();
+        } else if (what === "connected") {
+          if (this.view.visible) {
+            void this.refresh();
+          } else {
+            // A reconnect to the same label is another connection: its rows
+            // are read when the view is shown again (#2376).
+            this.kept = undefined;
+            this.show();
+          }
         }
       }),
     ];

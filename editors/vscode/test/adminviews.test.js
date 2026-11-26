@@ -328,3 +328,38 @@ test("a view connected to another process mid-read reads that one, not the first
   assert.strictEqual(view.view.message, undefined);
   view.dispose();
 });
+
+// A reconnect to the same label while the view was hidden kept the old
+// connection's rows, its handle still "this connection" (#2376).
+test("a reconnect made while the view is hidden is read again when it is shown (#2376)", async () => {
+  stub.reset();
+  const { vscode } = require("./vscode_stub.js");
+  const make = vscode.window.createTreeView;
+  let visibility;
+  vscode.window.createTreeView = (id, options) => {
+    const view = make(id, options);
+    view.onDidChangeVisibility = (f) => ((visibility = f), { dispose() {} });
+    return view;
+  };
+  let changed;
+  let handle = 7;
+  const live = {
+    activeLabel: () => "rdb",
+    borrow: (use) => use({}, { label: "rdb" }),
+    onDidChange: (f) => ((changed = f), { dispose() {} }),
+  };
+  const view = new AdminView("q-lint.test", live, async () => ({ nodes: [{ label: `handle ${handle}` }] }));
+  vscode.window.createTreeView = make;
+  await view.refresh();
+  assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 7"]);
+  view.view.visible = false;
+  visibility();
+  handle = 8;
+  changed("connected");
+  view.view.visible = true;
+  visibility();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 8"]);
+  view.dispose();
+});
