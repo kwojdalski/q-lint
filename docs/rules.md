@@ -125,7 +125,7 @@ it, or `ALL`.
 | <a id="qt013"></a>`QT013` | flip-flat-numeric | flip applied to an atom or a flat vector | every profile |
 | <a id="qt014"></a>`QT014` | literal-rotate-count | rotate count is not an integer atom, or is null | every profile |
 | <a id="qt015"></a>`QT015` | symbol-comparison | Symbol compared with a number or string is a runtime type error | every profile |
-| <a id="qt016"></a>`QT016` | symbol-math-argument | Numeric math applied to a symbol literal | every profile |
+| <a id="qt016"></a>`QT016` | symbol-math-argument | Numeric math applied to a symbol literal or to the guid null | every profile |
 | <a id="qt017"></a>`QT017` | literal-moving-window | Moving-window size is not an integer atom, or is a null one q refuses | every profile |
 | <a id="qt018"></a>`QT018` | literal-statistical-length | Literal inputs to cor, cov, wavg or wsum have incompatible lengths | every profile |
 | <a id="qt019"></a>`QT019` | literal-within-bounds | within bounds are not a two-item list | every profile |

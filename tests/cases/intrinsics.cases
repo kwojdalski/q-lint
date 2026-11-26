@@ -878,6 +878,32 @@ c:distinct (0Nd;0Nd)
 d:count 0Np
 e:til 0Wh
 
+=== QT008 profile: general | the guid null is no count (q 5: 'type, #2784)
+a:til 0Ng
+b:til 0ng
+
+=== QT016 profile: general | nor a number to do math on (q 5: 'type, #2784)
+a:neg 0Ng
+b:abs 0Ng
+c:sqrt 0Ng
+
+=== QT009 QT010 QT011 QT012 QT013 QT014 QT017 profile: general | and what refuses a symbol atom refuses it (q 5: 'type, and 'rank for asc and flip; #2784)
+a:where 0Ng
+b:avg 0Ng
+c:asc 0Ng
+d:distinct 0Ng
+e:flip 0Ng
+f:0Ng rotate 1 2 3
+g:0Ng mavg 1 2 3
+
+=== clean profile: general | what q runs on the guid null stays silent (#2784)
+a:sum 0Ng
+b:max 0Ng
+c:count 0Ng
+d:null 0Ng
+e:deltas 0Ng
+f:asc enlist 0Ng
+
 
 === QT013 profile: general | a vector holding a null is still a flat vector (q 5: 'rank, #2242)
 a:flip 1 0N

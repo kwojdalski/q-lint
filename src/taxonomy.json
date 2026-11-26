@@ -731,7 +731,7 @@
     "code": "QT016",
     "name": "symbol-math-argument",
     "category": "types-and-shapes",
-    "summary": "Numeric math applied to a symbol literal",
+    "summary": "Numeric math applied to a symbol literal or to the guid null",
     "scope": "builtin"
   },
   {
