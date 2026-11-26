@@ -891,10 +891,10 @@ function heldLocals(t: Token[], open: number, close: number, touching: (a: Token
 }
 
 /// Whether the handle symbol `sym` names a file rather than a process:
-/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 `` and
-/// `` `:unix://5000 `` do not.
+/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 ``,
+/// `` `:unix://5000 `` and `` `:http://host ``, as `.Q.hg` opens it (#2646), do not.
 function isFileHandle(sym: string): boolean {
-  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|[^:/]*:\d)/.test(sym);
+  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|https?:\/\/|[^:/]*:\d)/.test(sym);
 }
 
 /// The locals of the lambda that opens at `t[open]`: its parameters (`x`,

@@ -2043,3 +2043,10 @@ test("csv, q's own \",\", is a format on the left of 0: - text prepared, no file
   assert.deepStrictEqual(writes("`:f.csv 0: csv 0: t"), ["writes the file `:f.csv with 0:"]);
   assert.deepStrictEqual(writes("h 0: t"), ["writes a file with 0:"]);
 });
+
+test("hopen of an http or https URL, as .Q.hg opens it, connects: no file is opened (#2646)", () => {
+  for (const code of ["hopen `:http://example.com", "hopen `:https://example.com:443"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("hopen `:http.txt"), ["opens the file `:http.txt with hopen"]);
+});
