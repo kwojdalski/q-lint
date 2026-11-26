@@ -1040,6 +1040,33 @@ fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
     );
 }
 
+/// What `q-lint/unresolvedNames` lists for the open document `uri`: each
+/// name as written, and its line and character.
+fn unresolved(server: &mut Server, uri: &str) -> Vec<(String, u64, u64)> {
+    let reply = server.whole("q-lint/unresolvedNames", uri, json!({}));
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of names, not {reply}"))
+        .iter()
+        .map(|n| {
+            let (line, start, _) = span(&n["range"]);
+            (n["written"].as_str().unwrap().to_string(), line, start)
+        })
+        .collect()
+}
+
+#[test]
+fn a_module_reading_a_root_name_it_cannot_see_is_listed() {
+    // KDB-X 5: `util:{x*10}; m:use`mymod; m.h 2` is 'util - a module's bare
+    // name is `.m.mymod.util`, one of the workspace's and not of q's (#2667).
+    let dir = tempfile::tempdir().unwrap();
+    let main = "util:{x*10}\nm:use`mymod\nr:m.h 2\n";
+    let mut server = Server::start(dir.path(), &[("main.q", main)]);
+    let module = "helper:{x+1}\nf:{helper x}\nh:{util x}\nexport:([f;h])\n";
+    let uri = server.open(dir.path(), "mymod/init.q", module);
+    assert_eq!(unresolved(&mut server, &uri), [("util".to_string(), 2, 3)]);
+}
+
 /// The one qSQL layout action among `actions`: its title and new text.
 fn qsql(actions: &[Value], uri: &str) -> Option<(String, String)> {
     let action = actions

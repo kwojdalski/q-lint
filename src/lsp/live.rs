@@ -166,7 +166,8 @@ fn global_at(params: &Value, sources: &Sources) -> Value {
 /// `q-lint/unresolvedNames`: each global the document reads that no indexed
 /// file defines - by each name q may resolve it to, where it is written -
 /// for a client to ask a process about. Not a word of q's, not a name in a
-/// one-letter namespace (`.z.pc`, `.Q.dd`), which are q's own, not one in a
+/// one-letter namespace (`.z.pc`, `.Q.dd`), which are q's own - but for
+/// `.m`, where KDB-X runs a module's own names - not one in a
 /// qSQL phrase but the table's, and not one in a system command.
 fn unresolved(params: &Value, sources: &Sources) -> Value {
     let Some((uri, text)) = sources.document(params) else {
@@ -191,7 +192,7 @@ fn unresolved(params: &Value, sources: &Sources) -> Value {
         let names = sources.names(text, &m, &placement);
         let qs = |name: &str| {
             let mut parts = name.split('.');
-            name.starts_with('.') && parts.nth(1).is_some_and(|ns| ns.len() == 1)
+            name.starts_with('.') && parts.nth(1).is_some_and(|ns| ns.len() == 1 && ns != "m")
         };
         if names.is_empty()
             || names
