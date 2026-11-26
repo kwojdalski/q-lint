@@ -401,6 +401,19 @@ f:`:.z.P
 g:`:log/.z.Z
 h:hopen `:.z.T
 
+=== QP003 profile: uqf | ltime of the UTC clock is the local one by another name (q 5: ltime .z.p is .z.P) (#2722)
+a:ltime .z.p
+
+=== QP003 profile: uqf | inside an expression and in brackets too (#2722)
+b:`date$ltime .z.p
+c:ltime[.z.p]
+
+=== clean profile: uqf | ltime of a value, and a name or a string that spells it, read no clock (#2722)
+f:{ltime x}
+.my.ltime:{x}
+g:.my.ltime .z.p
+h:"ltime .z.p"
+
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
 

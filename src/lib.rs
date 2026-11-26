@@ -2058,8 +2058,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // only on request.
         // The finding sits on the clock it names.
         "QP003" => {
-            let m = re!(r"^\.z\.[PTNZD]\b").find(v.code.get(start..)?)?;
-            let clock = utc_clock(m.as_str());
+            let code = v.code.get(start..)?;
+            // `ltime .z.p` goes whole, for the clock it was applied to.
+            let (m, local) = match LTIME_CLOCK.captures(code) {
+                Some(c) => (c.get(0)?, ltime_clock(&c)),
+                None => {
+                    let m = re!(r"^\.z\.[PTNZD]\b").find(code)?;
+                    (m, m.as_str())
+                }
+            };
+            let clock = utc_clock(local);
             (
                 &source[start..start + m.end()],
                 clock.clone().into(),
@@ -3172,6 +3180,21 @@ fn utc_clock(local: &str) -> String {
         ".z.p".into()
     } else {
         local.to_ascii_lowercase()
+    }
+}
+
+/// `ltime` applied to the UTC clock, juxtaposed or in brackets, where a
+/// finding starts.
+static LTIME_CLOCK: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"^ltime(?:[ \t]+(\.z\.[pz])\b|[ \t]*\[[ \t]*(\.z\.[pz])[ \t]*\])").unwrap()
+});
+
+/// The local clock `ltime` of a UTC one is: q 5 `ltime .z.p` is `.z.P`, a
+/// timestamp, and `ltime .z.z` is `.z.Z`, a datetime (#2722).
+fn ltime_clock(c: &regex::Captures) -> &'static str {
+    match c.get(1).or(c.get(2)).map(|m| m.as_str()) {
+        Some(".z.z") => ".z.Z",
+        _ => ".z.P",
     }
 }
 
@@ -10858,6 +10881,25 @@ fn lint_rules(
                         "`{}` is the local wall clock; the convention is UTC `{}`",
                         m.as_str(),
                         utc
+                    ),
+                );
+            }
+            // `ltime` of the UTC clock is the local one by another name:
+            // q 5 `ltime .z.p` is `.z.P`, and `ltime .z.z` is `.z.Z` (#2722).
+            for at in line.match_indices("ltime").map(|(at, _)| at) {
+                let Some(c) = LTIME_CLOCK.captures(&line[at..]) else {
+                    continue;
+                };
+                if !boundary(line, at) || line[at + c[0].len()..].starts_with('.') {
+                    continue;
+                }
+                add(
+                    offset + at,
+                    "QP003",
+                    format!(
+                        "`{}` is the local wall clock; the convention is UTC `{}`",
+                        &c[0],
+                        utc_clock(ltime_clock(&c))
                     ),
                 );
             }

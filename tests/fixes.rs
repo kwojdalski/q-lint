@@ -465,6 +465,9 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
     // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
     ("QP003", "a:.z.Z", "a:.z.p", false),
+    // `ltime` of the UTC clock goes whole (#2722).
+    ("QP003", "a:`date$ltime .z.p", "a:`date$.z.p", false),
+    ("QP003", "a:ltime[.z.p]", "a:.z.p", false),
     // The clock, not the symbol that spells it (#2721).
     ("QP003", "a:(`.z.P;.z.P)", "a:(`.z.P;.z.p)", false),
     (
