@@ -690,3 +690,40 @@ test("an empty dictionary whose value is a table shows the table's header and ru
   assert.deepStrictEqual((await unwrapped("0x010000002e000000630700000000006200630b0002000000610062000000020000000700000000000b0000000000")).text, ["| a b", "| ---"]);
   assert.deepStrictEqual((await unwrapped("0x0100000026000000630000000000006200630b00010000006100000001000000000000000000")).text, ["| a", "| -"]);
 });
+
+test("a nested cell is cut by -3! at the process's \\c before its column is padded, and a derived function keeps its iterator (#2706, #2707)", async () => {
+  const til = (n) => ({ kind: "vector", t: 7, attr: 0, v: Array.from({ length: n }, (_, i) => BigInt(i)) });
+  const long = (n) => ({ kind: "atom", t: -7, v: BigInt(n) });
+  const table = { kind: "table", attr: 0, cols: ["x"], data: [{ kind: "list", attr: 0, v: [til(50), { kind: "atom", t: -11, v: "a" }] }] };
+  const matrix = { kind: "list", attr: 0, v: [{ kind: "list", attr: 0, v: [til(50), long(1)] }, { kind: "list", attr: 0, v: [long(2), long(3)] }] };
+  const over = { kind: "func", t: 107, parts: [{ kind: "func", t: 100, text: `{${"a".repeat(93)}}` }] };
+  const numbers = "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 ";
+  // KDB-X at \c 25 80: .Q.S of each at each size.
+  const lines = (q, size) => consoleLines(q, size, undefined, undefined, 7, 80).map((l) => l.trimEnd());
+  assert.deepStrictEqual(lines(table, [25, 80]), ["x", "-".repeat(79), `${numbers}..`, "`a"]);
+  assert.deepStrictEqual(lines(table, [10, 30]), ["x                           ..", "----------------------------..", "0 1 2 3 4 5 6 7 8 9 10 11 12..", "`a                          .."]);
+  assert.deepStrictEqual(lines(table, [25, 200]), ["x", "-".repeat(79), `${numbers}..`, "`a"]);
+  assert.deepStrictEqual(lines(matrix, [25, 80]), [`${numbers}...`, `2${" ".repeat(77)}..`]);
+  assert.deepStrictEqual(lines(matrix, [25, 200]), [`${numbers}.. 1`, `2${" ".repeat(79)}3`]);
+  assert.deepStrictEqual(lines(over, [25, 80]), [`{${"a".repeat(76)}../`]);
+  assert.deepStrictEqual(lines(over, [10, 30]), [`{${"a".repeat(27)}..`]);
+  assert.deepStrictEqual(lines(til(100), [10, 30]), ["0 1 2 3 4 5 6 7 8 9 10 11 12.."]);
+  // The process is asked its \c only for a value that has such text.
+  const sent = [];
+  const message = Buffer.from("010000000d000000fa01000000", "hex");
+  await runUnwrapped({ evaluate: async (t) => (sent.push(t), { value: 1, type: -6, message }) }, ["x"], { size: [25, 80], limit: 10, unlimited: false, grid: false });
+  assert.deepStrictEqual(sent, ["x"]);
+  // til 100 at a size wider than the process's \c 80: cut at it, as q cuts.
+  const body = Buffer.alloc(6 + 800);
+  body.writeInt8(7, 0);
+  body.writeInt32LE(100, 2);
+  for (let i = 0; i < 100; i++) body.writeBigInt64LE(BigInt(i), 6 + 8 * i);
+  const head = Buffer.from([1, 2, 0, 0, 0, 0, 0, 0]);
+  head.writeInt32LE(8 + body.length, 4);
+  const vector = Buffer.concat([head, body]);
+  sent.length = 0;
+  const fake = { evaluate: async (t) => (sent.push(t), t === "\\c" ? { value: [25, 80], type: 6 } : { value: deserialize(vector, false, true, false, false), type: 7, message: vector }) };
+  const wide = await runUnwrapped(fake, ["til 100"], { size: [25, 200], limit: 10, unlimited: false, grid: false });
+  assert.deepStrictEqual(wide.text, [`${numbers}..`]);
+  assert.deepStrictEqual(sent, ["til 100", "\\c"]);
+});

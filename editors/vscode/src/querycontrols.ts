@@ -171,6 +171,9 @@ export interface Evaluated {
   /// The process's `\P`, the digits its console writes a float to (#2570):
   /// asked only of a value that holds one, and 7, q's default, otherwise.
   precision: number;
+  /// The width of the process's `\c`, at which `-3!` cuts a nested cell
+  /// (#2706): asked only of a value that holds one; the size's otherwise.
+  cellWidth?: number;
 }
 
 /// Whether `q` holds a float or a real anywhere, which its text writes to
@@ -225,6 +228,43 @@ async function precisionOf(connection: Evaluator): Promise<number> {
     p = NaN;
   }
   return Number.isInteger(p) && p >= 0 ? p : 7;
+}
+
+/// Whether `q` is or holds text `-3!` writes - a general list's item, a
+/// derived function, or an atom or simple list too long for the narrowest
+/// console q allows - whose cut is at the process's own `\c` (#2706).
+function holdsCell(q: QValue): boolean {
+  if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
+    return q.kind === "vector" ? q.v.length > 4 : q.kind === "chars" ? q.v.length > 9 : q.t === -11 && String(q.v ?? "").length > 8;
+  }
+  const todo: QValue[] = [q];
+  for (let x = todo.pop(); x !== undefined; x = todo.pop()) {
+    if (x.kind === "list" || (x.kind === "func" && x.t >= 106 && x.t <= 111)) {
+      return true;
+    }
+    if (x.kind === "table") {
+      todo.push(...x.data);
+    } else if (x.kind === "dict") {
+      todo.push(x.k, x.v);
+    }
+  }
+  return false;
+}
+
+/// The width of the process's `\c`, asked as a plain string with each run
+/// that needs it, as `\P` is; undefined when it refuses to say.
+async function consoleWidthOf(connection: Evaluator): Promise<number | undefined> {
+  let c: unknown;
+  try {
+    c = (await connection.evaluate("\\c"))?.value;
+  } catch (error) {
+    if (!(error instanceof QError)) {
+      throw error;
+    }
+    return undefined;
+  }
+  const w = Array.isArray(c) || ArrayBuffer.isView(c) ? Number((c as ArrayLike<unknown>)[1]) : NaN;
+  return Number.isInteger(w) && w > 0 ? w : undefined;
 }
 
 /// `statement` as the plain string that runs it in `context`: q reads each
@@ -298,7 +338,12 @@ export async function runUnwrapped(
   if (!ran.ok) {
     return { ok: false, error: ran.error, trace: "" };
   }
-  return answerOf(ran.last, options);
+  // Cut text only: the process's \c, where `-3!` cuts (#2706). A gateway's
+  // answer is its servers', and it is asked nothing more.
+  const { typed } = ran.last;
+  const cuts = !options.unlimited && typed !== undefined && !isGatewayCall(statements.join("\n")) && holdsCell(typed);
+  const cellWidth = cuts ? await consoleWidthOf(connection) : undefined;
+  return answerOf(cellWidth === undefined ? ran.last : { ...ran.last, cellWidth }, options);
 }
 
 /// The answer `runUnwrapped` shows for `last`.
@@ -311,7 +356,7 @@ export function answerOf(last: Evaluated, options: { size: [number, number]; lim
   } else {
     text = options.unlimited
       ? formatQ(typed, last.value, last.type, last.precision)
-      : consoleLines(typed, options.size, last.value, last.type, last.precision);
+      : consoleLines(typed, options.size, last.value, last.type, last.precision, last.cellWidth);
   }
   const answer: GridAnswer = { ok: true, type: last.type ?? 0, text };
   if (!options.grid) {
