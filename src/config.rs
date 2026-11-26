@@ -606,7 +606,7 @@ impl Policy {
                 .narrowing
                 .borrow()
                 .iter()
-                .all(|layer| apply(layer, code, true))
+                .all(|layer| resolve(layer, code, true, false))
     }
 
     /// Whether the configuration and flags select `code`, before the
@@ -817,6 +817,14 @@ impl std::fmt::Display for Described {
 /// decides, an ignore winning a tie; a `select` that does not name it turns
 /// it off; and a layer that does not mention it leaves it as it was.
 fn apply(layer: &Layer, code: &str, on: bool) -> bool {
+    resolve(layer, code, on, true)
+}
+
+/// `apply`, for a layer that turns rules on (`widens`) or for an editor's
+/// narrowing one, which only hides what the configuration already selects:
+/// there `ALL` or a prefix keeps QP008 as it keeps any rule it names, where
+/// it hid the QP008 a configuration had selected by code (#2756).
+fn resolve(layer: &Layer, code: &str, on: bool, widens: bool) -> bool {
     let longest = |selectors: &mut dyn Iterator<Item = &String>| {
         selectors
             .filter(|s| names(s, code))
@@ -831,7 +839,7 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
             .iter()
             .flatten()
             .chain(&layer.extend_select)
-            .filter(|s| !OPPOSITE.contains(&code) || *s == code),
+            .filter(|s| !widens || !OPPOSITE.contains(&code) || *s == code),
     );
     let disable = longest(&mut layer.ignore.iter());
     match (enable, disable) {

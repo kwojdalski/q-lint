@@ -2218,6 +2218,44 @@ fn an_editor_select_cannot_widen_the_configuration() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// An editor's `lint.select` shows only those rules, among the ones the
+/// configuration turns on - QP008 among them. Only its own code turns QP008
+/// on, and that rule ran for the editor's layer too, which turns nothing on:
+/// `["ALL"]` and `["QP"]` hid the QP008 the configuration selects (#2756).
+#[test]
+fn an_editor_select_keeps_the_reverse_convention_the_configuration_selects() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("qlinter.toml"),
+        "profile = \"style\"\nextend-select = [\"QP008\"]\n",
+    )
+    .unwrap();
+    let uri = file_uri(&dir.path().join("a.q"));
+    let shown = |select: Value| {
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp"],
+            json!({"lint": {"select": select}}),
+            None,
+        );
+        server.open(&uri, "a:2*(3+4)\nf:{[desc] desc}\n");
+        let found = codes_of(&server.diagnostics_for(&uri));
+        assert_eq!(server.shutdown_and_exit(), 0);
+        found
+    };
+    assert_eq!(shown(json!([])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["ALL"])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["QP"])), ["QP008"]);
+    assert_eq!(shown(json!(["QP", "QF"])), ["QP008", "QF001"]);
+    assert_eq!(shown(json!(["QP008"])), ["QP008"]);
+    assert_eq!(shown(json!(["QF"])), ["QF001"]);
+    // It still turns nothing on: without the configuration's own selection
+    // no editor setting reports QP008.
+    std::fs::write(dir.path().join("qlinter.toml"), "profile = \"style\"\n").unwrap();
+    assert_eq!(shown(json!(["ALL"])), ["QF001"]);
+    assert_eq!(shown(json!(["QP008"])), Vec::<String>::new());
+}
+
 #[test]
 fn an_editor_ignore_drops_a_rule_the_configuration_selects() {
     let dir = tempfile::tempdir().unwrap();
