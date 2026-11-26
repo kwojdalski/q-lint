@@ -244,6 +244,10 @@ export function plainName(name: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_]*$/.test(name) && !RESERVED.has(name);
 }
 
+/// A month's, date's or datetime's text that q reads back: of a year from
+/// 0001 to 9999.
+const READS_YEAR = /^(?!0000)\d{4}\./;
+
 /// One cell's literal. `text` is q's text of it, as `GRID` sent it;
 /// `raw` its number, when `GRID` sent one (undefined when it did not).
 /// `cut`: the text was cut at 200 characters or at `\c`, so the literal is
@@ -285,8 +289,18 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
     case 11:
       return ok(Array.isArray(raw) ? bytesSymbol(raw) : symbolLiteral(text));
     case 13:
+      // Outside years 1 to 9999 q writes a month, a date or a datetime as
+      // it cannot read back - `0+00.01m`, `**33.05m`, `0000.00.00`: cast
+      // from the count of months or days (#3073).
+      if (!READS_YEAR.test(text) && typeof raw === "number" && Number.isInteger(raw)) {
+        return ok(`"m"$${raw}`);
+      }
       return ok(`${text}m`);
     case 15:
+      if (!READS_YEAR.test(text) && typeof raw === "number" && Number.isFinite(raw)) {
+        const days = numberText(raw);
+        return ok(`"z"$${days}${/^-?\d+$/.test(days) ? "f" : ""}`);
+      }
       // A datetime is a float of days, which `string` writes to the
       // millisecond: one with a finer fraction is written as its float
       // (#1494).
@@ -315,6 +329,10 @@ export function atomLiteral(type: number, text: string, raw: unknown): { literal
       }
       return ok(text);
     case 14:
+      if (!READS_YEAR.test(text) && typeof raw === "number" && Number.isInteger(raw)) {
+        return ok(`"d"$${raw}`);
+      }
+      return ok(text);
     case 16:
       return ok(text);
     default:

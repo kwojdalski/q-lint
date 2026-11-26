@@ -281,6 +281,26 @@ test("a minute, second or time of 100 hours or more is cast from its count: q ca
   assert.strictEqual(tableLiteral(minutes).code, '([] c0:(0Nu;"u"$6000))');
 });
 
+test("a date, month or datetime outside years 1 to 9999 is cast from its count: q cannot read what it writes (#3073)", () => {
+  // KDB-X: "d"$-800000 is 0000.00.00, "m"$-30000 100000 are 0+00.01m and **33.05m, "z"$-1000000f is 0000.00.00T00:00:00.000.
+  assert.strictEqual(atomLiteral(14, "0000.00.00", -800000).literal, '"d"$-800000');
+  assert.strictEqual(atomLiteral(14, "0000.00.00", 2921940).literal, '"d"$2921940');
+  assert.strictEqual(atomLiteral(13, "0+00.01", -30000).literal, '"m"$-30000');
+  assert.strictEqual(atomLiteral(13, "0000.12", -23989).literal, '"m"$-23989');
+  assert.strictEqual(atomLiteral(13, "**33.05", 100000).literal, '"m"$100000');
+  assert.strictEqual(atomLiteral(15, "0000.00.00T00:00:00.000", -1000000).literal, '"z"$-1000000f');
+  assert.strictEqual(atomLiteral(15, "0000.00.00T00:00:00.000", 2921940.5).literal, '"z"$2921940.5');
+  // Inside them the text is the literal, as it was.
+  assert.deepStrictEqual(
+    [atomLiteral(14, "0001.01.01", -730119).literal, atomLiteral(14, "9999.12.31", 2921939).literal, atomLiteral(13, "0001.01", -23988).literal, atomLiteral(13, "9999.12", 95999).literal],
+    ["0001.01.01", "9999.12.31", "0001.01m", "9999.12m"],
+  );
+  assert.deepStrictEqual([atomLiteral(15, "0001.01.01T00:00:00.000", -730119).literal, atomLiteral(15, "9999.12.31T12:00:00.000", 2921939.5).literal], ["0001.01.01T00:00:00.000", "9999.12.31T12:00:00.000"]);
+  assert.deepStrictEqual([atomLiteral(14, "", null).literal, atomLiteral(14, "0W", Infinity).literal, atomLiteral(13, "", null).literal], ["0Nd", "0Wd", "0Nm"]);
+  const dates = { count: 2, keys: 0, names: ["a"], types: [14], cells: [["0000.00.00", "2024.01.02"]], raw: [[-800000, 8767]], rank: [[0, 1]] };
+  assert.strictEqual(tableLiteral(dates).code, '([] a:("d"$-800000;2024.01.02))');
+});
+
 test("a lone item that is no noun, the generic null or an operator, is enlisted in parentheses (#1968)", () => {
   // KDB-X: enlist :: is enlist itself, and enlist + a 'rank.
   const one = (type, cell, raw) => tableLiteral({ count: 1, keys: 0, names: ["c"], types: [type], cells: [[cell]], raw: [[raw]], rank: [[0]] }).code;

@@ -127,6 +127,11 @@ function values() {
     "([] f:-0.0 1)",
     "([] a:(1;0n;2.5;0Nj;1b;0x01))",
     "([] l:(acos -1;0n;\"x\"))",
+    // Dates, months and datetimes outside years 1 to 9999, which q writes as it cannot read (#3073).
+    '([] a:"d"$-800000 -730120 -730119 2921939 2921940 3000000)',
+    '([] a:"m"$-30000 -23989 -23988 95999 96000 100000)',
+    '([] a:"z"$-1000000 -730119 2921939.5 2921940 3000000f)',
+    '([k:"d"$-800000 0] v:"m"$100000 0)',
     // A mapped splayed table's nested columns (77h).
     "sp",
   ]);
