@@ -51,6 +51,12 @@ export function latencyText(millis: number): string {
 /// the process is busy (q answers one message at a time), or gone.
 export const UNANSWERED_MS = 5000;
 
+/// How many later heartbeats find one still unanswered each time the process's
+/// host is asked whether it is there at all: a process that is only busy
+/// keeps its connection, and one the network has dropped with no word is
+/// taken as dropped (#3031).
+export const MISSED_BEATS = 3;
+
 /// How long a reconnected connection stays up before it counts as held,
 /// when no query was answered on it: the reconnects after it start again
 /// at the first try (#2129).

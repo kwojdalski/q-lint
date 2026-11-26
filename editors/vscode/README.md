@@ -613,7 +613,9 @@ answer of 5 MB or less, read as UTF-8 or the charset it names. It follows
 up to 20 redirects, and sends the auth header only to the server's own
 origin. Why one failed - no answer, a status, the wrong
 content type, too large, not JSON - shows under the server's row, as do the
-entries it skipped and why; nothing pops up.
+entries it skipped and why; nothing pops up. A server that fails after it
+has listed keeps the processes it last listed, under the failure, until a
+fetch answers: one refresh that fails is no word that they are gone.
 
 A discovered process may share a label with a saved one, or with one another
 server lists. Its row shows its own label, but once connected it is
@@ -968,7 +970,11 @@ editor, newest first, keeping the last `q-lint.tickerplant.stream.rows`
 (1000; at most 10,000). The grid counts the rows received, redraws at most
 five times a second, and **Pause** stops redrawing while the rows keep
 coming. Closing it closes the connection, which the tickerplant drops as a
-subscriber; it says so when the process closes it instead. On a process
+subscriber; it says so when the process closes it instead. While it waits
+for the table list or for `.u.sub`'s answer a notification says so: its
+Cancel, **Abort Current Query** or **Disconnect** gives it up, and it waits
+no longer than the query timeout that holds for the process, or 60 seconds
+with none. On a process
 tagged `prod` it asks first. The lambda that subscribes defines nothing on
 the process. Turning the setting off hides the command and closes every
 stream.
@@ -1272,7 +1278,12 @@ bar shows its round trip: `q: rdb 3 ms`. It defines nothing on the process,
 and a q error back (a gateway that refuses the string) still counts as an
 answer. It is skipped while a query or the Process Explorer's read is out,
 and a query sent while one is out waits for it; one unanswered for 5 seconds
-shows as `no answer 12s` - the process is busy, or gone. A process that logs
+shows as `no answer 12s` - the process is busy, or gone. Which, q-lint asks
+at every third heartbeat that finds one still out: its host is dialled, and
+a host that takes no connection - a VPN down, a network gone without a
+word - has the connection closed as dropped, where a busy process keeps
+it. Every connection also has TCP keepalive on, so one idle on a dead
+network closes without a heartbeat. A process that logs
 its clients sees every heartbeat. With
 `q-lint.connection.autoReconnect.enable` on, a connection the process or the
 network drops is reconnected: the status bar shows `reconnecting to rdb (2

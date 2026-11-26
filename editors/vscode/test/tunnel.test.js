@@ -343,6 +343,37 @@ test("no q behind the tunnel is said so, with the process's address and what ssh
   assert.ok(!JSON.stringify([...context.globalState.keys()].map((k) => context.globalState.get(k))).includes("channel 2"));
 });
 
+// A discovered process cannot be edited, so a password that was refused is
+// forgotten - and so was a right one, when the q behind the jump host was down.
+test("a discovered process keeps its stored password when ssh says the forward reached no q (#3033)", async (t) => {
+  const down = await new Promise((resolve) => {
+    const s = net.createServer().listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+  // A q that refuses the user closes the connection, and ssh says nothing.
+  const refusing = net.createServer((socket) => socket.once("data", () => socket.destroy()));
+  await new Promise((resolve) => refusing.listen(0, "127.0.0.1", resolve));
+  t.after(() => refusing.close());
+  stubSsh(t);
+  const { live, context } = await setUp(t, []);
+  const listed = [
+    { label: "rdb", host: "127.0.0.1", port: down, tags: [], user: "me", ssh: "me@bastion" },
+    { label: "hdb", host: "127.0.0.1", port: refusing.address().port, tags: [], user: "me", ssh: "me@bastion" },
+  ];
+  live.discovery.discovered = () => [{ server: { label: "disc", url: "http://x" }, state: { processes: listed, problems: [], loading: false } }];
+  const stored = async (label) => context.secrets.get(live.passwordKey(live.named(label)));
+  await context.secrets.store(live.passwordKey(live.named("disc/rdb")), "right");
+  await context.secrets.store(live.passwordKey(live.named("disc/hdb")), "wrong");
+  assert.strictEqual(await live.connectTo("disc/rdb"), false);
+  assert.match(stub.messages.at(-1)[1], /closed before the handshake.*ssh said: channel 2: open failed: connect failed: Connection refused$/);
+  assert.strictEqual(await stored("disc/rdb"), "right");
+  assert.strictEqual(await live.connectTo("disc/hdb"), false);
+  assert.match(stub.messages.at(-1)[1], /closed before the handshake: .*, or the user or password was refused$/);
+  assert.strictEqual(await stored("disc/hdb"), undefined, "a refused password is still forgotten");
+});
+
 // A process addressed by IP, over TLS, through a tunnel: the socket goes to
 // the loopback end, and the certificate is for the process's address (#1356).
 // The certificate is made by openssl, and trusted by adding it to what

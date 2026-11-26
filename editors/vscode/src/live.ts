@@ -72,11 +72,11 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, reachable, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, serverTypesProblem, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
-import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
+import { HEARTBEAT, MISSED_BEATS, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
@@ -158,6 +158,8 @@ export interface HistoryEntry {
 }
 
 type From = "line" | "selection" | "block" | "file";
+/// The editor line a Run Line or Run Selection is run from.
+type Origin = { uri: string; line: number; version?: number };
 
 /// The code a query or a send takes from `editor`: the selection, the
 /// statement the cursor is in, or its line. Undefined when the cursor is on
@@ -600,8 +602,9 @@ export class Stopped extends Error {
 }
 
 /// What `Live.runApart` throws when it is cancelled before its connection
-/// opens: nothing was sent to the process, so its caller records no run.
-/// Its message is the connect's own (#1926).
+/// opens, or while its connect script runs: the query was not sent to the
+/// process, so its caller records no run. Its message is the connect's own
+/// (#1926), or `cancelled` (#3016).
 export class NotSent extends Error {}
 
 export class Live {
@@ -629,9 +632,10 @@ export class Live {
   };
   /// The connections `openSeparate` handed out and still open: a stream's.
   private readonly separate = new Set<{ connection: QConnection; process: Process }>();
-  /// Connections apart still running their connect script, which Abort and
-  /// Disconnect close: nothing else reaches them (#2567).
-  private readonly preparingApart = new Set<{ connection: QConnection; process: Process }>();
+  /// Connections apart the user asked for - a stream's, a diff's - still
+  /// running their connect script, which Abort and Disconnect close:
+  /// nothing else reaches them (#2567).
+  private readonly preparingApart = new Set<{ connection: QConnection; process: Process; what?: string }>();
   /// Stops the connect under way: a reconnect after an abort that waits for
   /// the process to be free, or any connect Disconnect or a connect
   /// elsewhere replaces (#1704).
@@ -643,6 +647,9 @@ export class Live {
   /// as it becomes the active one: edited or tagged meanwhile, as it is now (#1700).
   private connectingTo: string | undefined;
   private connectingAs: Process | undefined;
+  /// Whether the connect under way is Abort's reconnect, which waits for
+  /// the process to be free.
+  private connectingAgain = false;
   /// Set by Disconnect, or a connect to another process, to stop a
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
@@ -673,6 +680,8 @@ export class Live {
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private latency: { millis: number; at: number } | undefined;
   private beatSent: number | undefined;
+  /// How many later heartbeats found that one still unanswered (#3031).
+  private beatsMissed = 0;
   /// The connection the heartbeat was last started for: started again on
   /// the same one, a beat still unanswered stays shown (#1710).
   private beatOn: QConnection | undefined;
@@ -706,6 +715,16 @@ export class Live {
   /// waits for it (`borrow`). `borrower` says whose it is, for Abort (#1709).
   private borrowed: Promise<unknown> | undefined;
   private borrower = "";
+  /// A run of q-lint's own that is out or about to be - a watched query's:
+  /// nobody sent it now, so a query sent meanwhile waits for it as it waits
+  /// for a background read, and is not refused for it (#3029).
+  private yielding: Promise<unknown> | undefined;
+  private readonly freed = new EventEmitter<void>();
+  /// Fired when a background read (`borrow`) has ended and left the
+  /// connection free. A view that skipped its own read for one - the
+  /// heartbeat's first beat goes out as the connection opens, ahead of the
+  /// views' - makes it now, as a query's end has it make one (#3020).
+  readonly onDidFree = this.freed.event;
   /// Set on deactivate: a connection opened after it is closed at once.
   private disposed = false;
   private readonly changed = new EventEmitter<"connected" | "disconnected" | "queried" | "edited">();
@@ -722,9 +741,6 @@ export class Live {
   /// or saved query deleted or renamed - for an open dashboard to draw them
   /// again (#2550).
   readonly onDidChangeTiles = this.tiles.event;
-  /// The line a Run Line or Run Selection is running from, until `run`
-  /// takes it.
-  private origin: { uri: string; line: number; version?: number } | undefined;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
@@ -823,6 +839,7 @@ export class Live {
       c(WATCH.start, (code?: string, every?: number) => this.watch(code, every)),
       c(WATCH.stop, () => this.stopWatching()),
       this.changed,
+      this.freed,
       this.discovery.onDidChange(() => this.processesView.refresh()),
       workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("q-lint.processes.tagColors")) {
@@ -874,8 +891,9 @@ export class Live {
           clearInterval(this.ticker);
           clearInterval(this.heartbeat);
           this.reconnectRun++;
-          // A reconnect after an abort stops trying.
+          // A reconnect after an abort stops trying, and waiting.
           this.reconnectStopped = true;
+          this.stopConnect?.abort();
           void this.connection?.close();
           this.closeTunnels();
           globalThis.process.off("exit", this.closeTunnels);
@@ -883,6 +901,12 @@ export class Live {
         },
       },
       workspace.onDidGrantWorkspaceTrust(() => void this.loadShared()),
+      // Back from the window a process was renamed or deleted in (#3035).
+      window.onDidChangeWindowState((state) => {
+        if (state.focused) {
+          void this.applyRelabels();
+        }
+      }),
     );
     globalThis.process.on("exit", this.closeTunnels);
     this.showStatus();
@@ -1194,6 +1218,24 @@ export class Live {
     return this.connection?.isOpen ? this.active : undefined;
   }
 
+  /// The process the connection, or the connect or reconnect under way, is
+  /// to; undefined when there is none. `active` alone goes on naming the
+  /// process last connected to once its connection has dropped, which a
+  /// connect to another one has nothing to do with (#3038).
+  private underWay(): Process | undefined {
+    if (this.connection !== undefined) {
+      return this.active;
+    }
+    return this.connecting !== undefined ? this.connectingAs : this.reconnecting !== undefined ? this.active : undefined;
+  }
+
+  /// The process Abort's reconnect is waiting for, until it connects or is
+  /// stopped: a query sent meanwhile goes there, so what marks the process
+  /// - its environment colour - stays while it does (#3018).
+  reconnectingProcess(): Process | undefined {
+    return this.connection === undefined && this.connecting !== undefined && this.connectingAgain && this.stopConnect?.signal.aborted !== true ? this.connectingAs : undefined;
+  }
+
   /// The process the file `uri` is bound to by Choose Connection for File,
   /// if any: where hot reload on save (#934) sends its definitions.
   fileBinding(uri: Uri): string | undefined {
@@ -1206,17 +1248,18 @@ export class Live {
   /// when the connection cannot move there: a query is still running, or
   /// the connect failed.
   async toFileBinding(uri: Uri | undefined): Promise<boolean> {
+    await this.applyRelabels();
     const bound = uri === undefined ? undefined : this.fileBinding(uri);
     if (bound === undefined || bound === this.activeLabel()) {
       return true;
     }
-    if (this.isBusy()) {
+    if (this.queryRunning()) {
       void window.showInformationMessage(
         plainMessage(`q-lint: a query is still running on ${this.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
       );
       return false;
     }
-    return this.connectTo(bound);
+    return this.connectForQuery(bound);
   }
 
   /// Whether Toggle Unlimited Query is on: a pane that runs code asks too (#2362).
@@ -1228,6 +1271,13 @@ export class Live {
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
     return this.connection?.isBusy ?? false;
+  }
+
+  /// Whether a query, not a background read (`borrow`), is running on the
+  /// active connection. A read is not the user's to wait for or to abort:
+  /// a command that connects elsewhere goes ahead, as Connect does (#3039).
+  queryRunning(): boolean {
+    return this.isBusy() && this.borrowed === undefined;
   }
 
   history(): HistoryEntry[] {
@@ -1263,6 +1313,13 @@ export class Live {
     const settled: Promise<unknown> = call.catch(() => {}).finally(() => {
       if (this.borrowed === settled) {
         this.borrowed = undefined;
+        // A turn on, so that a query that waited for it is sent first: the
+        // connection is then busy, and its end is what the views hear.
+        setTimeout(() => {
+          if (this.connection === connection && connection.isOpen && !connection.isBusy && !this.disposed) {
+            this.freed.fire();
+          }
+        }, 0);
       }
     });
     this.borrowed = settled;
@@ -1509,6 +1566,14 @@ export class Live {
       const { label: to, attempt, of } = this.reconnecting;
       this.status.text = `$(sync~spin) q: reconnecting to ${iconsEscaped(to)} (${attempt} of ${of})`;
       this.status.tooltip = `The connection to ${to} dropped; q-lint is reconnecting (q-lint.connection.autoReconnect). q-lint: Disconnect stops it.`;
+    } else if (this.connecting !== undefined && this.connectingAs !== undefined && this.stopConnect?.signal.aborted !== true) {
+      // A connect under way, and Abort's reconnect, which may wait minutes
+      // for the process to be free: not "not connected" (#3018).
+      const to = this.connectingAs.label;
+      this.status.text = `$(sync~spin) q: ${this.connectingAgain ? "reconnecting" : "connecting"} to ${iconsEscaped(to)}`;
+      this.status.tooltip = this.connectingAgain
+        ? `q-lint reconnects to ${to} once it is free of the query that was aborted; a query sent meanwhile waits and goes there. q-lint: Disconnect stops it.`
+        : `Connecting to ${to}. q-lint: Disconnect stops it.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
@@ -1808,7 +1873,8 @@ export class Live {
   }
 
   /// The renames and deletions made in other workspaces since this one's
-  /// state last had them, applied to it (#1749).
+  /// state last had them, applied to it (#1749): when it opens, when its
+  /// window is come back to, and before a file's binding is read (#3035).
   private async applyRelabels(): Promise<void> {
     const log = parseRelabels(this.context.globalState.get<unknown>(RELABELS_KEY));
     const applied = this.context.workspaceState.get<number>(RELABELS_APPLIED_KEY, 0);
@@ -1819,6 +1885,27 @@ export class Live {
     await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
     for (const r of pending) {
       await this.retarget(r.from, r.to ?? undefined);
+      this.renamedElsewhere(r.from, r.to);
+    }
+  }
+
+  /// The process connected to, or being reconnected to, is one another
+  /// window renamed `to`: it goes on under that label, as after a rename
+  /// made here, and a reconnect finds it saved (#3036).
+  private renamedElsewhere(from: string, to: string | null): void {
+    const active = this.active;
+    const now = to === null ? undefined : this.processes().find((p) => p.label === to);
+    if (now === undefined || active?.label !== from || active.server !== undefined) {
+      return;
+    }
+    this.active = stillOpen(active, now);
+    if (this.reconnecting?.label === from) {
+      this.reconnecting = { ...this.reconnecting, label: now.label };
+    }
+    this.showStatus();
+    this.processesView.refresh();
+    if (this.activeLabel() !== undefined) {
+      this.changed.fire("connected");
     }
   }
 
@@ -2199,8 +2286,11 @@ export class Live {
       timedOut = true;
       connection.abort();
     });
+    // Not one run from a timer - a tile's refresh, a scheduled export -
+    // which nobody waits for: a Disconnect from the process the user works
+    // on is not one from every process a timer reads (#3026).
     const preparing = { connection, process };
-    if (throws) {
+    if (throws && !unattended) {
       this.preparingApart.add(preparing);
     }
     // Under `reval` where that is the guard's backstop, as any code the
@@ -2253,26 +2343,43 @@ export class Live {
     }
   }
 
-  /// Close the connections apart still in their connect script; the labels
-  /// of their processes.
+  /// Close the connections apart still in their connect script, or in what
+  /// their caller sets them up with (`settingUp`); what was stopped, as the
+  /// user is told it: `the connect script of a, b`.
   private stopPreparingApart(): string[] {
-    const labels = [...this.preparingApart].map(({ connection, process }) => (connection.abort(), process.label));
+    const stopped = new Map<string, Set<string>>();
+    for (const { connection, process, what = "the connect script of" } of this.preparingApart) {
+      connection.abort();
+      stopped.set(what, (stopped.get(what) ?? new Set<string>()).add(process.label));
+    }
     this.preparingApart.clear();
-    return [...new Set(labels)];
+    return [...stopped].map(([what, labels]) => `${what} ${[...labels].join(", ")}`);
   }
 
   // --- connections
 
   async connectTo(row?: ProcessArg): Promise<boolean> {
-    const process = await this.chosen(row, "Connect to which q process?", true);
-    // A connect the user asks for stops an automatic reconnect, and the
-    // tries after its next drop start again.
-    if (process !== undefined) {
-      this.stopReconnecting();
-      this.reconnectTries = undefined;
+    const process = await this.toConnect(row);
+    // Picked from the list while connected to it - the status bar's "Click
+    // to switch" - it is switched to already: connecting again would drop
+    // the query running there as aborted (#3030). A row's own Connect, and
+    // a caller naming the process, connect again.
+    const at = this.activeProcess();
+    if (row === undefined && process !== undefined && at !== undefined && at.label === process.label && at.server === process.server && this.passwordKey(at) === this.passwordKey(process)) {
+      void window.showInformationMessage(plainMessage(`q-lint: already connected to ${process.label}.`));
+      return true;
     }
+    return process !== undefined && this.openChosen(process);
+  }
+
+  /// The process `connectTo` connects to: `row`, or the one picked, its
+  /// password asked for when it has none. Undefined when the user gave
+  /// neither. The part of a connect that is the user's own time, which no
+  /// query's timeout counts (#3019).
+  private async toConnect(row?: ProcessArg): Promise<Process | undefined> {
+    const process = await this.chosen(row, "Connect to which q process?", true);
     if (process === undefined) {
-      return false;
+      return undefined;
     }
     // A discovered process's user has no password stored until asked for one.
     const saved = process.server === undefined;
@@ -2285,12 +2392,24 @@ export class Live {
         prompt: "Kept in VS Code's secret storage.",
       });
       if (password === undefined) {
-        return false;
+        return undefined;
       }
       await this.context.secrets.store(this.passwordKey(process), password);
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
+    // A connect the user asks for stops an automatic reconnect, and the
+    // tries after its next drop start again. Once it is to be made: Escape
+    // at the password box above connects nowhere, and stops nothing (#3028).
+    this.stopReconnecting();
+    this.reconnectTries = undefined;
+    return process;
+  }
+
+  /// Connect to `process`, one `toConnect` gave. Whether it connected.
+  private async openChosen(process: Process): Promise<boolean> {
+    const saved = process.server === undefined;
+    const commanded = process.credentialCommand !== undefined && this.setting(readAdmin).credentialCommand;
     const outcome: { refused?: boolean } = {};
     const connected = await this.open(process, false, false, this.disconnects, outcome);
     // A discovered process cannot be edited, so a password that was refused
@@ -2306,10 +2425,11 @@ export class Live {
   /// Connect to `process`, closing the connection there was. Whether it
   /// connected. `untilFree`, after an abort: a process that does not answer
   /// the handshake is still running the query it was left with, and is
-  /// tried again until it does, or until the user disconnects or connects
+  /// waited for until it does, or until the user disconnects or connects
   /// elsewhere.
   /// `outcome.refused` is set when the process closed before the handshake:
-  /// how it refuses a user or password.
+  /// how it refuses a user or password. Not when ssh said its forward
+  /// reached no process, which closes the same way (#3033).
   private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects, outcome: { refused?: boolean } = {}): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
@@ -2333,6 +2453,7 @@ export class Live {
     this.stopConnect = cut;
     this.connectingTo = this.passwordKey(process);
     this.connectingAs = process;
+    this.connectingAgain = untilFree;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
@@ -2352,16 +2473,13 @@ export class Live {
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
             const target = await this.targetFor(process, cut.signal);
-            for (;;) {
-              try {
-                return await this.dial(process, target, cut.signal);
-              } catch (error) {
-                const busy = error instanceof Error && error.message.startsWith("no answer from ");
-                if (!untilFree || !busy || this.reconnectStopped || cut.signal.aborted) {
-                  throw error;
-                }
-              }
-            }
+            // After an abort the process answers the handshake once the
+            // query it was left with ends. The one login is left with it
+            // until then: given up and made again every 10 s, each was
+            // answered in turn once it was free, the password checked and
+            // `.z.po` run for connections long closed (#3024). A host that
+            // takes no connection is gone, not busy, and fails (#3032).
+            return this.dial(process, target, cut.signal, untilFree);
           },
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
@@ -2418,7 +2536,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (failure) {
-        outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
+        outcome.refused = failure instanceof ClosedBeforeHandshake || (failure instanceof TunnelHandshakeError && !failure.reachedNothing);
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects || cut.signal.aborted) {
           return false;
         }
@@ -2435,15 +2553,20 @@ export class Live {
     })().finally(() => {
       this.connecting = undefined;
       this.connectingAs = undefined;
+      this.connectingAgain = false;
+      // A connect that failed leaves the bar saying so, not "connecting" (#3018).
+      this.showStatus();
     });
+    this.showStatus();
     return this.connecting;
   }
 
   /// Open a connection to `process` at `target`, through the SSH tunnel it
   /// names, if it names one (#908): the tunnel closes with the connection,
   /// and the connection with the tunnel. `signal` stops the connect.
-  private async dial(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
-    const connection = await this.dialed(process, target, signal);
+  /// `untilFree`: its handshake is waited for without limit (#3024).
+  private async dial(process: Process, target: Target, signal?: AbortSignal, untilFree = false): Promise<QConnection> {
+    const connection = await this.dialed(process, target, signal, untilFree);
     // Asked at each send, so a changed setting or process holds at once (#2470).
     connection.direct = () => this.directOf(connection === this.connection && this.active !== undefined ? this.active : process);
     return connection;
@@ -2460,9 +2583,11 @@ export class Live {
     return this.active === undefined ? undefined : this.directOf(this.active);
   }
 
-  private async dialed(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
+  private async dialed(process: Process, target: Target, signal?: AbortSignal, untilFree = false): Promise<QConnection> {
+    // The handshake of a process waited for until it is free has no limit.
+    const handshakeMs = untilFree ? Infinity : undefined;
     if (process.ssh === undefined) {
-      return QConnection.open(target, undefined, signal);
+      return QConnection.open(target, undefined, signal, handshakeMs);
     }
     if (!this.setting(readTunnel).enabled) {
       throw new Error(
@@ -2482,6 +2607,7 @@ export class Live {
         },
         undefined,
         signal,
+        handshakeMs,
       );
       connection.whenClosed(() => tunnel.close());
       tunnel.whenClosed(() => connection.abort());
@@ -2538,6 +2664,45 @@ export class Live {
     this.separate.add(kept);
     connection.whenClosed(() => this.separate.delete(kept));
     return connection;
+  }
+
+  /// `call` over `connection`, one apart to `process` that its caller is
+  /// still setting up - a stream's table list, its `.u.sub` - which a
+  /// process that does not answer would hold for ever, as no query timeout
+  /// covers it: bounded as its connect script was, and closed by Abort,
+  /// Disconnect or `signal`, as it was then (#3023). `what` is how Abort and
+  /// Disconnect name it before the process's label. Undefined when one of
+  /// those closed it: whoever stopped it knows.
+  async settingUp<T>(connection: QConnection, process: Process, what: string, call: () => Promise<T>, signal?: AbortSignal): Promise<{ answer: T } | undefined> {
+    if (signal?.aborted) {
+      connection.abort();
+      return undefined;
+    }
+    const timeout = effectiveTimeout(process, this.controls.settings().timeout, this.setting(readAdmin).processTimeout) || APART_SCRIPT_TIMEOUT;
+    let timedOut = false;
+    const disarm = armTimeout(timeout, () => {
+      timedOut = true;
+      connection.abort();
+    });
+    const stop = (): void => connection.abort();
+    signal?.addEventListener("abort", stop);
+    const preparing = { connection, process, what };
+    this.preparingApart.add(preparing);
+    try {
+      return { answer: await call() };
+    } catch (error) {
+      if (timedOut) {
+        throw new Error(timedOutError(timeout));
+      }
+      if (signal?.aborted || !this.preparingApart.has(preparing)) {
+        return undefined;
+      }
+      throw error;
+    } finally {
+      disarm();
+      signal?.removeEventListener("abort", stop);
+      this.preparingApart.delete(preparing);
+    }
   }
 
   /// Close the connections apart to the processes `which` picks: a setting
@@ -2656,6 +2821,18 @@ export class Live {
     );
   }
 
+  /// `process` as a reconnect is to find it: a saved one as saved now, and
+  /// one from a discovery server or the shared list as its list gives it
+  /// now - a process restarted on another port is what a list is for
+  /// (#3021). Undefined when it is listed no more.
+  private asListed(process: Process): Process | undefined {
+    if (process.server === undefined) {
+      return this.processes().find((p) => p.label === process.label);
+    }
+    const listed = findDiscovered([...this.discovery.discovered(), ...this.sharedList()], process.label);
+    return listed?.server === process.server ? listed : undefined;
+  }
+
   /// Reconnect to `process`, whose connection dropped, waiting longer before
   /// each try (`backoffDelay`), until it connects, the tries run out, or the
   /// user connects elsewhere or disconnects (#917).
@@ -2695,13 +2872,20 @@ export class Live {
         break;
       }
       tried = attempt;
+      // Renamed in another window, it is reconnected to under its new label (#3036).
+      await this.applyRelabels();
+      if (run !== this.reconnectRun || this.connection !== undefined) {
+        return;
+      }
       // Each try connects to it as it is now - renamed, tagged, given a
-      // connect script meanwhile - and a saved one as saved (#1699).
+      // connect script meanwhile - and as saved or listed now (#1699, #3021).
       const now = this.active ?? process;
-      const saved = now.server === undefined ? this.processes().find((p) => p.label === now.label) : now;
+      const saved = this.asListed(now);
       if (saved === undefined) {
         this.reconnecting = undefined;
         this.showStatus();
+        // Said: "Reconnecting." was, and nothing else will be (#3036).
+        void window.showWarningMessage(plainMessage(`q-lint: stopped reconnecting to ${now.label}: it is no longer in the process list.`));
         return;
       }
       process = saved;
@@ -2727,7 +2911,7 @@ export class Live {
   /// closed and not reconnected, as deleting a saved process closes its
   /// own (#2565).
   async serverGone(server: string): Promise<void> {
-    if (this.active?.server === server && (this.connection !== undefined || this.connecting !== undefined || this.reconnecting !== undefined)) {
+    if (this.underWay()?.server === server) {
       await this.disconnect();
     }
   }
@@ -2736,7 +2920,8 @@ export class Live {
   /// (Stop Process): the connection to it closes as one the user closed,
   /// and nothing reconnects to it (#2134).
   async stopping(label: string, port: number): Promise<void> {
-    const at = this.active;
+    // The one connected or being connected to, not one disconnected from (#3038).
+    const at = this.underWay();
     const to = at !== undefined && at.label === label && at.server === undefined && at.ssh === undefined && isLocalHost(at.host) && at.port === port;
     if (to && (this.connection !== undefined || this.connecting !== undefined)) {
       await this.disconnect();
@@ -2789,11 +2974,13 @@ export class Live {
   private async beat(): Promise<void> {
     if (this.beatSent !== undefined) {
       this.showStatus();
+      void this.beatMissed();
       return;
     }
     const sent = Date.now();
     const call = this.borrow(async (connection) => {
       this.beatSent = sent;
+      this.beatsMissed = 0;
       try {
         await connection.evaluate(HEARTBEAT);
       } catch (error) {
@@ -2833,6 +3020,26 @@ export class Live {
     }
   }
 
+  /// A heartbeat is still unanswered at a later one's time. The process is
+  /// busy - q answers one message at a time - or the network dropped with
+  /// no word, which leaves the connection open for ever and every query on
+  /// it waiting. At each `MISSED_BEATS`th, its host is asked for a TCP
+  /// connection: a busy process's host gives one, and the connection stays;
+  /// one that gives none has its connection closed as dropped, which the
+  /// automatic reconnect follows (#3031). Not through an SSH tunnel, whose
+  /// near end always answers: ssh closes a tunnel that is gone.
+  private async beatMissed(): Promise<void> {
+    const connection = this.connection;
+    const process = this.active;
+    const sent = this.beatSent;
+    if (++this.beatsMissed % MISSED_BEATS !== 0 || connection === undefined || process === undefined || process.ssh !== undefined) {
+      return;
+    }
+    if (!(await reachable(process.host, process.port)) && this.connection === connection && this.beatSent === sent && connection.isOpen) {
+      connection.abort();
+    }
+  }
+
   private async disconnect(): Promise<void> {
     this.disconnects++;
     // One running its connect script, which may never answer (#1505), and
@@ -2843,17 +3050,20 @@ export class Live {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
       this.stopReconnecting();
+      this.active = undefined;
       return;
     }
     this.reconnectRun++;
     if (this.connection === undefined && this.connecting === undefined) {
-      void window.showInformationMessage(plainMessage(apart.length > 0 ? `q-lint: stopped the connect script of ${apart.join(", ")} on a connection of its own.` : "q-lint: not connected to a q process."));
+      void window.showInformationMessage(plainMessage(apart.length > 0 ? `q-lint: stopped ${apart.join(" and ")} on a connection of its own.` : "q-lint: not connected to a q process."));
       return;
     }
     this.reconnectStopped = true;
     this.stopConnect?.abort();
     const connection = this.connection;
     this.connection = undefined;
+    // Nothing is connected to, or to be: the next connect is another matter (#3038).
+    this.active = undefined;
     // A query running on it was stopped by the user, as Abort stops one:
     // closed at once, not after waiting for its answer, which would be
     // shown and recorded as run (#2556).
@@ -2889,28 +3099,31 @@ export class Live {
     const { selection } = editor;
     // The last line of a selection that ends at a line's start is the one before.
     const last = selection.isEmpty ? selection.active.line : selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line - 1 : selection.end.line;
-    this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
-    try {
-      await this.queryCode(code, editor.document.uri, serverTypes);
-    } finally {
-      this.origin = undefined;
-    }
+    // Handed down with the query, not left in a field for `run` to take: a
+    // second Run Line during the first's connect put its own line there,
+    // and the first's result was drawn beside it (#3022).
+    const origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
+    await this.queryCode(code, editor.document.uri, serverTypes, origin);
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
-  /// sends its definition here.
-  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
+  /// sends its definition here. `origin`: the line a Run Line or Run
+  /// Selection is running from, where its inline result is drawn.
+  async queryCode(code: string, uri: Uri, serverTypes?: string[], origin?: Origin): Promise<void> {
+    // Bound to a process another window has renamed since, the file is
+    // bound to it under its new label (#3035).
+    await this.applyRelabels();
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
-      if (this.connection?.isBusy) {
+      if (this.queryRunning()) {
         void window.showInformationMessage(
           plainMessage(`q-lint: a query is still running on ${this.active?.label}; this file's queries go to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
         );
         return;
       }
-      if (!(await this.connectTo(bound))) {
+      if (!(await this.connectForQuery(bound))) {
         return;
       }
     }
@@ -2925,7 +3138,7 @@ export class Live {
     } else if (serverTypes !== undefined && serverTypes.length > 0 && isGatewayOwn(code)) {
       void window.showInformationMessage(plainMessage(`q-lint: this code reads the gateway's own state, so it runs on the gateway itself, not on ${serverTypes.join(", ")}. .gw.syncexec written out sends it to them.`));
     }
-    await this.run(retyped ?? code, undefined, serverTypes ?? named);
+    await this.run(retyped ?? code, undefined, serverTypes ?? named, undefined, origin);
   }
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
@@ -3188,8 +3401,23 @@ export class Live {
   /// none; undefined when none was connected or a query is still running.
   /// `seconds` (0: none) bound the wait for a connect under way or a
   /// background read, and Abort ends it (#2126), as `signal` does for its
-  /// caller's wait alone (#2560); `waited` is how long it was.
-  private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+  /// caller's wait alone (#2560); `waited` is how long it was. `own`: the
+  /// call is the run others wait for (`yielding`), not one waiting for it.
+  private async ready(seconds = 0, source = "q-lint.query.timeout", signal?: AbortSignal, own = false): Promise<{ connection: QConnection; process: Process; waited: number } | undefined> {
+    const waiting = this.waiting(seconds, source, signal);
+    try {
+      const ready = await this.readyAfter(waiting.wait, own);
+      return ready === undefined ? undefined : { ...ready, waited: waiting.waited() };
+    } finally {
+      waiting.done();
+    }
+  }
+
+  /// A query's wait before it is sent: `wait` waits for what is in its way
+  /// - whether that settled, rather than the wait being stopped, which is
+  /// said - shown in the status bar, bounded by `seconds` over all of its
+  /// calls and ended by Abort or `signal`; `done` ends it.
+  private waiting(seconds: number, source: string, signal?: AbortSignal): { wait: (what: Promise<unknown> | undefined) => Promise<boolean>; waited: () => number; done: () => void } {
     const waiter = { started: 0, stop: new AbortController() };
     const stop = (): void => waiter.stop.abort();
     signal?.addEventListener("abort", stop, { once: true });
@@ -3217,7 +3445,7 @@ export class Live {
         : new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
       const settled = await Promise.race([what.then(() => true, () => true), stopped]);
       if (!settled) {
-        const to = this.active?.label ?? this.connectingAs?.label ?? this.reconnecting?.label ?? "the process";
+        const to = this.underWay()?.label ?? this.reconnecting?.label ?? "the process";
         void window.showInformationMessage(
           plainMessage(timedOut
             ? `q-lint: the query ${timedOutError(seconds)} (${source}) waiting to be sent to ${to}; it was not run.`
@@ -3226,34 +3454,91 @@ export class Live {
       }
       return settled;
     };
+    return {
+      wait,
+      waited: () => (waiter.started === 0 ? 0 : Date.now() - waiter.started),
+      done: () => {
+        disarm();
+        signal?.removeEventListener("abort", stop);
+        if (this.waiters.delete(waiter)) {
+          this.showStatus();
+        }
+      },
+    };
+  }
+
+  /// Connect to `row`, or the process picked, as the first step of a query:
+  /// once the process is chosen the connect is the query's wait, shown in
+  /// the status bar, ended at the query's timeout and stopped by Abort,
+  /// where it was nobody's and Abort said no query was running (#3019).
+  private async connectForQuery(row?: ProcessArg): Promise<boolean> {
+    const process = await this.toConnect(row);
+    if (process === undefined) {
+      return false;
+    }
+    const on = this.setting(readAdmin).processTimeout;
+    const waiting = this.waiting(effectiveTimeout(process, this.controls.settings().timeout, on), timeoutSource(process, on));
     try {
-      const ready = await this.readyAfter(wait);
-      return ready === undefined ? undefined : { ...ready, waited: waiter.started === 0 ? 0 : Date.now() - waiter.started };
+      return await this.openWaited(process, waiting.wait);
     } finally {
-      disarm();
-      signal?.removeEventListener("abort", stop);
-      if (this.waiters.delete(waiter)) {
-        this.showStatus();
-      }
+      waiting.done();
     }
   }
 
-  private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<{ connection: QConnection; process: Process } | undefined> {
+  /// Connect to `process` under a query's `wait`: a wait that is stopped
+  /// stops the connect, which is the query's own.
+  private async openWaited(process: Process, wait: (what: Promise<unknown> | undefined) => Promise<boolean>): Promise<boolean> {
+    const connect = this.openChosen(process);
+    if (await wait(connect)) {
+      return connect;
+    }
+    if (this.connecting !== undefined && this.connectingTo === this.passwordKey(process)) {
+      this.reconnectStopped = true;
+      this.stopConnect?.abort();
+      // One running its connect script, which may never answer.
+      this.opening?.abort();
+    }
+    return false;
+  }
+
+  private async readyAfter(wait: (what: Promise<unknown> | undefined) => Promise<boolean>, own: boolean): Promise<{ connection: QConnection; process: Process } | undefined> {
     // A reconnect still under way (after an abort, or an automatic one
     // between its tries, #2132) is waited for, not replaced by asking which
     // process to connect to.
-    if (this.connection === undefined && this.reconnecting !== undefined && !(await wait(this.reconnectDone))) {
+    let waitedFor: string | undefined;
+    if (this.connection === undefined && this.reconnecting !== undefined) {
+      waitedFor = this.reconnecting.label;
+      if (!(await wait(this.reconnectDone))) {
+        return undefined;
+      }
+    }
+    if (this.connection === undefined && this.connecting !== undefined) {
+      waitedFor = this.connectingAs?.label ?? waitedFor;
+      if (!(await wait(this.connecting))) {
+        return undefined;
+      }
+    }
+    if (this.connection === undefined && waitedFor !== undefined) {
+      // The connect waited for was stopped by Disconnect, refused, or given
+      // up: the user is not asked where else the query should go (#3015).
+      void window.showInformationMessage(plainMessage(`q-lint: the connect to ${waitedFor} did not complete; the query was not run.`));
       return undefined;
     }
-    if (this.connection === undefined && this.connecting !== undefined && !(await wait(this.connecting))) {
-      return undefined;
-    }
-    if (this.connection === undefined && !(await this.connectTo())) {
-      return undefined;
+    if (this.connection === undefined) {
+      // The connect is this query's wait too (#3019).
+      const process = await this.toConnect();
+      if (process === undefined || !(await this.openWaited(process, wait))) {
+        return undefined;
+      }
     }
     const before = this.connection;
-    if (!(await wait(this.borrowed))) {
-      return undefined;
+    // Each read out in turn, and a run of q-lint's own: another may have
+    // taken the connection as the one waited for ended (#3017).
+    const out = (): Promise<unknown> | undefined => this.borrowed ?? (own ? undefined : this.yielding);
+    for (let other = out(); other !== undefined && this.connection === before; other = out()) {
+      if (!(await wait(other))) {
+        return undefined;
+      }
     }
     const connection = this.connection;
     const process = this.active;
@@ -3288,13 +3573,45 @@ export class Live {
   /// stops this call's wait to be sent, and nothing else's (#2560). With
   /// `lambda`, for a feature that needs q-lint's lambda, a direct
   /// connection is refused before the guard asks: nothing would be sent.
-  async runOnActive<T>(
+  /// `unasked`: nobody sent this run now - `.qlint.view` defined on connect
+  /// - so a query sent meanwhile waits for it, and is not refused for it
+  /// (`yielding`, #3027).
+  runOnActive<T>(
     code: GuardCode,
     query: (connection: QConnection) => Promise<T>,
     guard: "ask" | "refuse" = "ask",
     expect?: string,
     signal?: AbortSignal,
     lambda = false,
+    unasked = false,
+  ): Promise<{ process: string; value: T } | undefined> {
+    const run = this.runOnActiveNow(code, query, guard, expect, signal, lambda, unasked);
+    return unasked ? this.yieldedTo(run) : run;
+  }
+
+  /// `run`, as the run of q-lint's own that queries wait for until it ends.
+  private yieldedTo<T>(run: Promise<T>): Promise<T> {
+    const yielding = run.then(
+      () => {},
+      () => {},
+    );
+    this.yielding = yielding;
+    void yielding.then(() => {
+      if (this.yielding === yielding) {
+        this.yielding = undefined;
+      }
+    });
+    return run;
+  }
+
+  private async runOnActiveNow<T>(
+    code: GuardCode,
+    query: (connection: QConnection) => Promise<T>,
+    guard: "ask" | "refuse",
+    expect: string | undefined,
+    signal: AbortSignal | undefined,
+    lambda: boolean,
+    own: boolean,
   ): Promise<{ process: string; value: T } | undefined> {
     // Checked before `ready` would connect and before the guard asks: no
     // question about a process nothing will be sent to. `stillReady` keeps
@@ -3302,8 +3619,8 @@ export class Live {
     if (expect !== undefined && this.activeLabel() !== expect) {
       throw movedFrom(expect);
     }
-    const asked = this.active ?? this.connectingAs;
-    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal);
+    const asked = this.underWay();
+    const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal, own);
     if (first === undefined) {
       return undefined;
     }
@@ -3534,7 +3851,12 @@ export class Live {
     };
     let disarm = armTimeout(timeout, expire);
     try {
-      await this.runConnectScript(connection, process, undefined, options.unattended === true);
+      // Cancelled in its connect script, the script did not fail, and the
+      // query was not sent: no warning, and no run to record (#3016).
+      await this.runConnectScript(connection, process, () => signal?.aborted === true, options.unattended === true);
+      if (signal?.aborted) {
+        throw new NotSent("cancelled");
+      }
       const configuration = workspace.getConfiguration("q-lint");
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
       const unlimited = this.controls.unlimited || options.whole === true;
@@ -3568,7 +3890,7 @@ export class Live {
       disarm = armTimeout(timeout, expire);
       return await connection.queryGrid(cut, consoleSize, gridLimit);
     } catch (error) {
-      throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
+      throw timedOut ? new Error(timedOutError(timeout)) : error instanceof NotSent ? error : signal?.aborted ? new Error("cancelled") : error;
     } finally {
       disarm();
       signal?.removeEventListener("abort", stop);
@@ -3717,7 +4039,7 @@ export class Live {
     watched.runs++;
     watched.status.text = watchText(iconsEscaped(watched.label), watched.every, watched.runs);
     try {
-      await this.run(watched.code, first ? "watch" : "watched", watched.serverTypes);
+      await this.yieldedTo(this.run(watched.code, first ? "watch" : "watched", watched.serverTypes));
     } finally {
       watched.running = false;
     }
@@ -3748,12 +4070,11 @@ export class Live {
   /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
   /// reads it as written. `mode` shows the result as a grid or a chart
   /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
-  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
-    const origin = as === undefined ? this.origin : undefined;
-    this.origin = undefined;
-    const asked = this.active ?? this.connectingAs;
+  /// `origin`: the editor line the query was run from (`queryCode`).
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode, origin?: Origin): Promise<void> {
+    const asked = this.underWay();
     const askedOn = this.setting(readAdmin).processTimeout;
-    const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn));
+    const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn), undefined, as !== undefined);
     if (first === undefined) {
       return;
     }
@@ -3914,24 +4235,37 @@ export class Live {
   /// Rows `offset` on of the result `label`'s process holds for paging, or
   /// why they could not be fetched. Only on the connection the result came
   /// from, and only when no query is running on it.
-  /// Either of those may pass, so the result stays held (#1634).
+  /// Either of those may pass, so the result stays held (#1634). The page is
+  /// a background read (`borrow`): it waits for one that is out, and a
+  /// query sent meanwhile waits for it rather than being refused (#3017).
   private async pageHeld(label: string, offset: number, count: number, token: string | undefined): Promise<GridPage | PageLater | string> {
     if (token === undefined) {
       return "the process holds no rows of this result";
     }
+    const elsewhere = { later: "it is not the connected process now; connect to it again, then scroll again" };
     const connection = this.connection;
     if (connection === undefined || this.activeLabel() !== label) {
-      return { later: "it is not the connected process now; connect to it again, then scroll again" };
+      return elsewhere;
     }
-    if (connection.isBusy) {
-      return { later: "a query is running on it; scroll again once it ends" };
+    while (this.borrowed !== undefined) {
+      await this.borrowed;
+    }
+    if (this.connection !== connection || this.activeLabel() !== label) {
+      return elsewhere;
     }
     // Nothing is sent while it is evaluated directly, and the process keeps
     // the result: later, not gone (#2566).
-    if (connection.isDirect) {
+    if (!connection.isBusy && connection.isDirect) {
       return { later: "it is evaluated directly now, and paging needs q-lint's lambda; turn direct evaluation off, then scroll again" };
     }
-    return readPage(await connection.call(PAGE, token, offset, count));
+    const page = this.borrow((free) => free.call(PAGE, token, offset, count), "the read of a result's next rows");
+    if (page === undefined) {
+      return { later: "a query is running on it; scroll again once it ends" };
+    }
+    // `held` is the lambda's own word for a result this connection does not
+    // hold: one opened again holds none of the last one's (#3037).
+    const read = readPage(await page);
+    return read === "held" ? "it no longer holds this result: it restarted, the connection to it was opened again, or a later result replaced it. Run the query again to see the rest" : read;
   }
 
   /// The saved query `from` was renamed `to`, or deleted: the results it
@@ -3974,11 +4308,11 @@ export class Live {
       }
     }
     if (this.activeLabel() !== label) {
-      if (this.connection?.isBusy) {
+      if (this.queryRunning()) {
         void window.showInformationMessage(plainMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`));
         return;
       }
-      if (!(await this.connectTo(label))) {
+      if (!(await this.connectForQuery(label))) {
         return;
       }
     }
@@ -4030,27 +4364,35 @@ export class Live {
     const process = this.active;
     if (connection === undefined || process === undefined || !connection.isBusy) {
       const stopped = timedOut === undefined ? this.stopPreparingApart() : [];
-      void window.showInformationMessage(plainMessage(stopped.length > 0 ? `q-lint: stopped the connect script of ${stopped.join(", ")} on a connection of its own.` : "q-lint: no query is running."));
+      void window.showInformationMessage(plainMessage(stopped.length > 0 ? `q-lint: stopped ${stopped.join(" and ")} on a connection of its own.` : "q-lint: no query is running."));
       return;
     }
     this.aborted = this.running?.started;
     this.running = undefined;
     this.connection = undefined;
     connection.abort();
+    // Not awaited: q runs one message at a time, so the new connection's
+    // handshake waits until the process has finished the query it was left
+    // with, and the command should not wait with it.
+    // To the process as saved or listed, as an auto-reconnect is (#1699): one edited
+    // to another address or user since it was connected has its password
+    // stored for that one, never to be sent to where the connection was (#2124).
+    const again = this.asListed(process) ?? process;
+    const disconnects = this.disconnects;
+    // Started before "disconnected" is said, for what hears it to find the
+    // reconnect under way (`reconnectingProcess`, #3018).
+    const reconnect = this.open(again, true);
     this.showStatus();
     // Said now: the reconnect may fail, and fires nothing then (#1702).
     this.processesView.refresh();
     this.changed.fire("disconnected");
-    // Not awaited: q runs one message at a time, so the new connection's
-    // handshake waits until the process has finished the query it was left
-    // with, and the command should not wait with it.
-    // To the process as saved, as an auto-reconnect is (#1699): one edited
-    // to another address or user since it was connected has its password
-    // stored for that one, never to be sent to where the connection was (#2124).
-    const again = process.server === undefined ? (this.processes().find((p) => p.label === process.label) ?? process) : process;
-    void this.open(again, true).then((connected) => {
+    void reconnect.then((connected) => {
       if (connected) {
         void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${again.label}.`));
+      } else if (disconnects === this.disconnects && this.connection === undefined) {
+        // It failed, or a connect elsewhere replaced it: no longer the
+        // process queries go to. Disconnect has said so itself.
+        this.changed.fire("disconnected");
       }
     });
     void window.showInformationMessage(

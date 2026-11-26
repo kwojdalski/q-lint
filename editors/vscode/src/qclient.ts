@@ -65,6 +65,10 @@ export interface Target {
 
 /// How long a connect may take before it is given up.
 export const CONNECT_TIMEOUT_MS = 10_000;
+/// How long a connection is idle before TCP asks the other end whether it
+/// is there: a network gone with no word - a VPN down, a laptop asleep -
+/// closes the connection then, where nothing else ever would (#3031).
+export const KEEPALIVE_MS = 30_000;
 /// Compression, timestamps and timespans, and GUIDs: what a kdb+ 3 client
 /// announces.
 const CAPABILITY = 3;
@@ -109,6 +113,12 @@ function typeOf(message: Buffer): number | undefined {
 /// nothing, which `Live.dial` says in its own words (#1355).
 export class ClosedBeforeHandshake extends Error {}
 
+/// The process took the connection and did not answer the handshake in
+/// time: it is there, and busy - a q runs one message at a time. A host
+/// that takes no connection in that time is not there, and fails with a
+/// plain error: waiting for it to be free would wait for ever (#3032).
+export class NoHandshakeAnswer extends Error {}
+
 /// A connect's error with its reason in `message`. Node tries each address
 /// of a name in turn - `localhost` is `::1` and `127.0.0.1` - and when all
 /// fail gives an AggregateError whose own message is empty (#1352): the
@@ -130,6 +140,24 @@ export function withReason(error: Error): Error {
 /// host, `::1` among them, is dialled as it is written.
 export function dialHost(host: string): string {
   return /^localhost\.?$/i.test(host.trim()) ? "127.0.0.1" : host;
+}
+
+/// Whether `host` takes a TCP connection at `port` within `timeoutMs`: one
+/// closed with nothing sent, which the process sees as no client (at most
+/// a `.z.pc` of handle 0). The host of a process busy with a query takes
+/// it; one the network no longer reaches does not (#3031).
+export function reachable(host: string, port: number, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: dialHost(host), port });
+    const done = (answer: boolean): void => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(answer);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
 }
 
 /// `reval` refusing the cache of a partitioned table's counts, `.Q.PN`,
@@ -175,6 +203,7 @@ export class QConnection {
   direct: () => DirectMode | undefined = () => undefined;
 
   private constructor(private readonly socket: net.Socket) {
+    socket.setKeepAlive(true, KEEPALIVE_MS);
     socket.on("data", (chunk) => this.received(chunk));
     socket.on("close", () => this.closedNow());
     // An error is followed by a close, which is what callers hear.
@@ -184,7 +213,10 @@ export class QConnection {
   /// Open a connection, or reject with why not within `timeoutMs` (with no
   /// limit when it is infinite), or once `signal` aborts. A connect given up
   /// is closed, so nothing is left open behind it.
-  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
+  /// `handshakeMs`: how long the process, once connected to, may take to
+  /// answer the handshake, when that is not what is left of `timeoutMs`:
+  /// infinite for one known to be busy, which a login is left with (#3024).
+  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal, handshakeMs?: number): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = target.path !== undefined ? { path: target.path } : { host: dialHost(target.host), port: target.port };
       const at = target.path ?? `${target.host}:${target.port}`;
@@ -211,10 +243,20 @@ export class QConnection {
           reject(error);
         }
       };
+      // Connected to, it is the handshake that was not answered (#3032).
+      let connected = false;
+      const late = (ms: number): void =>
+        fail(connected ? new NoHandshakeAnswer(`no answer from ${at} in ${ms / 1000} s`) : new Error(`${at} could not be reached in ${ms / 1000} s`));
       // A timer cannot wait for ever: an infinite delay fires at once.
-      const timer = Number.isFinite(timeoutMs)
-        ? setTimeout(() => fail(new Error(`no answer from ${at} in ${timeoutMs / 1000} s`)), timeoutMs)
-        : undefined;
+      const until = (ms: number): NodeJS.Timeout | undefined => (Number.isFinite(ms) ? setTimeout(() => late(ms), ms) : undefined);
+      let timer = until(timeoutMs);
+      socket.once("connect", () => {
+        connected = true;
+        if (handshakeMs !== undefined && !settled) {
+          clearTimeout(timer);
+          timer = until(handshakeMs);
+        }
+      });
       if (signal?.aborted) {
         cancelled();
         return;

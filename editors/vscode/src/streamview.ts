@@ -11,6 +11,7 @@ import { ProgressLocation, Uri, ViewColumn, commands, window, workspace, type Ex
 import { isProduction } from "./agent";
 import { guardedBy, readGuard } from "./guard";
 import type { Live, ProcessArg } from "./live";
+import type { Process } from "./processes";
 import { decode } from "./qdecode";
 import { directRefusal, type QConnection } from "./qclient";
 import { directMode } from "./querycontrols";
@@ -126,7 +127,20 @@ export class TableStreams {
     try {
       let name = typeof table === "string" ? table.trim().replace(/^`/, "") : undefined;
       if (name === undefined) {
-        const listed = await connection.call(TABLES).catch(() => []);
+        // A list the process refuses is asked of the user; one it never
+        // answers is not waited for (#3023).
+        const asked = await this.waited(connection, process, `q-lint: asking ${process.label} for its tables`, () =>
+          connection.call(TABLES).catch((error: unknown) => {
+            if (!connection.isOpen) {
+              throw error;
+            }
+            return [];
+          }),
+        );
+        if (asked === undefined) {
+          return;
+        }
+        const listed = asked.answer;
         const tables = (Array.isArray(listed) ? listed : [listed]).filter((t): t is string => typeof t === "string" && t !== "");
         name =
           tables.length > 0
@@ -150,7 +164,11 @@ export class TableStreams {
       // Listened for before .u.sub is sent: an update in the same packet as
       // its answer is dispatched with it, before the answer is awaited.
       connection.whenAsync((message) => early?.push(message));
-      const answer = await connection.call(SUBSCRIBE, `\`${name}`);
+      const subscribed = await this.waited(connection, process, `q-lint: subscribing to ${name} on ${process.label}`, () => connection.call(SUBSCRIBE, `\`${name}`));
+      if (subscribed === undefined) {
+        return;
+      }
+      const { answer } = subscribed;
       const cols = Array.isArray(answer) ? answer[1] : undefined;
       columns = (Array.isArray(cols) ? cols : [cols]).filter((c): c is string => typeof c === "string");
       types = Array.isArray(answer) && typeof answer[2] === "string" ? answer[2] : undefined;
@@ -167,6 +185,21 @@ export class TableStreams {
     const taken = early;
     early = undefined;
     this.open(process.label, table, columns, connection, settings.rows, taken, types);
+  }
+
+  /// `call` on a stream's connection before its grid opens, under a
+  /// notification whose Cancel closes the connection, as Abort, Disconnect
+  /// and a timeout do: a tickerplant that never answered the table list or
+  /// `.u.sub` held the command for ever, with nothing shown and nothing to
+  /// stop it (#3023). Undefined when the user stopped it.
+  private waited<T>(connection: QConnection, process: Process, title: string, call: () => Promise<T>): Promise<{ answer: T } | undefined> {
+    return Promise.resolve(
+      window.withProgress({ location: ProgressLocation.Notification, title: plainMessage(title), cancellable: true }, (_progress, token) => {
+        const cancel = new AbortController();
+        token?.onCancellationRequested(() => cancel.abort());
+        return this.live.settingUp(connection, process, "the subscription to", call, cancel.signal);
+      }),
+    );
   }
 
   /// `early`: the updates that came before the grid, with .u.sub's answer.

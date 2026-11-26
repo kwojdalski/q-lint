@@ -86,7 +86,8 @@ export function registerViewHelpers(
     }
     const { code, consoleSize } = current();
     try {
-      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), quiet ? "refuse" : "ask", expect);
+      // Quiet, nobody sent it: a query sent meanwhile - the one that connected - waits for it (#3027).
+      const ran = await live.runOnActive(code, (connection) => connection.query(statements(code), consoleSize), quiet ? "refuse" : "ask", expect, undefined, false, quiet);
       if (ran === undefined) {
         return false;
       }

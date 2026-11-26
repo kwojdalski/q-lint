@@ -385,6 +385,45 @@ test("a discovered process listed at another host or port forgets its password, 
   void again;
 });
 
+// One failed refresh - a 503, a timeout - replaced what the server had
+// listed with nothing: its processes left the view, and a connect by label,
+// a bound file and an automatic reconnect found no process of that name.
+test("a discovery refresh that fails keeps the processes the server last listed (#3025)", async (t) => {
+  const http = require("node:http");
+  const q = await fakeQ(() => GATHERED);
+  t.after(() => q.close());
+  let down = false;
+  const server = http.createServer((req, res) => {
+    res.writeHead(down ? 503 : 200, { "content-type": "application/json" });
+    res.end(down ? "busy" : JSON.stringify([{ label: "rdb", host: "127.0.0.1", port: q.port }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { live } = await setUp(t, []);
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "desk", url: `http://127.0.0.1:${server.address().port}/` });
+  assert.strictEqual(await live.connectTo("desk/rdb"), true);
+  const listedAt = live.discovery.discovered()[0].state.fetchedAt;
+  down = true;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  const { state } = live.discovery.discovered()[0];
+  assert.match(state.error, /503/);
+  assert.deepStrictEqual(state.processes.map((p) => p.label), ["rdb"]);
+  assert.strictEqual(state.fetchedAt, listedAt, "when they were listed, not when the refresh failed");
+  await stub.commands.get("q-lint.disconnectProcess")();
+  stub.messages.length = 0;
+  assert.strictEqual(await live.connectTo("desk/rdb"), true, JSON.stringify(stub.messages));
+  // Up again, it lists what it lists now, and the failure goes.
+  down = false;
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("desk");
+  assert.strictEqual(live.discovery.discovered()[0].state.error, undefined);
+  assert.ok(live.discovery.discovered()[0].state.fetchedAt >= listedAt);
+  // Edited to a URL that fails, it keeps nothing of what the other listed.
+  down = true;
+  await stub.commands.get("q-lint.editDiscoveryServer")("desk", { url: `http://127.0.0.1:${server.address().port}/other` });
+  assert.match(live.discovery.discovered()[0].state.error, /503/);
+  assert.deepStrictEqual(live.discovery.discovered()[0].state.processes, []);
+});
+
 // Deleting a server, or removing its processes, left the connection to one
 // of them open, and reconnected to it after a drop (#2565).
 test("deleting a discovery server, or removing its processes, disconnects from its process", async (t) => {

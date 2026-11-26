@@ -1319,7 +1319,7 @@
             "type": "boolean",
             "default": false,
             "order": 600,
-            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
+            "markdownDescription": "Send a heartbeat on the active connection every `#q-lint.connection.heartbeatInterval#` seconds: a `::` sent as a plain string, whose round trip the status bar shows (`q: rdb 3 ms`). One the process has not answered for 5 seconds shows as `no answer`. One still unanswered three heartbeats later has its host asked for a TCP connection: a process that is only busy keeps its connection, and one whose host gives none - the network dropped without a word - has its connection closed as dropped. It is skipped while a query runs. Off by default: a process that logs its clients sees every heartbeat."
           },
           "q-lint.connection.heartbeatInterval": {
             "type": "number",
