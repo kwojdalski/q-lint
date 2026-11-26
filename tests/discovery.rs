@@ -1498,3 +1498,48 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     }
     assert_eq!(fs::read_to_string(repo.path("a.q")).unwrap(), "g:{c==d}\n");
 }
+
+/// Run from a directory that has since been removed - a worktree or a build
+/// directory an editor or an agent was started in - a file named by its
+/// absolute path is still linted, and what does need the current directory
+/// says that it is gone: every run failed with a bare "No such file or
+/// directory (os error 2)" (#2873).
+#[cfg(unix)]
+#[test]
+fn a_removed_current_directory_is_named_and_an_absolute_path_is_still_linted() {
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    let file = repo.path("a.q");
+    let from_removed = |args: &[&str]| {
+        let gone = repo.path("gone");
+        fs::create_dir(&gone).unwrap();
+        Command::new("sh")
+            .current_dir(&gone)
+            .args(["-c", "rmdir \"$PWD\" && exec \"$0\" \"$@\""])
+            .arg(env!("CARGO_BIN_EXE_qlinter"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let style = ["--isolated", "--profile", "style", "--format"];
+    for format in ["text", "json", "github", "sarif"] {
+        let out = from_removed(&[&style[..], &[format, file.to_str().unwrap()]].concat());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{format}: {stderr}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("QF016"),
+            "{format}: {stderr}"
+        );
+    }
+    // Without `--isolated` too: the file's directory stands in.
+    let out = from_removed(&["--profile", "style", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    // An `--exclude` pattern is read from the current directory.
+    let out = from_removed(&["--isolated", "--exclude", "x", file.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("the current directory no longer exists"),
+        "{stderr}"
+    );
+}

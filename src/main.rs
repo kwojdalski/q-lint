@@ -259,7 +259,12 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     let selectors = |key: &str, list: &[String]| -> Result<Vec<String>, String> {
         list.iter().map(|s| config::selector(key, s)).collect()
     };
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    // Only `--exclude` is read from the current directory, which may be
+    // gone (#2873).
+    let cwd = match args.exclude.is_empty() {
+        true => PathBuf::new(),
+        false => config::absolute(&config::working_dir(None)?),
+    };
     Ok(Overrides {
         profile: args.profile.clone(),
         default_profile: match args.default_profile.as_deref() {
@@ -282,7 +287,7 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::excluding(&config::absolute(&cwd), p))
+            .map(|p| config::excluding(&cwd, p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: args.config.clone(),
@@ -713,11 +718,13 @@ fn run(args: Args) -> Result<u8, String> {
         .iter()
         .map(|(_, source)| q_lint_rs::references(source, false))
         .collect();
+    // What stands in for a current directory that is gone (#2873).
+    let first = sources.first().map(|(name, _)| PathBuf::from(name));
     let placed = if reads
         .iter()
         .any(|r| r.module || r.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."))
     {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         let paths: Vec<_> = sources
             .iter()
             .map(|(name, _)| PathBuf::from(name))
@@ -912,11 +919,11 @@ fn run(args: Args) -> Result<u8, String> {
     } else if args.format == "json" {
         out!("{}", serde_json::to_string(&shown).unwrap());
     } else if args.format == "sarif" {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         let report = report::sarif(&shown, &sources, &cwd);
         out!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else if args.format == "github" {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         for f in &shown {
             out!("{}", report::github(f, &cwd));
         }
@@ -1153,7 +1160,8 @@ fn lossy_text(bytes: &[u8]) -> String {
 /// paths given, as JSON with sorted keys, so two runs over one tree print the
 /// same bytes. Reads every file and runs none.
 fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
-    let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+    let named = args.paths.first().map(Path::new);
+    let cwd = config::absolute(&config::working_dir(named)?);
     let overrides = Overrides {
         profile: None,
         default_profile: "uqf",

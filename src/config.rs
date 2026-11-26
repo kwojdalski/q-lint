@@ -290,9 +290,7 @@ impl Policy {
             .max_by_key(|root| root.components().count())
         {
             Some(root) => Ok(root.clone()),
-            None => Ok(absolute(
-                &std::env::current_dir().map_err(|e| e.to_string())?,
-            )),
+            None => Ok(absolute(&working_dir(Some(&dir))?)),
         }
     }
 
@@ -448,7 +446,7 @@ impl Policy {
             // Ruff resolves the patterns of a file named by `--config`
             // against the current directory, as it does a user-level one:
             // the file is chosen for this run, not found beside the source.
-            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+            let cwd = absolute(&working_dir(None)?);
             let settings = Rc::new(
                 load(&key.0, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
@@ -1373,6 +1371,29 @@ pub fn parse_profile(name: &str) -> Profile {
         "style" => Profile::Style,
         "styleq" => Profile::StyleQ,
         _ => Profile::Uqf,
+    }
+}
+
+/// The current directory. One removed from under the run - a worktree or a
+/// build directory an editor or an agent was started in - is said to be so,
+/// where the system's "No such file or directory" named nothing; and where
+/// `within` is an absolute path, its directory stands in, so a file named in
+/// full is still linted (#2873).
+pub fn working_dir(within: Option<&Path>) -> Result<PathBuf, String> {
+    match std::env::current_dir() {
+        Ok(cwd) => Ok(cwd),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => within
+            .filter(|path| path.is_absolute())
+            .map(|path| match path.is_dir() {
+                true => path.to_path_buf(),
+                false => path.parent().unwrap_or(path).to_path_buf(),
+            })
+            .ok_or_else(|| {
+                "the current directory no longer exists; name each file by its absolute path, \
+                 or run from a directory that does"
+                    .to_string()
+            }),
+        Err(e) => Err(format!("the current directory: {e}")),
     }
 }
 
