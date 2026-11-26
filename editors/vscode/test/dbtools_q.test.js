@@ -378,6 +378,19 @@ test("the documenter reads tables, keys, foreign keys and functions", { skip }, 
   assert.match(text, /### \.lib\.add\[a;b\]\n\nAdds\./);
 });
 
+test("the documenter counts the tables and functions past its limit, and the document says so (#3054)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t1:t2:t3:([] a:1 2)\n.ns.t4:([] a:1 2)\nf1:f2:{x}\n.lib.a:.lib.b:.zz.vwap:{[x;y] x+y}\n");
+  const cut = readDoc(await connection.call(DOCUMENT, 3));
+  assert.deepStrictEqual([cut.tables.length, cut.allTables, cut.functions.length, cut.allFunctions], [3, 4, 3, 5]);
+  const text = docMarkdown(cut, "rdb", "now");
+  assert.match(text, /## Tables\n\nThe first 3 of 4 tables: the other 1 is not in this document\./);
+  assert.match(text, /## Functions\n\nThe first 3 of 5 functions: the other 2 are not in this document\./);
+  assert.ok(!text.includes(".zz.vwap"));
+  const whole = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual([whole.tables.length, whole.allTables, whole.functions.length, whole.allFunctions], [4, 4, 5, 5]);
+  assert.doesNotMatch(docMarkdown(whole, "rdb", "now"), /The first/);
+});
+
 // Only a lambda's parameters are its own: a projection's bound argument or
 // a composition's part is none (#1575).
 test("the documenter gives a projection and a composition no parameters", { skip }, async (t) => {

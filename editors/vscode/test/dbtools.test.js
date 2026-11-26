@@ -189,6 +189,24 @@ test("the documenter reads one table's answer, takes the qDoc above a definition
   assert.match(docHtml(mixed, "rdb", "now"), /<h3 id="t-e&lt;m&gt;">e&lt;m&gt;<\/h3>\n<p>Not read: \.\.sym\.<\/p>\n<h2>Functions/);
 });
 
+test("the document says how many tables and functions its limit left out (#3054)", () => {
+  const table = (name) => ({ name, kind: "table", rows: 1, keys: [], cols: ["a"], types: ["j"], fkeys: [""], attrs: [""], error: "" });
+  const raw = { pf: "", parts: 0, allparts: 0, ntables: 2500, nfns: 2102, tables: [table("t1"), table("t2")], fnames: ["f", "g"], fparams: [["x"], ["y"]], ftexts: ["", ""] };
+  const doc = readDoc(raw);
+  assert.strictEqual(doc.allTables, 2500);
+  assert.strictEqual(doc.allFunctions, 2102);
+  const md = docMarkdown(doc, "rdb", "now");
+  assert.match(md, /## Tables\n\nThe first 2 of 2,500 tables: the other 2,498 are not in this document\.\n\n### t1\n/);
+  assert.match(md, /## Functions\n\nThe first 2 of 2,102 functions: the other 2,100 are not in this document\.\n\n### f\[x\]\n/);
+  const html = docHtml(doc, "rdb", "now");
+  assert.match(html, /<h2>Tables<\/h2>\n<p>The first 2 of 2,500 tables: the other 2,498 are not in this document\.<\/p>\n<h3 id="t-t1">/);
+  assert.match(html, /<h2>Functions<\/h2>\n<p>The first 2 of 2,102 functions: the other 2,100 are not in this document\.<\/p>\n<h3>f\[x\]<\/h3>/);
+  // All of them in it, or an answer with no counts: nothing is said.
+  for (const whole of [{ ...raw, ntables: 2, nfns: 2 }, { ...raw, ntables: undefined, nfns: undefined }]) {
+    assert.doesNotMatch(docMarkdown(readDoc(whole), "rdb", "now") + docHtml(readDoc(whole), "rdb", "now"), /The first/);
+  }
+});
+
 test("the partition check finds weekday gaps, and each kind of problem in an answer", () => {
   assert.deepStrictEqual(missingWeekdays(["2026.01.02", "2026.01.06"]), ["2026.01.05"]);
   assert.deepStrictEqual(missingWeekdays(["2026.01.02"]), []);
