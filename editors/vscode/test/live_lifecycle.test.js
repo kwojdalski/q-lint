@@ -847,3 +847,32 @@ test("the status bar says a connect and Abort's reconnect are under way, and the
   await until(() => live.api().statusText() === "$(debug-disconnect) q: not connected", 1000);
   assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
 });
+
+// After Disconnect the process last connected to was still taken for the one
+// a waiting query goes to, and for the one a connect under way is to: the
+// wait was timed by its timeout and said its name, and Stop Process on it
+// stopped the connect to another.
+test("a connect after Disconnect has nothing of the process disconnected from: not its timeout, its name, or its Stop Process (#3038)", async (t) => {
+  const dev = await fakeQ(() => 1);
+  const hdb = await fakeQ(() => ({ ok: true, type: -7, text: ["4"] }), 1300);
+  t.after(() => (dev.close(), hdb.close()));
+  const { live } = await setUp(t, [proc("dev", dev.port, { timeout: 1 }), proc("hdb", hdb.port)]);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  stub.messages.length = 0;
+  const connect = live.connectTo("hdb");
+  await until(() => hdb.logins.length === 1);
+  const stopped = live.run("1+1");
+  await sleep(50);
+  await stub.commands.get("q-lint.abortQuery")();
+  await stopped;
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the query waiting to be sent to hdb; it was not run."]]);
+  stub.messages.length = 0;
+  // Longer than dev's timeout, and the query is sent to hdb all the same.
+  const run = live.run("2+2");
+  await live.stopping("dev", dev.port);
+  assert.strictEqual(await connect, true, "Stop Process on dev left the connect to hdb");
+  await run;
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual(live.history().map((e) => [e.process, e.code, e.outcome]), [["hdb", "2+2", "ok"]]);
+});

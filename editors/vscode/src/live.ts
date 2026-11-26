@@ -1207,6 +1207,17 @@ export class Live {
     return this.connection?.isOpen ? this.active : undefined;
   }
 
+  /// The process the connection, or the connect or reconnect under way, is
+  /// to; undefined when there is none. `active` alone goes on naming the
+  /// process last connected to once its connection has dropped, which a
+  /// connect to another one has nothing to do with (#3038).
+  private underWay(): Process | undefined {
+    if (this.connection !== undefined) {
+      return this.active;
+    }
+    return this.connecting !== undefined ? this.connectingAs : this.reconnecting !== undefined ? this.active : undefined;
+  }
+
   /// The process Abort's reconnect is waiting for, until it connects or is
   /// stopped: a query sent meanwhile goes there, so what marks the process
   /// - its environment colour - stays while it does (#3018).
@@ -2790,7 +2801,7 @@ export class Live {
   /// closed and not reconnected, as deleting a saved process closes its
   /// own (#2565).
   async serverGone(server: string): Promise<void> {
-    if (this.active?.server === server && (this.connection !== undefined || this.connecting !== undefined || this.reconnecting !== undefined)) {
+    if (this.underWay()?.server === server) {
       await this.disconnect();
     }
   }
@@ -2799,7 +2810,8 @@ export class Live {
   /// (Stop Process): the connection to it closes as one the user closed,
   /// and nothing reconnects to it (#2134).
   async stopping(label: string, port: number): Promise<void> {
-    const at = this.active;
+    // The one connected or being connected to, not one disconnected from (#3038).
+    const at = this.underWay();
     const to = at !== undefined && at.label === label && at.server === undefined && at.ssh === undefined && isLocalHost(at.host) && at.port === port;
     if (to && (this.connection !== undefined || this.connecting !== undefined)) {
       await this.disconnect();
@@ -2906,6 +2918,7 @@ export class Live {
       // A try under way is closed once it opens.
       this.reconnectStopped = true;
       this.stopReconnecting();
+      this.active = undefined;
       return;
     }
     this.reconnectRun++;
@@ -2917,6 +2930,8 @@ export class Live {
     this.stopConnect?.abort();
     const connection = this.connection;
     this.connection = undefined;
+    // Nothing is connected to, or to be: the next connect is another matter (#3038).
+    this.active = undefined;
     // A query running on it was stopped by the user, as Abort stops one:
     // closed at once, not after waiting for its answer, which would be
     // shown and recorded as run (#2556).
@@ -3295,7 +3310,7 @@ export class Live {
         : new Promise<false>((resolve) => waiter.stop.signal.addEventListener("abort", () => resolve(false), { once: true }));
       const settled = await Promise.race([what.then(() => true, () => true), stopped]);
       if (!settled) {
-        const to = this.active?.label ?? this.connectingAs?.label ?? this.reconnecting?.label ?? "the process";
+        const to = this.underWay()?.label ?? this.reconnecting?.label ?? "the process";
         void window.showInformationMessage(
           plainMessage(timedOut
             ? `q-lint: the query ${timedOutError(seconds)} (${source}) waiting to be sent to ${to}; it was not run.`
@@ -3469,7 +3484,7 @@ export class Live {
     if (expect !== undefined && this.activeLabel() !== expect) {
       throw movedFrom(expect);
     }
-    const asked = this.active ?? this.connectingAs;
+    const asked = this.underWay();
     const first = await this.ready(ownTimeout(asked, this.setting(readAdmin).processTimeout), timeoutSource(asked, this.setting(readAdmin).processTimeout), signal, own);
     if (first === undefined) {
       return undefined;
@@ -3917,7 +3932,7 @@ export class Live {
   /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
   /// `origin`: the editor line the query was run from (`queryCode`).
   async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode, origin?: Origin): Promise<void> {
-    const asked = this.active ?? this.connectingAs;
+    const asked = this.underWay();
     const askedOn = this.setting(readAdmin).processTimeout;
     const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn), undefined, as !== undefined);
     if (first === undefined) {
