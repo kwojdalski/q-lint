@@ -15,7 +15,7 @@
 // what a lambda around it would answer is discarded: a gateway call is sent
 // as a plain string, never inside q-lint's lambda (#2584).
 import { qString } from "./qliteral";
-import { contextSwitch, statements } from "./statements";
+import { contextSwitch, lineKinds, statements, trimBlanks } from "./statements";
 
 export const GATEWAY_COMMANDS = {
   set: "q-lint.setGatewayServerTypes",
@@ -252,10 +252,14 @@ export function gatewayStatements(cut: string[], types: string[]): string[] {
 /// is kept, for the query to be refused with its name, where the line cut
 /// at it sent the query to the types before it only (#3065).
 /// `/ @servertypes none` names no server, `[]`: the file's queries run on
-/// the gateway itself (#2588). Undefined when it names none.
+/// the gateway itself (#2588). Undefined when it names none. The line is a
+/// comment q reads past: one inside a block comment, or after the `\` that
+/// ends the script, is text nobody wrote for this file's queries (#2918).
 export function fileServerTypes(text: string): string[] | undefined {
-  const m = /^\/[ \t]*@servertypes[ \t]+(.+)$/m.exec(text);
-  if (m === null) {
+  const lines = text.split("\n");
+  const kinds = lineKinds(lines);
+  const m = lines.map((line, i) => (kinds[i] === "comment" ? /^\/[ \t]*@servertypes[ \t]+(.+)$/.exec(trimBlanks(line)) : null)).find((found) => found !== null);
+  if (m === null || m === undefined) {
     return undefined;
   }
   const words = m[1].split(/[\s,`]+/).filter((t) => t !== "");
