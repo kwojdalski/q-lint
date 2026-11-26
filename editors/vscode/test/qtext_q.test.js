@@ -70,6 +70,7 @@ const SERVER = [
   "f:{[a;b;c] a+b+c}",
   "long:{[anArgument;anotherArgument] theFirstLocal:anArgument+anotherArgument; theFirstLocal*theFirstLocal}",
   "t:([] n:til 60; s:60#`alpha`beta`gamma; p:60#1.5 2 0n)",
+  "lsym:enlist`$50#\"a\"",
 ].join("\n");
 
 // One of each shape `-3!` writes its own way, every one longer than 40
@@ -121,6 +122,11 @@ const VALUES = [
   "(::)",
   "`long$()",
   "enlist 42",
+  // An enumerated atom: its domain's backtick kept, no enlist (#2710).
+  "`lsym$first lsym",
+  // A composition's unary primitive without its colon, as q writes it (#2709).
+  "'[neg;long]",
+  "'[count;long]",
 ];
 
 test("FULL_TEXT reads what -3! writes on a wide console, whatever the process's \\c", { skip }, async (t) => {
