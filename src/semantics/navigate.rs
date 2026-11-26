@@ -482,7 +482,9 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             0 => 0,
             n => newlines[n - 1] + 1,
         };
-        crate::system_command(&raw[line..])
+        // A timed line's `\t`, `\ts` or `\t:n` is a command too, though
+        // what follows it is q: its `t` is no global (#2812).
+        crate::system_command(&raw[line..]) || at < line + crate::timed_prefix(&raw[line..])
     };
     let statements = top_level_statements(code, raw);
     let mut out = vec![];
@@ -495,6 +497,10 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
             let Some((at, len)) = written(code, &name, value) else {
                 continue;
             };
+            // `\t:10 f x` times ten runs, and assigns no `t`.
+            if system(at) {
+                continue;
+            }
             writes.insert(at);
             let function = assigns_lambda(code, raw, value);
             let (detail, params) = if function {

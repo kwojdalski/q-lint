@@ -851,6 +851,46 @@ fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
     assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
 }
 
+/// A file loaded only under `\d .lib`, and a KDB-X module, define their
+/// bare names in that context, and their bodies read them there: Run and
+/// Run test define and call them where the index has them, not as root
+/// copies nothing reads (#2671).
+#[test]
+fn a_function_of_a_file_placed_in_a_context_is_run_there() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::create_dir_all(dir.path().join("mymod")).unwrap();
+    let files = [
+        ("main.q", "\\d .lib\n\\l lib/u.q\n\\d .\nm:use`mymod\n"),
+        ("lib/u.q", "test_f:{1b}\n"),
+        ("mymod/init.q", "helper:{x+1}\nf:{helper x}\nexport:([f])\n"),
+    ];
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "lib/u.q", files[1].1);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            lens(0, "Run", "\\d .lib\ntest_f:{1b}\n\\d ."),
+            lens(0, "Run test", "\\d .lib\ntest_f:{1b}\n\\d .\n.lib.test_f[]"),
+        ]
+    );
+    let reply = server.request("q-lint/tests", json!({"textDocument": {"uri": uri}}));
+    let test = &reply["result"][0]["tests"][0];
+    assert_eq!(test["call"], ".lib.test_f[]", "{reply}");
+    assert_eq!(test["qualified"], ".lib.test_f", "{reply}");
+    let uri = server.open(dir.path(), "mymod/init.q", files[2].1);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            lens(0, "Run", "\\d .m.mymod\nhelper:{x+1}\n\\d ."),
+            lens(1, "Run", "\\d .m.mymod\nf:{helper x}\n\\d ."),
+        ]
+    );
+}
+
 /// A file that uses qUnit has every `test*` of a namespace run, as
 /// `.qunit.runNsTests` does (#1591).
 #[test]
@@ -1037,6 +1077,77 @@ fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
             ("trade".to_string(), (1, 15, 20)),
         ],
         "{reply}"
+    );
+}
+
+/// What `q-lint/unresolvedNames` lists for the open document `uri`: each
+/// name as written, and its line and character.
+fn unresolved(server: &mut Server, uri: &str) -> Vec<(String, u64, u64)> {
+    let reply = server.whole("q-lint/unresolvedNames", uri, json!({}));
+    reply["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of names, not {reply}"))
+        .iter()
+        .map(|n| {
+            let (line, start, _) = span(&n["range"]);
+            (n["written"].as_str().unwrap().to_string(), line, start)
+        })
+        .collect()
+}
+
+#[test]
+fn a_module_reading_a_root_name_it_cannot_see_is_listed() {
+    // KDB-X 5: `util:{x*10}; m:use`mymod; m.h 2` is 'util - a module's bare
+    // name is `.m.mymod.util`, one of the workspace's and not of q's (#2667).
+    let dir = tempfile::tempdir().unwrap();
+    let main = "util:{x*10}\nm:use`mymod\nr:m.h 2\n";
+    let mut server = Server::start(dir.path(), &[("main.q", main)]);
+    let module = "helper:{x+1}\nf:{helper x}\nh:{util x}\nexport:([f;h])\n";
+    let uri = server.open(dir.path(), "mymod/init.q", module);
+    assert_eq!(unresolved(&mut server, &uri), [("util".to_string(), 2, 3)]);
+}
+
+#[test]
+fn a_name_read_through_one_the_workspace_defines_is_not_listed() {
+    // QF018 and the graph try a name without its last part; so does this
+    // (#2807). `.nope.x` is read through nothing a file assigns.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = ".cfg:`port`host!(1;2)\nt:([]c:1 2)\n.ns.d:`a`b!1 2\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "r2:.cfg.port\nr3:t.c\nr8:.ns.d.a\nr9:.nope.x\n";
+    let uri = server.open(dir.path(), "doc.q", text);
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [(".nope.x".to_string(), 3, 3)]
+    );
+}
+
+#[test]
+fn a_column_in_parentheses_or_brackets_of_a_query_is_not_listed() {
+    // KDB-X runs each of these over the columns `a` and `b` (#2822). The
+    // list on the last line is in no query, and a lambda's names are its own.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "t:([]a:1 2;b:3 4)\n\
+                r1:select from t where a=(max;a) fby b\n\
+                r2:select from t where (a>1),b>2\n\
+                r3:select from t where b in (a;b)\n\
+                r4:select x:(a;b) from t\n\
+                r5:select from t where a within (1;b)\n\
+                r6:select[>a] from t\n\
+                r7:select[2;<b] a from t\n\
+                r8:select from t where a in (exec a from u where (b>3))\n\
+                r9:select from t where (a>1),{x>lim} each b\n\
+                r10:(a;b)\n";
+    let uri = server.open(dir.path(), "doc.q", text);
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [
+            ("u".to_string(), 8, 41),
+            ("lim".to_string(), 9, 32),
+            ("a".to_string(), 10, 5),
+            ("b".to_string(), 10, 7),
+        ]
     );
 }
 
@@ -1329,6 +1440,43 @@ fn a_configured_baseline_hides_its_findings_in_the_editor_unless_turned_off() {
     assert_eq!(server.codes_for(&uri), vec!["QF001".to_string()]);
 }
 
+/// What a name holds once the file has loaded is what it is listed as, as
+/// the outline has it: KDB-X types `p:add[1]` and `ce:count each` 104h and
+/// `al:add` 100h, and `f` is 3 after `f:{x}` and `f:3` - no function, and
+/// no dead one (#2809).
+#[test]
+fn a_definition_is_listed_as_what_the_name_holds_once_loaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "add:{x+y}\np:add[1]\nce:count each\nal:add\nf:{x}\nf:3\nr:p[2],al[1;2]\n";
+    let (mut server, _) = Server::over(dir.path(), &[("lib.q", lib)], client(), Value::Null);
+    let reply = server.request("q-lint/definitions", json!({}));
+    let got: Vec<(&str, &str)> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["name"].as_str().unwrap(), d["kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("add", "function"),
+            ("al", "function"),
+            ("ce", "function"),
+            ("f", "variable"),
+            ("p", "function"),
+            ("r", "variable"),
+        ]
+    );
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let dead: Vec<&str> = reply["result"]["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(dead, ["ce"], "{reply}");
+}
+
 #[test]
 fn the_workspace_definitions_and_its_unused_functions_are_listed() {
     let dir = tempfile::tempdir().unwrap();
@@ -1584,6 +1732,34 @@ fn a_function_assigned_inside_another_ends_no_statement() {
     assert_eq!(changed, json!(["f"]));
 }
 
+/// A name that holds a function without being a lambda calls it all the
+/// same: `al:f`, `h:f each` and both names of `a:b:f` run the changed `f`,
+/// so the tests calling them are reached beside the ones calling a
+/// projection or `f` itself (#2811).
+#[test]
+fn a_test_reaches_a_changed_function_through_a_name_that_is_no_lambda() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "f:{x+1}\nal:f\np:{[a;b] f a+b}[1]\nh:f each\na:b:f\nother:{x}\no:other\n";
+    let tests = "test_alias:{al 1}\ntest_proj:{p 1}\ntest_each:{h 1 2}\ntest_direct:{f 1}\n\
+                 test_a:{a 1}\ntest_b:{b 1}\ntest_other:{o 1}\n";
+    let files = [("lib.q", lib), ("test_lib.q", tests)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let now = lib.replace("x+1", "x+2");
+    let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, &now);
+    assert_eq!(changed, json!(["f"]));
+    assert_eq!(
+        tests,
+        [
+            "test_a",
+            "test_alias",
+            "test_b",
+            "test_direct",
+            "test_each",
+            "test_proj"
+        ]
+    );
+}
+
 /// The edits a `workspace/willRenameFiles` reply makes, as
 /// `(file under dir, line, start, end, new text)`, in order.
 fn renamed(reply: &Value, dir: &Path) -> Vec<(String, u64, u64, u64, String)> {
@@ -1774,6 +1950,69 @@ fn a_load_spelled_in_another_case_is_rewritten_on_a_disk_that_ignores_case() {
         ],
         "{reply}"
     );
+}
+
+/// KDB-X 5 finds `` use`a.b `` at `a/b.q` or `a/b/init.q`, so a module's
+/// name is its path as much as a load's is (#2669).
+#[test]
+fn renaming_a_modules_file_or_folder_rewrites_the_uses_that_name_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("mymod")).unwrap();
+    std::fs::create_dir_all(dir.path().join("pkg")).unwrap();
+    let files = [
+        ("mymod/init.q", "f:{x}\nexport:([f])\n"),
+        ("flat.q", "g:{x}\nexport:([g])\n"),
+        ("pkg/sub.q", "h:{x}\nexport:([h])\n"),
+        (
+            "main.q",
+            "m:use`mymod\n\\l mymod/init.q\nk:use`flat\np:use`pkg.sub\n",
+        ),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let mut edits = |moves: &[(&str, &str)]| {
+        let reply = server.request(
+            "workspace/willRenameFiles",
+            rename_params(dir.path(), moves),
+        );
+        let mut edits = renamed(&reply, dir.path());
+        edits.sort();
+        edits
+    };
+    assert_eq!(
+        edits(&[("mymod", "mod2")]),
+        [
+            ("main.q".to_string(), 0, 6, 11, "mod2".to_string()),
+            ("main.q".into(), 1, 3, 15, "mod2/init.q".into()),
+        ]
+    );
+    assert_eq!(
+        edits(&[("flat.q", "flat2.q")]),
+        [("main.q".to_string(), 2, 6, 10, "flat2".to_string())]
+    );
+    // A directory is a dot of the name.
+    assert_eq!(
+        edits(&[("flat.q", "lib/flat.q")]),
+        [("main.q".to_string(), 2, 6, 10, "lib.flat".to_string())]
+    );
+    assert_eq!(
+        edits(&[("pkg", "pk2")]),
+        [("main.q".to_string(), 3, 6, 13, "pk2.sub".to_string())]
+    );
+    // pkg/sub/init.q is `pkg.sub` still, and no module name spells
+    // my-flat.q: the user is told which `use` the rename leaves behind.
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("pkg/sub.q", "pkg/sub/init.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("flat.q", "my-flat.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].contains("main.q:3 (`my-flat.q`)"), "{}", shown[0]);
 }
 
 /// An absolute load written through a symlink (`/tmp` for `/private/tmp`)

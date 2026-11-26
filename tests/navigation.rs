@@ -64,6 +64,32 @@ fn a_string_a_comment_and_a_system_command_mention_nothing() {
 }
 
 #[test]
+fn the_command_word_of_a_timed_line_mentions_nothing() {
+    // KDB-X: with the `t` of `\t:10` renamed, `\tbl:10 count tbl` goes to
+    // the shell and is 'os (#2812). What follows the command is q.
+    let source =
+        "t:([]a:1 2)\n\\t:10 count t\n\\t count t\n\\t 100\nts:1\n\\ts ts+1\n\\ts:5 ts\nq)\\t t\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("t", "t".to_string(), 'w'),
+            ("t", "t".into(), 'r'),
+            ("t", "t".into(), 'r'),
+            ("ts", "ts".into(), 'w'),
+            ("ts", "ts".into(), 'r'),
+            ("ts", "ts".into(), 'r'),
+            ("t", "t".into(), 'r'),
+        ]
+    );
+    let reads: Vec<usize> = mentions(source)
+        .iter()
+        .filter(|m| m.definition.is_none())
+        .map(|m| m.at)
+        .collect();
+    assert_eq!(reads, [24, 35, 53, 64, 72]);
+}
+
+#[test]
 fn a_column_and_a_builtin_are_no_global() {
     // `a:` and `b:` in a table literal and `total:` in a query are written
     // as assignments and assign nothing; `count` and `til` are q's own.
@@ -1123,7 +1149,8 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
     // and root `helper` is 'helper (#2320).
     let dir = tempfile::tempdir().unwrap();
     let module = "helper:{x*2}\nf:{helper x+1}\ng:{[a;b] a+b}\nexport:([f;g])\n";
-    let mut server = Server::start(dir.path(), &[("mymod/init.q", module)]);
+    let files = [("mymod/init.q", module), ("user.q", "m:use`mymod\n")];
+    let mut server = Server::start(dir.path(), &files);
     let text = "r:helper 3\ns:.m.mymod.helper 4\n";
     let uri = server.open(dir.path(), "other.q", text);
     let reply = server.ask(
@@ -1170,6 +1197,30 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
         .collect();
     assert!(names.contains(&".m.mymod.f"), "{names:?}");
     assert!(!names.contains(&"f"), "{names:?}");
+}
+
+#[test]
+fn a_script_that_assigns_export_keeps_its_names_at_the_root() {
+    // KDB-X 5: `\l a.q` then `util 1` is 2, and `key `.m` is `()`. Only a
+    // `use` makes a module of a file that assigns `export` (#2668).
+    let dir = tempfile::tempdir().unwrap();
+    let script = "/ csv helpers\nexport:{[t;f] (`$\":\",f) 0: csv 0: t}\nutil:{x+1}\n";
+    let mut server = Server::start(dir.path(), &[("a.q", script)]);
+    let text = "r:util 1\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "util", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("a.q", 2, 0, 4)]);
+    let reply = server.ask("textDocument/hover", &uri, text, "util", 0, json!({}));
+    let hover = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(hover.starts_with("util[x]"), "{hover}");
+    let reply = server.request("workspace/symbol", json!({"query": "util"}));
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert_eq!(names, ["util"]);
 }
 
 #[test]
@@ -1336,6 +1387,29 @@ fn highlights_mark_a_write_apart_from_a_read() {
             ((4, 13, 15), 3),
             ((5, 13, 15), 2),
             ((6, 3, 5), 2)
+        ]
+    );
+    // A symbol that may be the name is marked as text, kind 1, wherever
+    // Find References lists it: `` `hb in tables `. `` and the `` `hb ``
+    // returned, beside the write by name and the read (#2679).
+    let text = "init:{[] if[not `hb in tables `.; `hb set ([] w:`symbol$())];\n  `hb}\n\
+                r:select from hb\n";
+    let uri = server.open(dir.path(), "d.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "from hb",
+        5,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 17, 19), 1),
+            ((0, 35, 37), 3),
+            ((1, 3, 5), 1),
+            ((2, 14, 16), 2)
         ]
     );
 }
@@ -1950,6 +2024,44 @@ fn refused(reply: &Value) -> String {
 }
 
 #[test]
+fn a_modules_own_name_is_renamed_and_an_exported_one_refused() {
+    // KDB-X 5: `key `.m.mymod` is ``` ``helper`f`g`export ```, names the
+    // module's file assigns and none of q's (#2666).
+    let dir = tempfile::tempdir().unwrap();
+    let module = "helper:{[hh] hh+1}\nf:{helper x}\ng:{[a] a*2}\nexport:([f;g])\n";
+    let main = "m:use`mymod\nr:m.f 2\ns:.m.mymod.helper 3\n";
+    let mut server = Server::start(dir.path(), &[("main.q", main)]);
+    let uri = server.open(dir.path(), "mymod/init.q", module);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "helper:",
+        0,
+        json!({"newName": "hp"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("init.q", 0, 0, 6, "hp"),
+            edit("init.q", 1, 3, 9, "hp"),
+            edit("main.q", 2, 11, 17, "hp"),
+        ],
+        "{reply}"
+    );
+    // `([f;g])` keys what `use` returns by `f`, and main.q reads `m.f`.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "f:",
+        0,
+        json!({"newName": "ff"}),
+    );
+    assert!(refused(&reply).contains("exports"), "{reply}");
+}
+
+#[test]
 fn a_global_is_renamed_in_every_file_that_names_it_under_its_context() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
@@ -2101,6 +2213,34 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
     );
     let why = refused(&reply);
     assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    // In parentheses or the brackets of `select[>a]` it is a column too:
+    // KDB-X `select from t where (af>1),b>2` over a function `af` is 'type
+    // (#2823).
+    for (n, phrase) in [
+        "select from t where (a>1),b>2",
+        "select[>a] from t",
+        "select from t where b in (a;b)",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("paren{n}.q");
+        let text = format!("a:{{x}}\nt:([]a:1 2;b:3 4)\nr7:{phrase}\nr8:a 1\n");
+        let puri = server.open(dir.path(), &name, &text);
+        let reply = server.ask(
+            "textDocument/rename",
+            &puri,
+            &text,
+            "a:{",
+            0,
+            json!({"newName": "af"}),
+        );
+        let why = refused(&reply);
+        assert!(
+            why.contains("qSQL") && why.contains(":3"),
+            "{phrase}: {why}"
+        );
+    }
     let reply = server.ask(
         "textDocument/rename",
         &quri,

@@ -251,7 +251,7 @@ pub struct Relative {
 /// A place reading cannot see through: `kind` is `value` (of a string),
 /// `get` (of anything but a literal), `eval` (or `reval`, of a parse tree),
 /// `sv` (a name built from parts), `set` (into a computed name) or `load` (a
-/// concatenated `system "l ..."`). A
+/// concatenated `system "l ..."`, or a `value "\\l ..."`). A
 /// `get`, `value` or `set` of an unqualified symbol inside a lambda written
 /// under `\d` is one too: q looks the symbol up in the `\d` current when the
 /// lambda is called, which the source does not say.
@@ -467,13 +467,44 @@ pub fn explain_qsql(source: &str, at: usize) -> Option<String> {
 
 /// For each of `offsets` in `source`, the qSQL clause it is written in -
 /// `select`, `by`, `from`, `where` and so on - or `None` outside a query,
-/// where a name is no column.
+/// where a name is no column. A name in parentheses or brackets is in the
+/// clause they are written in: `a` of `where (a>1),b>2`, of `(max;a) fby b`
+/// and of `select[>a] from t` is a column on KDB-X (#2822).
 pub fn query_clauses(source: &str, offsets: &[usize]) -> Vec<Option<&'static str>> {
     let v = views(source);
     offsets
         .iter()
-        .map(|&at| query_clause(&v.code, at.min(v.code.len())))
+        .map(|&at| {
+            let mut at = at.min(v.code.len());
+            loop {
+                if let Some(clause) = query_clause(&v.code, at) {
+                    return Some(clause);
+                }
+                at = enclosing_bracket(&v.code, at)?;
+            }
+        })
         .collect()
+}
+
+/// The `(` or `[` that opens around `at` in its statement, for
+/// `query_clauses`. `None` at the statement's own depth, and in a lambda,
+/// whose names are its own whatever query it is written in.
+fn enclosing_bracket(code: &str, at: usize) -> Option<usize> {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut i = at;
+    while i > 0 {
+        i -= 1;
+        match bytes[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' if depth == 0 => return Some(i),
+            b'{' if depth == 0 => return None,
+            b'(' | b'[' | b'{' => depth -= 1,
+            b'\n' if depth == 0 && !code[i + 1..].starts_with([' ', '\t']) => return None,
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A bracketed call around a cursor: the name called, at byte `at` for `len`
@@ -514,6 +545,16 @@ pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
     semantics::load_paths(&v.code, source)
         .into_iter()
         .map(|path| (path.start, path.len()))
+        .collect()
+}
+
+/// The module names of the `` use`name `` loads in `source` - `mymod` of
+/// `` m:use`mymod `` - as start and length, in order.
+pub fn use_paths(source: &str) -> Vec<(usize, usize)> {
+    let v = views(source);
+    semantics::use_paths(&v.code, source)
+        .into_iter()
+        .map(|name| (name.start, name.len()))
         .collect()
 }
 

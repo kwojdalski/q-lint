@@ -1765,6 +1765,17 @@ pub(crate) fn is_module(code: &str, raw: &str) -> bool {
 /// The module each literal `` use`name `` loads, outside a lambda that binds
 /// `use` itself. `view` is the code view with system commands blanked.
 fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
+    let mut out: Vec<String> = use_names(view, scopes)
+        .into_iter()
+        .map(|name| view[name].to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Where each name `uses` reads is written, in order.
+fn use_names(view: &str, scopes: &[Scope]) -> Vec<Range<usize>> {
     let mut out = vec![];
     for m in
         re!(r"\buse\s*(?:\[\s*|\(\s*)?`(\.*[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
@@ -1776,11 +1787,15 @@ fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
         {
             continue;
         }
-        out.push(m[1].to_string());
+        out.push(m.get(1).unwrap().range());
     }
-    out.sort();
-    out.dedup();
     out
+}
+
+/// The module name of each literal `` use`name `` in a file, as `uses`
+/// reads them, for a rename of the module's file to rewrite (#2669).
+pub fn use_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
+    use_names(&commands_blanked(code, raw), &scopes(code, raw).0)
 }
 
 /// `value` of a symbol the source does not spell out: `value nm` reads the
@@ -2027,7 +2042,7 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
 /// The places a name is reached by a value computed at run time, which no
 /// amount of reading resolves: `value "..."`, `get` of anything but a
 /// literal, a name built with `` ` sv ``, `set` into a computed name, and a
-/// load whose path is concatenated. `view` is the code view with system
+/// load whose path is concatenated or that `value` runs from a string. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string. `call_time`
 /// holds the literal symbols `call_time` says are resolved where the lambda
 /// is called, and the `value`s of a symbol `value_of_symbols` finds, both
@@ -2051,10 +2066,13 @@ fn dynamic(
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
+    // The string a `\l`, it is a load no edge follows: KDB-X runs lib.q
+    // for `value "\\l lib.q"` (#2810).
     for m in re!(r"\bvalue\b").find_iter(view) {
-        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(&raw[m.end()..])
-        {
-            push(m.start(), "value");
+        let after = &raw[m.end()..];
+        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(after) {
+            let loads = re!(r#"^[ \t]*(?:[\[(][ \t]*)?"\\\\l[ \t]"#).is_match(after);
+            push(m.start(), if loads { "load" } else { "value" });
         }
     }
     // `eval` and `reval` run a parse tree, whose names reading cannot see:

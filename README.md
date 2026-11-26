@@ -280,9 +280,11 @@ A file depends on another when:
   `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
   tried, the module's search path not being in the source, and `` use`.b ``
   in a module beside it. A module is a file that assigns `export` at its top
-  level, and its names are where KDB-X puts them, `.m.name` (`.m.a.0b` for
-  `` use`a.b ``), never at the root: a root `helper` reads nothing a module
-  defines, `.m.mymod.helper` reads mymod's.
+  level and that some `use` reaches, and its names are where KDB-X puts
+  them, `.m.name` (`.m.a.0b` for `` use`a.b ``), never at the root: a root
+  `helper` reads nothing a module defines, `.m.mymod.helper` reads mymod's.
+  A file no `use` reaches is a script whatever it assigns, its names at the
+  root, where `q file.q` and `\l file.q` put them.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's
@@ -292,7 +294,8 @@ each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
 `set` into a computed name, and a
-concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
+concatenated `system "l ",path` or a `value "\\l lib.q"`, both listed as
+`load`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument
 is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
 scope assigns `nm` nothing but a symbol atom - because `value` of a
@@ -684,7 +687,9 @@ running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
 from a read - an assignment, an amend, and a table changed in place by its
-name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]`), and `textDocument/prepareRename`/`textDocument/rename`.
+name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]` - and a symbol
+that may be the name, which the references list too, marked as text), and
+`textDocument/prepareRename`/`textDocument/rename`.
 
 The nested outline puts each name under the namespace it is in, the whole of
 the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
@@ -844,14 +849,16 @@ lens on the name of each function a statement at column 0 defines, and a
 as qUnit's do. Each runs the command
 `q-lint.runDefinition` with two arguments: the code to send and the
 document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
-when it is written under `\d .ns`; Run test's is that, then a call of the
+when it is written under `\d .ns` - or before the first `\d` of a file that
+runs in `.ns` alone, one loaded only under `\d .ns` or a KDB-X module
+(`.m.<name>`); Run test's is that, then a call of the
 function by its full name with no argument (`.ns.test_x[]`). It is off by
 default because only a client that registers that command - the VS Code
 extension, which sends the code to the connected q process - can run it.
 
 With `referenceLens.enable`, the same functions get a lens counting the
 places the indexed files read them - what Find All References lists without
-the assignments: `1 reference`, `3 references`, `0 references`. It runs the
+the assignments, a symbol that may be the name included: `1 reference`, `3 references`, `0 references`. It runs the
 command `q-lint.showReferences` with the document's URI and the name's
 position, which the VS Code extension opens as the references list. It is
 off by default for the same reason as Run. One request reads each workspace
@@ -928,7 +935,9 @@ process defines. What it offers, in this order: the parameters and locals of
 the lambda being written; the names the workspace defines, spelled as the
 `\d` context in force reads them; q's words; and every name by its full
 path. Nothing is offered in a string, a comment, a symbol, a number or a
-system command.
+system command. An item's edit replaces what is typed so far; a client that
+declares `completionItem.insertReplaceSupport` is given that range to insert
+over and the whole name under the cursor to replace, to choose between.
 
 With `autoLoad.enable` too, a workspace name that one other file defines,
 and that nothing the document can already see defines, comes with the `\l`
@@ -1003,7 +1012,8 @@ and `dynamic` counts the places a name is reached by a value computed at run
 time, which make the list a list of candidates. `testsReaching` compares the
 document's top-level function statements with `previous`, and answers the
 ones that changed, are new or are gone, and every test whose body names one of
-them, or names a function that does, and so on.
+them, or names a global whose statement does - a function, or an `al:f` or
+`h:f each` that holds one - and so on.
 
 `affectedTests` lists the test files that reach a changed file along the
 graph, a changed test among them. Which files changed is the client's to
@@ -1013,8 +1023,8 @@ in the answer is the sent files the index holds, each once; `unindexed` is
 the sent `.q` files it does not hold - deleted, excluded, outside the
 workspace - whose dependents cannot be followed, so a client can say the
 list is short; `dynamic` is the test files not listed that load by a path
-computed at run time (`system "l ",p`), which may run a changed file all the
-same. A test file is a `.q` file named `test_*` or `*_test`, or
+computed at run time (`system "l ",p`) or from a string (`value "\\l lib.q"`),
+or reach a file that does, which may run a changed file all the same. A test file is a `.q` file named `test_*` or `*_test`, or
 under a directory named `test` or `tests` below its workspace folder, which
 is wide on purpose: a helper listed with the tests costs a glance, a test
 left out costs a regression. The limits are the graph's: an edge through a
@@ -1309,7 +1319,8 @@ lenses are on, and the second also when a definition's parameters change, as
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the
-loads of a file that moves. A load the new path cannot be written in (a
+loads of a file that moves, and the name in a `` use`name `` that reaches a
+renamed module (`mod2` for `mymod` once mymod/ is mod2/). A load the new path cannot be written in (a
 blank after `\l` or in `system "l ..."`, which q has no spelling for, or
 anything a file symbol cannot hold) gets no edit, and one
 `window/showMessage` lists those lines. `loadPathCompletion.enable: true` completes the
@@ -1341,7 +1352,8 @@ default used.
 not hide diagnostics on a document the editor opens. They do decide which
 closed files the workspace index reads, as they decide which files
 `qlinter .` visits, so a name only an excluded file defines is undefined in
-the editor as it is in the terminal. Everything else a configuration says is
+the editor as it is in the terminal, and a file an excluded one loads under
+a `\d` stays where the others put it. Everything else a configuration says is
 read too: the server finds `qlinter.toml` or `pyproject.toml` above each
 document as the command line does, and `--config FILE` replaces that search with the one file,
 whose per-file-ignores are then read relative to the directory the server was

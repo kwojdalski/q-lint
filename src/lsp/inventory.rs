@@ -57,7 +57,10 @@ fn namespace(name: &str) -> &str {
 
 /// `q-lint/definitions`: `[{name, namespace, kind, uri, range}]`, each
 /// global once per file that assigns it, at its first assignment there,
-/// sorted by namespace and name. `kind` is `function` or `variable`.
+/// sorted by namespace and name. `kind` is `function` or `variable`: what
+/// the name holds once the file has loaded, as the outline has it - a
+/// projection, a derived function and a name holding one are functions, and
+/// a lambda assigned over is not (#2809).
 fn definitions(sources: &Sources) -> Value {
     let mut out: BTreeMap<(String, String, String), Value> = BTreeMap::new();
     for key in sources.keys() {
@@ -82,7 +85,7 @@ fn definitions(sources: &Sources) -> Value {
                     json!({
                         "name": name,
                         "namespace": namespace(&name),
-                        "kind": if d.function { "function" } else { "variable" },
+                        "kind": if d.holds_function { "function" } else { "variable" },
                         "uri": uri,
                         "range": range(&lines, m.at, m.len),
                     }),
@@ -163,7 +166,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             // Each name as q has it where the file is loaded (#2046).
             let names = sources.names(&text, m, &placement);
             match &m.definition {
-                Some(d) if d.function => {
+                Some(d) if d.holds_function => {
                     defined.extend(names.into_iter().map(|name| {
                         (
                             key.to_string(),
@@ -186,7 +189,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             }
         }
         spelled(&text, &mut words);
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 tests.insert(text[run.at..run.at + run.len].to_string());
             }
@@ -266,10 +269,12 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         .into_iter()
         .cloned()
         .collect();
-    // Who names whom: each name read inside a top-level function's
-    // statement is an edge from that function to it, the name as q
+    // Who names whom: each name read inside a top-level definition's
+    // statement is an edge from that definition to it, the name as q
     // resolves it where the file is loaded, and as written - a bare read
-    // in a lambda is looked up at the root too.
+    // in a lambda is looked up at the root too. Any definition that
+    // carries its statement, as for the call hierarchy: `al:f` and
+    // `h:f each` run `f` whenever the names they define are called (#2811).
     let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     let mut tests: Vec<(String, String, Vec<String>, String)> = vec![];
     for key in sources.keys() {
@@ -277,30 +282,35 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let placement = sources.placement(key);
-        let mut span: Option<(usize, Vec<String>)> = None;
+        // The statements still open at a mention: one, or each name of
+        // `a:b:f`.
+        let mut spans: Vec<(usize, Vec<String>)> = vec![];
         let all = mentions(&text);
         for m in &all {
+            spans.retain(|(end, _)| m.at < *end);
             match &m.definition {
-                Some(_) => {
-                    if let Some(d) = top_level(m) {
-                        span = Some((d.end, sources.names(&text, m, &placement)));
+                Some(d) => {
+                    if (d.start, d.end) != (m.at, m.at + m.len) {
+                        spans.push((d.end, sources.names(&text, m, &placement)));
                     }
                 }
                 None => {
-                    if let Some((end, caller)) = &span
-                        && m.at < *end
-                    {
-                        let spelled = text[m.at..m.at + m.len].to_string();
-                        let mut callees = sources.names(&text, m, &placement);
-                        callees.push(spelled);
-                        for callee in callees {
-                            callers.entry(callee).or_default().extend(caller.clone());
+                    if spans.is_empty() {
+                        continue;
+                    }
+                    let spelled = text[m.at..m.at + m.len].to_string();
+                    let mut callees = sources.names(&text, m, &placement);
+                    callees.push(spelled);
+                    for callee in callees {
+                        let into = callers.entry(callee).or_default();
+                        for (_, caller) in &spans {
+                            into.extend(caller.iter().cloned());
                         }
                     }
                 }
             }
         }
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 let spelled = text[run.at..run.at + run.len].to_string();
                 let resolved = all.iter().find(|m| m.at == run.at).map_or_else(

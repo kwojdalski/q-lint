@@ -1383,6 +1383,49 @@ fn completion_offers_locals_then_the_workspace_then_q() {
     assert_eq!(item("like")["documentation"]["kind"], "markdown");
 }
 
+/// A client that reads an edit both ways is given the whole name under the
+/// cursor to replace, and what is typed so far to insert over; one that
+/// does not is sent the one range it reads (#2678).
+#[test]
+fn completion_in_the_middle_of_a_name_can_replace_the_rest_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "\\l lib.q\nr:.lib.liXY. 1";
+    let mut both = client();
+    both["textDocument"]["completion"]["completionItem"]["insertReplaceSupport"] = json!(true);
+    let (mut server, uri) = serving(dir.path(), text, both, completing_options());
+    let reply = server.ask(
+        "textDocument/completion",
+        &uri,
+        text,
+        ".lib.li",
+        7,
+        Value::Null,
+    );
+    let items = reply["result"]["items"].as_array().unwrap();
+    let item = items.iter().find(|i| i["label"] == ".lib.limit").unwrap();
+    let range = |from: u64, to: u64| json!({"start": {"line": 1, "character": from}, "end": {"line": 1, "character": to}});
+    assert_eq!(
+        item["textEdit"],
+        json!({"insert": range(2, 9), "replace": range(2, 11), "newText": ".lib.limit"})
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, uri) = serving(dir.path(), text, client(), completing_options());
+    let reply = server.ask(
+        "textDocument/completion",
+        &uri,
+        text,
+        ".lib.li",
+        7,
+        Value::Null,
+    );
+    let items = reply["result"]["items"].as_array().unwrap();
+    let item = items.iter().find(|i| i["label"] == ".lib.limit").unwrap();
+    assert_eq!(
+        item["textEdit"],
+        json!({"range": range(2, 9), "newText": ".lib.limit"})
+    );
+}
+
 #[test]
 fn completion_after_a_dot_continues_the_qualified_name() {
     let dir = tempfile::tempdir().unwrap();

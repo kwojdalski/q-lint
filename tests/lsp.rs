@@ -1368,6 +1368,40 @@ fn an_open_excluded_file_defines_nothing_for_the_others() {
 }
 
 #[test]
+fn an_open_excluded_file_loads_nothing_for_the_others() {
+    // `qlinter .` reads no excluded file, so reader.q's `lf` is lib.q's, at
+    // the root. Opening scratch/try.q, which loads lib.q under `\d .a`,
+    // moved `lf` into `.a` for every other file and reader.q got a QF018
+    // the terminal never reports (#2825). The same load in a file the scan
+    // reads does move it.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::write(root.join("qlinter.toml"), "exclude = [\"scratch\"]\n").unwrap();
+    std::fs::create_dir_all(root.join("scratch")).unwrap();
+    let (loader, user) = ("\\d .a\n\\l lib.q\n", "r:lf\n");
+    std::fs::write(root.join("lib.q"), "lf:{x}\n").unwrap();
+    std::fs::write(root.join("reader.q"), user).unwrap();
+    std::fs::write(root.join("scratch/try.q"), "1\n").unwrap();
+    let (reader, scratch, main) = (
+        file_uri(&root.join("reader.q")),
+        file_uri(&root.join("scratch/try.q")),
+        file_uri(&root.join("main.q")),
+    );
+    let mut server = start_with_workspace(&root);
+    server.open(&reader, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&scratch, loader);
+    server.diagnostics_for(&scratch);
+    server.change(&reader, 2, user);
+    assert!(codes_of(&server.diagnostics_for(&reader)).is_empty());
+    server.open(&main, loader);
+    // The other two open documents report again, in no set order.
+    let reported = last_published(&mut server, &[&reader, &scratch]);
+    assert_eq!(reported[&reader], ["QF018"]);
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+#[test]
 fn a_name_another_workspace_file_defines_is_not_undefined() {
     // lib.q is on disk and never opened; the server reads it at startup.
     let dir = tempfile::tempdir().unwrap();
@@ -4057,7 +4091,6 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
             "x;(1;2)",
             "[x;(1;2)]",
             "g[x;(1;2)]",
-            "[x] g[x;(1;2)]",
             "{[x] g[x;(1;2)]}",
             "f:{[x] g[x;(1;2)]}",
         ]
@@ -4395,6 +4428,11 @@ fn another_read_of_a_name_asks_for_the_reference_counts_again() {
         ["workspace/codeLens/refresh"]
     );
     assert!(refreshes_after(&mut server, &b, 5, "f 3\n").is_empty());
+    // A symbol that may be the name is counted too (#2679).
+    assert_eq!(
+        refreshes_after(&mut server, &b, 6, "f 3\n`f\n"),
+        ["workspace/codeLens/refresh"]
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
@@ -4546,6 +4584,52 @@ fn a_file_opened_by_another_spelling_reports_under_one_uri() {
     let reported = last_published(&mut server, &[&closed, &open]);
     assert_eq!(reported[&closed], ["QF001"], "as the disk has it");
     assert_eq!(reported[&open], Vec::<String>::new(), "cleared on close");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
+/// A file renamed in case alone, on a disk that ignores case, is one file
+/// under a new name: the watcher says lib.q is deleted and Lib.q created,
+/// and lib.q still answers on the disk - as Lib.q - so the key it was read
+/// under was never forgotten. Its diagnostics stayed under the old name,
+/// beside the new one's, and Go to Definition listed both (#2817). A disk
+/// that tells the two names apart has no such rename to make.
+#[test]
+fn a_file_renamed_in_case_alone_is_forgotten_under_its_old_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("lib.q"), RESERVED_PARAM).unwrap();
+    if !root.join("LIB.Q").exists() {
+        return;
+    }
+    let (old, new, app) = (
+        file_uri(&root.join("lib.q")),
+        file_uri(&root.join("Lib.q")),
+        file_uri(&root.join("app.q")),
+    );
+    let options = json!({"lint": {"scope": "workspace"}});
+    let (mut server, _) = start_with_options(&root, &["--lsp"], options, Some(&root));
+    assert_eq!(codes_of(&server.diagnostics_for(&old)), ["QF001"]);
+    std::fs::rename(root.join("lib.q"), root.join("Lib.q")).unwrap();
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles",
+        "params":{"changes":[{"uri":old,"type":3},{"uri":new,"type":1}]}}),
+    );
+    let reported = last_published(&mut server, &[&old, &new]);
+    assert_eq!(reported[&old], Vec::<String>::new(), "cleared");
+    assert_eq!(reported[&new], ["QF001"]);
+    server.open(&app, "r:f 1\n");
+    server.send(
+        json!({"jsonrpc":"2.0","id":81,"method":"textDocument/definition",
+        "params":{"textDocument":{"uri":app},"position":{"line":0,"character":2}}}),
+    );
+    let reply = server.until(|m| m["id"] == 81);
+    let found: Vec<&str> = reply["result"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| place["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, [new.as_str()], "{reply}");
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

@@ -1141,3 +1141,51 @@ fn a_test_that_loads_at_run_time_is_named_as_one_the_list_may_miss() {
     let result = server.result("q-lint/affectedTests", json!({"changed": []}));
     assert_eq!(result["dynamic"], json!([]), "{result}");
 }
+
+/// What a helper may load, the test loading the helper may run: KDB-X has
+/// lib.q's `libf` after `\l tests/test_helped.q`, whose helper computes the
+/// path, and after `\l tests/test_valued.q`, which loads by `value` of a
+/// string. Neither has an edge to lib.q, and both were left out of
+/// `dynamic` as well (#2810).
+#[test]
+fn a_test_reaching_a_load_at_run_time_is_named_as_one_the_list_may_miss() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("src/lib.q", "libf:{x}\n"),
+        ("util/helper.q", "p:\"src/\"\nsystem \"l \",p,\"lib.q\"\n"),
+        ("util/further.q", "\\l util/helper.q\n"),
+        ("util/plain.q", "pf:{x}\n"),
+        ("tests/test_helped.q", "\\l util/helper.q\ntest_a:{1}\n"),
+        ("tests/test_further.q", "\\l util/further.q\ntest_f:{1}\n"),
+        (
+            "tests/test_valued.q",
+            "value \"\\\\l src/lib.q\"\ntest_v:{1}\n",
+        ),
+        ("tests/test_plain.q", "\\l util/plain.q\ntest_p:{1}\n"),
+        ("tests/test_sum.q", "test_s:{value \"\\\\lambda\"}\n"),
+        ("tests/test_static.q", "\\l src/lib.q\n\\l util/helper.q\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let changed = [file_uri(&dir.path().join("src/lib.q"))];
+    let result = server.result("q-lint/affectedTests", json!({"changed": changed}));
+    let tests: Vec<String> = result["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| server.name(&test["uri"]))
+        .collect();
+    assert_eq!(tests, ["tests/test_static.q"]);
+    assert_eq!(
+        server.names(&result["dynamic"]),
+        [
+            "tests/test_further.q",
+            "tests/test_helped.q",
+            "tests/test_valued.q"
+        ]
+    );
+    let valued = file_uri(&dir.path().join("tests/test_valued.q"));
+    assert_eq!(
+        server.graph(&valued)["dynamic"],
+        json!([{"line": 1, "kind": "load"}])
+    );
+}

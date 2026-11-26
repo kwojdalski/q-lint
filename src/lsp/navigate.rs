@@ -42,6 +42,7 @@ const NAMESPACE: u8 = 3;
 pub(super) const FUNCTION: u8 = 12;
 pub(super) const VARIABLE: u8 = 13;
 /// LSP's `DocumentHighlightKind`s.
+const TEXT: u8 = 1;
 const READ: u8 = 2;
 const WRITE: u8 = 3;
 /// How many symbols one `workspace/symbol` reply carries. A client filters
@@ -566,7 +567,8 @@ fn references(params: &Value, sources: &Sources) -> Value {
 }
 
 /// `textDocument/documentHighlight`: the same name elsewhere in this
-/// document, marked as read or written.
+/// document, marked as read or written - and, as text, a symbol that may be
+/// the name, which Find References lists too (#2679).
 fn highlights(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return json!([]);
@@ -585,7 +587,8 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let placement = sources.placement(&cursor.key);
             let code = q_lint_rs::code_view(cursor.text);
             let changed = q_lint_rs::changed_by_name(cursor.text);
-            mentions(cursor.text)
+            let all = mentions(cursor.text);
+            let mut found: Vec<(usize, Value)> = all
                 .iter()
                 .filter_map(|m| {
                     let part = sources
@@ -594,9 +597,30 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
                     let write = m.definition.is_some()
                         || q_lint_rs::amended_at(&code, m.at + m.len)
                         || changed.contains(&m.at);
-                    Some(highlight(m.at, part, write))
+                    Some((m.at, highlight(m.at, part, write)))
                 })
-                .collect()
+                .collect();
+            let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+            let leaves: HashSet<&str> = targets
+                .iter()
+                .filter_map(|name| name.rsplit('.').next())
+                .collect();
+            for leaf in leaves {
+                for m in symbol_mentions(cursor.text, leaf) {
+                    if !known.contains(&m.at)
+                        && sources
+                            .names(cursor.text, &m, &placement)
+                            .iter()
+                            .any(|name| targets.contains(name))
+                    {
+                        let text = json!({"range": range(&lines, m.at, m.len), "kind": TEXT});
+                        found.push((m.at, text));
+                    }
+                }
+            }
+            found.sort_by_key(|(at, _)| *at);
+            found.dedup_by_key(|(at, _)| *at);
+            found.into_iter().map(|(_, place)| place).collect()
         }
     }
 }
@@ -1022,9 +1046,13 @@ fn renamable_global(
         return Err("nothing here is a name q-lint can rename".into());
     };
     // q keeps every one-letter namespace for itself: `.z.pg` is a callback,
-    // `.q.f` a word of the language.
+    // `.q.f` a word of the language. `.m` is where KDB-X runs a module, and
+    // what a module file assigns there is the workspace's own (#2666).
     if let Some(name) = sorted.iter().find(|name| {
-        name.len() > 2 && name.starts_with('.') && name.as_bytes().get(2) == Some(&b'.')
+        name.len() > 2
+            && name.starts_with('.')
+            && name.as_bytes().get(2) == Some(&b'.')
+            && !name.starts_with(".m.")
     }) {
         return Err(format!(
             "`{name}` is in `{}`, a namespace q keeps for itself, where a name means what q \
@@ -1108,6 +1136,13 @@ fn rename_global(
         let mut done = HashSet::new();
         let mut edited = vec![];
         let all = mentions(&text);
+        // What a module exports: `use` returns it, and `f` of `([f;g])` is
+        // a key of that as much as a read of `f` (#2666).
+        let exports: Vec<(usize, usize)> = all
+            .iter()
+            .filter(|m| m.name == "export" && targets.iter().any(|t| t.starts_with(".m.")))
+            .filter_map(|m| m.definition.as_ref().map(|d| (d.start, d.end)))
+            .collect();
         for m in &all {
             if done.contains(&m.at) {
                 continue;
@@ -1118,6 +1153,20 @@ fn rename_global(
             let Some(part) = sources.spelt(&text, m, placement, &targets) else {
                 continue;
             };
+            if exports
+                .iter()
+                .any(|&(start, end)| start <= m.at && m.at < end)
+                && text[..m.at].trim_end().ends_with(['[', ';'])
+                && text[m.at + m.len..].trim_start().starts_with([';', ']'])
+            {
+                let (line, _) = lines.position(m.at);
+                return Err(format!(
+                    "`{old}` is a key of what the module exports at {}:{}: a file that takes \
+                     the module with `use` reads it as `m.{old}`, which a rename cannot follow",
+                    Path::new(key).display(),
+                    line + 1
+                ));
+            }
             done.insert(m.at);
             edited.push(m.at);
             let spelling = &text[m.at..m.at + part];

@@ -419,14 +419,18 @@ impl Index {
 
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
-        let key = file_key(path);
-        self.reached.remove(&key);
-        match self.files.remove(&key) {
+        self.forget_keyed(&file_key(path))
+    }
+
+    /// `forget` for the file keyed `key`.
+    fn forget_keyed(&mut self, key: &str) -> bool {
+        self.reached.remove(key);
+        match self.files.remove(key) {
             Some(old) => {
                 if !old.withheld {
                     self.ws.remove(&old.placed);
                 }
-                self.ws.place(Path::new(&key), &Placement::default());
+                self.ws.place(Path::new(key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
                 self.stale = true;
@@ -453,7 +457,28 @@ impl Index {
             .any(|f| f.read.module || f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
         let placements = if contexts {
             let paths: Vec<std::path::PathBuf> = keys.iter().map(Into::into).collect();
-            let reads: Vec<_> = keys.iter().map(|k| &self.files[k].read).collect();
+            // A withheld document loads nothing for the others, as it
+            // defines nothing for them: `qlinter .` never reads it, so its
+            // `\d .a` / `\l lib.q` moves no name of lib.q there (#2825). It
+            // is still put where the files that load it say.
+            let quiet: HashMap<&String, References> = keys
+                .iter()
+                .filter(|k| self.files[*k].withheld)
+                .map(|k| {
+                    let module = self.files[k].read.module;
+                    (
+                        k,
+                        References {
+                            module,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+            let reads: Vec<_> = keys
+                .iter()
+                .map(|k| quiet.get(k).unwrap_or(&self.files[k].read))
+                .collect();
             let cwds = self.cwds();
             guarded(|| q_lint_rs::graph::placements(&paths, &reads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
@@ -511,18 +536,33 @@ impl Index {
     /// the open documents, whose buffers still hold their text. A watcher
     /// reports a deleted folder as one event for the folder, not one per
     /// file inside it (#543).
+    ///
+    /// By the name the event gives it, below the real path of the folder it
+    /// was in, which is the key it was read under. `file_key` of the whole
+    /// path follows whatever answers to it now, and on a disk that ignores
+    /// case lib.q renamed Lib.q still answers to lib.q - as Lib.q, a key
+    /// the index does not hold yet, so the old one was never forgotten and
+    /// the file was listed twice (#2817). Each is forgotten by its key as
+    /// it stands, for the same reason, and a key that is an open document's
+    /// by the disk's answer is that document's still.
     fn remove_tree(&mut self, path: &str, docs: &Documents) -> bool {
-        let gone = std::path::PathBuf::from(file_key(path));
+        let given = Path::new(path);
+        let gone = match (given.parent(), given.file_name()) {
+            (Some(dir), Some(name)) => Path::new(&file_key(&dir.to_string_lossy())).join(name),
+            _ => file_key(path).into(),
+        };
         let open: Vec<String> = docs.keys().map(|uri| file_key(&path_of(uri))).collect();
         let under: Vec<String> = self
             .files
             .keys()
-            .filter(|k| std::path::Path::new(k).starts_with(&gone) && !open.contains(k))
+            .filter(|k| {
+                Path::new(k).starts_with(&gone) && !open.contains(k) && !open.contains(&file_key(k))
+            })
             .cloned()
             .collect();
         let mut changed = false;
         for key in under {
-            changed |= self.forget(&key);
+            changed |= self.forget_keyed(&key);
         }
         changed | self.settle()
     }
@@ -2379,13 +2419,23 @@ fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
 /// `-32603 Internal error`, rather than no reply, which a client cannot tell
 /// from a hung server.
-/// Every read of a global in `text`, as `Indexed::tally` keeps them.
+/// Every read of a global in `text`, as `Indexed::tally` keeps them - and
+/// every symbol, tick and all, since a count takes one that may be a name
+/// for a read of it (#2679).
 fn tally(text: &str) -> Vec<(String, bool)> {
     guarded(|| {
+        let symbols = text.match_indices('`').map(|(tick, _)| {
+            let rest = &text[tick + 1..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+                .unwrap_or(rest.len());
+            (text[tick..tick + 1 + end].to_string(), false)
+        });
         q_lint_rs::mentions(text)
             .into_iter()
             .filter(|m| m.definition.is_none())
             .map(|m| (m.name, m.implicit))
+            .chain(symbols)
             .collect()
     })
     .unwrap_or_default()
