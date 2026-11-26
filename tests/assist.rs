@@ -551,6 +551,29 @@ fn a_name_another_file_defines_completes_with_the_load_it_needs() {
     assert!(item.get("additionalTextEdits").is_none(), "{item}");
 }
 
+/// `system "d .x"`, `q)\d .x` and `k)\d .x` open a context as `\d .x`
+/// does, and a load added inside one defines `.x.helper` (#2670).
+#[test]
+fn a_load_is_never_added_below_a_context_opened_any_other_way() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("util.q"), "helper:{[v] v+1}\n").unwrap();
+    let (mut server, _) = Server::over(dir.path(), &[], client(), auto_load());
+    for (name, open, close) in [
+        ("s.q", "system \"d .x\"", "system \"d .\""),
+        ("q.q", "q)\\d .x", "q)\\d ."),
+        ("k.q", "k)\\d .x", "k)\\d ."),
+    ] {
+        let text = format!("{open}\n\\l other.q\n{close}\nx:help");
+        let uri = server.open(dir.path(), name, &text);
+        let item = completed(&mut server, &uri, 3, 6, "helper");
+        assert_eq!(
+            item["additionalTextEdits"][0]["range"]["start"],
+            json!({"line": 0, "character": 0}),
+            "{open}"
+        );
+    }
+}
+
 #[test]
 fn a_load_is_added_at_the_top_when_there_is_none_and_never_below_a_d() {
     let dir = tempfile::tempdir().unwrap();
