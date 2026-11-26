@@ -1084,7 +1084,7 @@ export class QueryModes {
     const bytes =
       format === "png" && data.startsWith(prefix)
         ? Buffer.from(data.slice(prefix.length), "base64")
-        : format === "svg" && data.startsWith("<svg")
+        : format === "svg" && plainSvg(data)
           ? Buffer.from(data, "utf8")
           : undefined;
     const request = message.key !== undefined ? this.saving.get(message.key) : undefined;
@@ -1652,7 +1652,7 @@ export class QueryModes {
     }
     const folder = Uri.joinPath(to, "..");
     let relative: string | undefined;
-    if (svg !== undefined && svg.startsWith("<svg")) {
+    if (plainSvg(svg)) {
       const base = to.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "") || "report";
       let names: string[] = [];
       try {
