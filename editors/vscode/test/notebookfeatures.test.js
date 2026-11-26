@@ -1248,3 +1248,8 @@ test("a cell naming --process's own label connects as --process does (#2135)", a
   }
   assert.deepStrictEqual(logins, ["bob:not-a-real-secret", "bob:not-a-real-secret"]);
 });
+
+test("a mapped list of one type is named by it, and a keyed table counts rows (#2384, #2385)", () => {
+  assert.strictEqual(describeVariable({ name: "m", type: 84, count: 2 }), "mapped long list · 2 items");
+  assert.strictEqual(describeVariable({ name: "kt", type: 99, count: 3, keyed: true }), "keyed table · 3 rows");
+});
