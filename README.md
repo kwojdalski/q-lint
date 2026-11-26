@@ -504,7 +504,8 @@ The command line wins over the file: `--profile`, then `--select`,
 `--extend-select` and `--ignore` (comma-separated or repeated) applied after
 it, and `--exclude` added to it. `--config FILE` uses one file for everything,
 `--isolated` ignores them all, and `--show-settings PATH` prints which file
-governs a path and the rules it turns on. Exclusions apply before a file is
+governs a path, the `target-version` in force and the rules that report there.
+Exclusions apply before a file is
 read or sent to qls, to the files a directory walk finds: a file named on the
 command line is linted whatever `exclude` says, as in Ruff, unless
 `--force-exclude` is given - which pre-commit hooks and scripts that pass every

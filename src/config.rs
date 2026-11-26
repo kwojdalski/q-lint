@@ -747,10 +747,13 @@ impl Policy {
     /// What `--show-settings` prints: which file governs `path`, and what it
     /// turns on there - only rules that can report under `backend`. A
     /// `python-hook` rule runs in another tool, never in this binary, and
-    /// QLS001 comes only from qls.
+    /// QLS001 comes only from qls. Nor one the `target-version` in force
+    /// keeps from reporting, as `lint` keeps it: a QK rule with no target, or
+    /// QE008 under a 4.x one, listed as on and then finding nothing (#2748).
     pub fn describe(&self, path: &Path, backend: &str) -> Result<String, String> {
         let settings = self.settings(path)?;
         self.conflict(&settings, path)?;
+        let target = self.target(&settings);
         let runs = |scope: &str| match scope {
             "python-hook" => false,
             "qls" => backend != "builtin",
@@ -762,13 +765,14 @@ impl Policy {
             .map(|r| r.code.as_str())
             .filter(|code| {
                 self.selected(&settings, code)
+                    && version_reported_for(code, target)
                     && !per_file_ignored(&settings, code, path)
                     && !self.test_exempt(&settings, code, path)
             })
             .collect();
         codes.sort_unstable();
         Ok(format!(
-            "file: {}\nconfiguration: {}\nprofile: {}\nrules ({}): {}",
+            "file: {}\nconfiguration: {}\nprofile: {}\ntarget-version: {}\nrules ({}): {}",
             absolute(path).display(),
             settings
                 .file
@@ -777,6 +781,7 @@ impl Policy {
                     .display()
                     .to_string()),
             self.profile(&settings),
+            target.map_or("none - the QK rules report nothing", Target::name),
             codes.len(),
             codes.join(" ")
         ))

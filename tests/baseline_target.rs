@@ -413,6 +413,60 @@ fn the_target_version_flag_takes_every_spelling_the_configuration_does() {
     );
 }
 
+/// `--show-settings` lists the rules that report for the target in force,
+/// which it names: the QK rules were listed as on with no target, and QE008,
+/// which only KDB-X refuses, under 4.0, each then finding nothing (#2748).
+#[test]
+fn show_settings_lists_the_rules_the_target_version_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "d:([a:1;b:2])\nx:-y:3\n").unwrap();
+    let shown = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(d)
+            .args(["--isolated", "--show-settings"])
+            .args(args)
+            .arg("a.q")
+            .output()
+            .unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        let line = |key: &str| {
+            let line = text.lines().find(|l| l.starts_with(key));
+            line.unwrap_or_else(|| panic!("{text}")).to_string()
+        };
+        (line("target-version: "), line("rules ("))
+    };
+    for (target, listed, found) in [
+        (None, "rules (1): QE008", vec![("QE008".to_string(), 2)]),
+        (
+            Some("4.0"),
+            "rules (1): QK001",
+            vec![("QK001".to_string(), 1)],
+        ),
+        (
+            Some("kdbx"),
+            "rules (1): QE008",
+            vec![("QE008".to_string(), 2)],
+        ),
+    ] {
+        let args: Vec<&str> = target
+            .iter()
+            .flat_map(|t| ["--target-version", t])
+            .collect();
+        let args = [&args[..], &["--select", "QK001,QE008"]].concat();
+        let (target_line, rules) = shown(&args);
+        assert_eq!(rules, listed, "{target:?}");
+        assert!(
+            target_line.ends_with(target.unwrap_or("none - the QK rules report nothing")),
+            "{target_line}"
+        );
+        assert_eq!(
+            run(d, &[&["--isolated"], &args[..], &["a.q"]].concat()).1,
+            found
+        );
+    }
+}
+
 #[test]
 fn every_qk_rule_listed_is_reported_for_some_target() {
     let dir = tempfile::tempdir().unwrap();
