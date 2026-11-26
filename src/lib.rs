@@ -3268,10 +3268,36 @@ fn refused_atom_condition(raw: &str) -> bool {
             && !re!(r"^-?0[NW]$").is_match(raw)
 }
 
+/// Whether a conditional's test applies something without brackets, which
+/// may answer differently the second time: a name of the file's own given
+/// an argument by juxtaposition - `tog 0`, `h"ready"`, `f -1` - or anything
+/// applied with `@` or a spaced `.` (#2682). A q builtin given an argument,
+/// `null x`, is the same each time, and so is a name before an operator
+/// word, `x in y`. Read from `comments`, where a string is still text.
+fn applies(test: &str) -> bool {
+    if test.contains('@') || re!(r"\s\.\s").is_match(test) {
+        return true;
+    }
+    re!(r#"(?:^|[^`A-Za-z0-9_.])(\.?[A-Za-z][A-Za-z0-9_.]*)([ \t]*)(-?[0-9.]|["`(]|[A-Za-z][A-Za-z0-9_]*)"#)
+        .captures_iter(test)
+        .any(|c| {
+            let (name, gap, next) = (&c[1], &c[2], &c[3]);
+            if is_reserved(name) || (gap.is_empty() && !next.starts_with(['"', '`', '('])) {
+                return false;
+            }
+            !(next.starts_with(|n: char| n.is_ascii_alphabetic()) && is_reserved(next))
+        })
+}
+
 /// A conditional's test as QB025 compares it: `comments`' text, its strings
 /// kept as written and each run of blanks outside them made one space, so
 /// `x>1` and `x>1 ` are one test and `s~"a  b"` and `s~"a b"` are two. A
 /// string is where `code` is blank and `comments` is not, from a quote.
+/// A run of blanks beside an operator glyph or a bracket goes entirely, so
+/// `x>1` and `x > 1` are one test too (#2683) - except before a `-` that
+/// starts a number, where it makes an application: `x -1` is not `x-1`.
+/// `_`, `.`, `'`, `/` and `\` keep theirs, since a blank changes what they
+/// are: `a _ b` is a drop and `a_b` a name.
 fn same_test(comments: &str, code: &str) -> String {
     let (text, mask) = (comments.as_bytes(), code.as_bytes());
     let mut out = Vec::with_capacity(text.len());
@@ -3286,10 +3312,22 @@ fn same_test(comments: &str, code: &str) -> String {
             out.extend_from_slice(&text[i..j]);
             (i, blank) = (j, false);
         } else if text[i].is_ascii_whitespace() {
-            if !blank {
+            let mut j = i;
+            while j < text.len() && text[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            let glyph = |c: u8| b"=<>~!#$%&*+,-:;?@^|()[]{}".contains(&c);
+            let before = out.last().copied();
+            let after = text.get(j).copied();
+            let negative = after == Some(b'-')
+                && text
+                    .get(j + 1)
+                    .is_some_and(|c| c.is_ascii_digit() || *c == b'.');
+            let drop = !negative && (before.is_none_or(glyph) || after.is_none_or(glyph));
+            if !drop && !blank {
                 out.push(b' ');
             }
-            (i, blank) = (i + 1, true);
+            (i, blank) = (j, true);
         } else {
             out.push(text[i]);
             (i, blank) = (i + 1, false);
@@ -6846,12 +6884,19 @@ fn lint_rules(
         // `{[(a;a)] a}` and `{[a;(a;b)] a}`, and one binding overwrites the
         // other (#635).
         let mut seen = std::collections::HashSet::new();
-        let repeated: Vec<&&str> = bound.iter().filter(|p| !seen.insert(**p)).collect();
+        let repeated: Vec<String> = bound
+            .iter()
+            .filter(|p| !seen.insert(**p))
+            .map(|p| format!("`{p}`"))
+            .collect();
         if !repeated.is_empty() {
             add(
                 at,
                 "QF008",
-                format!("Parameter {repeated:?} is declared more than once"),
+                format!(
+                    "Parameter {} is declared more than once",
+                    repeated.join(", ")
+                ),
             );
         }
         // `{[] ...}` is the one empty slot that means what it looks like.
@@ -7105,6 +7150,7 @@ fn lint_rules(
                 // time: `$[0b;1;0b;2]` is QA007's, and placeholder.
                 if !re!(r"(?:^|[^`A-Za-z0-9_.])[A-Za-z]").is_match(test)
                     || test.contains([':', '[', '{', '?', '\''])
+                    || applies(&v.comments[at..end])
                     || re!(r"\.z\.|\b(?:rand|value|get|read0|read1|system|hopen|hclose|eval|reval|getenv|neg)\b")
                         .is_match(test)
                 {
@@ -7487,7 +7533,27 @@ fn lint_rules(
     // `"abc" like `a*` is `like["abc"]*[`a]`, a projection, returned
     // silently where a boolean was wanted - except in a where phrase, which
     // wants booleans and raises 'type on it.
-    for m in re!(concat!(r"\blike", blank!(), r"*`[A-Za-z0-9_.:]*")).find_iter(code) {
+    // So is a symbol in parentheses, after `enlist`, or under an iterator:
+    // q 5 `` s like (`a) ``, `` s like enlist `a `` and `` s like' `a`b `` are
+    // each 'type (#2699).
+    for m in re!(concat!(
+        r"\blike(?:'|\\:|/:)?",
+        blank!(),
+        r"*(?:\(",
+        blank!(),
+        r"*(?:`[A-Za-z0-9_.:]*)+",
+        blank!(),
+        r"*\)|(?:enlist",
+        blank!(),
+        r"+)?(?:`[A-Za-z0-9_.:]*)+)"
+    ))
+    .find_iter(code)
+    {
+        // Symbols that key a dictionary of patterns are no pattern:
+        // `` x like/: `a`b!("a*";"b*") `` matches each string.
+        if code[m.end()..].trim_start().starts_with('!') {
+            continue;
+        }
         // A backtick before it makes this the symbol `` `like ``, an element of
         // a list rather than the operator - `` `abs`cor`like`mins `` is data.
         if !boundary(code, m.start()) {
@@ -8263,8 +8329,10 @@ fn lint_rules(
     // A literal atom is applied the same way: q 5 `"a" -1`, `1b -1`,
     // `0x01 -1` and `(1) -1` are each 'type, while `"ab" -1`, `10b -1` and
     // `(1 2) -1` index (#500). Read where strings are kept, with the atom's
-    // quote a real opening one and the minus code.
-    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b)[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)"#)
+    // quote a real opening one and the minus code. Before a lambda's `}` as
+    // well, and a byte in parentheses: q 5 `{[] 1b -1}[]` and `(0x01) -1`
+    // are 'type (#2697).
+    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b|0x[0-9a-fA-F]{1,2})[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"#)
         .captures_iter(&v.comments)
     {
         let atom = m.get(1).unwrap();
@@ -8446,27 +8514,55 @@ fn lint_rules(
     }
     // Keywords from other languages are plain names to q, and undefined ones:
     // `return 1` throws 'return. `null` is absent from this list because it
-    // is a q function. A file that declares one of these as a parameter or
-    // assigns it anywhere has made it a name, and its uses are left alone.
-    let mut declared: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for (brace, _) in code.match_indices('{') {
-        declared.extend(signature(code, source, brace).slots);
-    }
-    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*:").captures_iter(code) {
-        declared.insert(m.get(1).unwrap().as_str());
-    }
-    // And a multiple assignment's names: q 5 `(true;false):10b` then
-    // `show true` prints 1b (#371).
-    declared.extend(
-        semantics::multi_assignments(code)
-            .chain(semantics::global_multi_assignments(code))
-            .map(|(_, n)| n),
-    );
-    // A column: named as a symbol somewhere (`` `sym`return!... ``), or read
-    // inside a query, where a bare name is the column before any global.
-    for m in re!(r"`([A-Za-z][A-Za-z0-9_]*)").captures_iter(code) {
-        declared.insert(m.get(1).unwrap().as_str());
-    }
+    // is a q function. A name the file defines as a global, or the lambda
+    // around the use binds - a parameter, a local, either in a multiple
+    // assignment (q 5 `(true;false):10b` then `show true` prints 1b, #371) -
+    // is left alone. Only there: a select's `return:a` names a column, a
+    // symbol `` `true `` is data, and another lambda's local `else:` binds
+    // nothing here, so none of them defines the name (#2703, #2704).
+    let own_globals = std::cell::OnceCell::new();
+    let multi = std::cell::OnceCell::new();
+    let declared = |at: usize, name: &str| -> bool {
+        if own_globals
+            .get_or_init(|| semantics::index(code, source).defined)
+            .contains(&qualified(at, name))
+        {
+            return true;
+        }
+        let brace = enclosing_brace(code, at);
+        let (multi, global_multi): &(Vec<(usize, &str)>, Vec<&str>) = multi.get_or_init(|| {
+            (
+                semantics::multi_assignments(code).collect(),
+                semantics::global_multi_assignments(code)
+                    .map(|(_, n)| n)
+                    .collect(),
+            )
+        });
+        if global_multi.contains(&name)
+            || multi
+                .iter()
+                .any(|&(a, n)| n == name && enclosing_brace(code, a) == brace)
+        {
+            return true;
+        }
+        let Some(brace) = brace else {
+            return false;
+        };
+        let sig = signature(code, source, brace);
+        if sig.slots.iter().any(|p| pattern_names(p).contains(&name)) {
+            return true;
+        }
+        let end = matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        regex::Regex::new(&format!(r"\b{name}\s*:"))
+            .unwrap()
+            .find_iter(&code[brace..end])
+            .any(|m| {
+                let a = brace + m.start();
+                boundary(code, a)
+                    && enclosing_brace(code, a) == Some(brace)
+                    && !in_qsql_phrase(code, a)
+            })
+    };
     // Another file of the workspace may define it too: with lib.q's
     // `true:1b` loaded, q 5 runs `{[a] $[a;true;false]}` (#372). Under
     // `\d .ns` the name is `.ns.true`, which a root `true` does not define
@@ -8489,8 +8585,11 @@ fn lint_rules(
         if opaque
             || !boundary(code, whole.start())
             || after.starts_with('.')
-            || declared.contains(name)
+            // Written, not read: an assignment, or a table literal's column,
+            // `([] return:())`.
+            || after.starts_with(':')
             || in_query
+            || declared(whole.start(), name)
             || elsewhere(&qualified(whole.start(), name))
             || elsewhere(&format!(".q.{name}"))
         {
@@ -8569,6 +8668,8 @@ fn lint_rules(
         blank!(),
         r"*(?:=|<>)",
         blank!(),
+        r"*\(?",
+        blank!(),
         r"*type\b"
     ))
     .find_iter(code)
@@ -8577,6 +8678,31 @@ fn lint_rules(
         // `` type[1]=`a`b?`a `` compares a short with a long.
         // So does a parenthesised one: q 5 `(type 1)=`long` is 'type.
         if !m.as_str().starts_with('`') && !operand_ends(code, &v.comments, m.end()) {
+            continue;
+        }
+        add(
+            m.start(),
+            "QB013",
+            "`type` returns a short (7h, 11h, ...); comparing it to a symbol is a 'type error"
+                .into(),
+        );
+    }
+    // The symbol may be cast from a string on the right: q 5
+    // `` (type 1)=`$"long" `` is 'type too (#2698). Read where strings are
+    // kept, with `type` code at the same offset.
+    for m in re!(concat!(
+        r#"(?:\btype\s*\[[^\]]*\]|\(\s*type\b[^()]*\))"#,
+        blank!(),
+        r#"*(?:=|<>)"#,
+        blank!(),
+        r#"*`\$[ \t]*"(?:[^"\\]|\\.)*""#
+    ))
+    .find_iter(&v.comments)
+    {
+        if !boundary(code, m.start())
+            || !code[m.start()..].starts_with(['t', '('])
+            || !operand_ends(code, &v.comments, m.end())
+        {
             continue;
         }
         add(
@@ -9955,22 +10081,36 @@ fn lint_rules(
             );
         }
         // `delete` takes columns or a where phrase, never both; q says 'nyi.
-        // The table is a name or a parenthesised expression - a `select`
-        // after `from` would take the `where` for itself, and so is neither.
+        // The table is any expression up to a `where` at its own depth -
+        // `delete a from t lj kt where b=1` is 'nyi too (#2700) - but a
+        // query keyword after `from` would take the `where` for itself.
         for m in re!(r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+").find_iter(query)
         {
             if m.start() >= line.len() {
                 break;
             }
             let rest = &query[m.end()..];
-            let after = if rest.starts_with('(') {
-                matching(query, m.end(), b'(', b')').map(|close| &query[close..])
-            } else {
-                re!(r"^`?[A-Za-z_][\w.]*")
-                    .find(rest)
-                    .map(|t| &rest[t.end()..])
-            };
-            if after.is_some_and(|a| re!(r"^\s+where\b").is_match(a)) {
+            let b = rest.as_bytes();
+            let (mut depth, mut i, mut filtered) = (0i32, 0, false);
+            while i < b.len() {
+                match b[i] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    _ if depth == 0 && boundary(rest, i) => {
+                        if let Some(w) =
+                            re!(r"^(?:where|select|exec|update|delete)\b").find(&rest[i..])
+                        {
+                            filtered = w.as_str() == "where";
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if filtered {
                 add(
                     offset + m.start(),
                     "QB016",
@@ -10362,17 +10502,35 @@ fn lint_rules(
                 // and indexing it at `phrase`'s offsets panicked.
                 let groups = grouped(&query[w.end()..read_to]);
                 let mut reported = vec![];
-                for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                // The literal on the left as well, starting its constraint:
+                // q 5 `select from t where 1 2=a` is 'length on three rows
+                // as `a=1 2` is (#2702). Read in `groups`, where a comma in
+                // brackets is not the one that starts a constraint.
+                let left: Vec<(usize, &str, bool)> = re!(r"(?:^|,)\s*(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)[ \t]*(=|<>)")
+                    .captures_iter(&groups)
+                    .filter(|_| qsql)
+                    .map(|c| {
+                        let lit = c.get(1).unwrap();
+                        (lit.start(), &phrase[lit.range()], &c[2] == "<>")
+                    })
+                    .collect();
+                let right = re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
                     // The `where` function is no filter: `where b=1 2 3` is
                     // the indices of a boolean vector, and q 5 runs it (#343).
                     .filter(|_| qsql)
-                {
-                    let rest = groups[m.end()..].trim_start();
-                    if !(rest.is_empty() || rest.starts_with([',', ';'])) {
-                        continue;
-                    }
-                    let at = match phrase[..m.start()].rfind(',') {
+                    .filter(|m| {
+                        let rest = groups[m.end()..].trim_start();
+                        rest.is_empty() || rest.starts_with([',', ';'])
+                    })
+                    .map(|m| {
+                        let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
+                        (m.start(), literal, m.as_str().starts_with("<>"))
+                    });
+                let mut found: Vec<(usize, &str, bool)> = right.chain(left).collect();
+                found.sort_by_key(|f| f.0);
+                for (start, literal, unequal) in found {
+                    let at = match phrase[..start].rfind(',') {
                         None => offset + w.start(),
                         Some(c) => {
                             let clause = &phrase[c + 1..];
@@ -10385,13 +10543,12 @@ fn lint_rules(
                     reported.push(at);
                     // Row by row, so q 5 runs it when the table has as many
                     // rows as the vector has items (#499).
-                    let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
                     let n = if literal.starts_with('`') {
                         literal.matches('`').count()
                     } else {
                         literal.split_whitespace().count()
                     };
-                    let (op, meant) = if m.as_str().starts_with("<>") {
+                    let (op, meant) = if unequal {
                         ("<>", "`not` with `in` tests")
                     } else {
                         ("=", "`in` tests")
@@ -10623,7 +10780,9 @@ fn lint_rules(
                             && line.as_bytes().get(quote) != Some(&b'"')
                             && let Some(lit) =
                                 re!(r#"^"((?:[^"\\]|\\.)*)""#).captures(&literals[quote..])
-                            && re!(r"\\.|[^\\]").find_iter(&lit[1]).count() > 1
+                            // Counted in bytes, as q holds a string: `"é"`
+                            // is two items, joined apart (#2696).
+                            && q_bytes(&lit[1]).len() > 1
                             && (!paren
                                 || literals[quote + lit.get(0).unwrap().len()..]
                                     .trim_start()

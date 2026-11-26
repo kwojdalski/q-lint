@@ -285,6 +285,24 @@ fn parameter_rules_for_lists_q_does_accept() {
     }
 }
 
+/// QF008 names each repeated parameter as the other rules name a name, not
+/// as a Rust list (#2694).
+#[test]
+fn a_repeated_parameter_is_named_in_backticks() {
+    let found = lint("f:{[a;b;a;b] a+b}", "t.q", Profile::Style);
+    let f = found.iter().find(|f| f.code == "QF008").unwrap();
+    assert_eq!(f.detail, "Parameter `a`, `b` is declared more than once");
+}
+
+/// QF016 says nothing of a slot q refuses with '_, which QF002 reports: the
+/// name inside it is not a parameter (#2695).
+#[test]
+fn an_underscore_slot_is_no_unread_parameter() {
+    let found = lint("f:{[ _a;b] b}", "t.q", Profile::Style);
+    assert!(found.iter().any(|f| f.code == "QF002"), "{found:?}");
+    assert!(!found.iter().any(|f| f.code == "QF016"), "{found:?}");
+}
+
 /// Windows checks files out with CRLF by default, so a rule that is blind to
 /// `\r` reports one thing on the maintainer's machine and another on a user's.
 /// The showcase is the widest q this repository has, which makes it the best

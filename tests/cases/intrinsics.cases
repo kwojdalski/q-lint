@@ -784,16 +784,32 @@ g:x within 10:00 09:30
 h:select from t where px within 100 10f
 i:x within 2024.03 2024.01m
 
+=== QB026 | reversed bounds as a string, a symbol pair or infinities (q 5: "m" within "za", `m within `z`a and 5 within 0w -0w are each 0b, #2680)
+a:x within "za"
+b:x within `z`a
+c:x within 0w -0w
+d:x within 0W 1
+e:x within `b `a
+
+=== QB026 | reversed bounds in a general list or a projection (q 5: 5 within (10;1) and within[;10 1] 5 are 0b, #2681)
+a:x within (10;1)
+b:x within ("z";"a")
+p:within[;10 1]
+
 === clean | bounds in order, equal, of other widths, null or not literals (#1167)
 a:x within 1 10
 b:x within 5 5
 c:x within lo hi
 d:x within 10 1+y
 e:x within 10:00 09:30:00
-f:x within 0W 1
-g:x within `b`a
-h:x within (10;1)
+f:x within -0W 1
+g:x within `a`b
+h:x within (1;10)
 i:x within 2024.01.01 2024.01.10
+j:x within "az"
+k:x within 0w 0W
+l:x within 0n 1
+m:within[;1 10]
 
 === QT010 profile: general | a builtin needs no blank before a backtick (q 5: 'type, #2241)
 r:sum`a`b

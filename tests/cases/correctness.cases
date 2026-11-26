@@ -239,11 +239,33 @@ r:x like "a*"
 r:"abc" like
   `abc
 
+=== QB007 | a symbol pattern in parentheses, after enlist, or under an iterator (q 5: each is 'type, #2699)
+s:`a`b
+a:s like (`a)
+b:s like enlist `a
+c:s like' `a`b
+d:s like/: `a`b
+
+=== clean | string patterns in those forms (#2699)
+s:("ab";"cd")
+a:s like ("a*")
+b:s like' ("a*";"c*")
+c:first where "ab" like/: `x`y!("a*";"b*")
+
 === QB008 | equality against a vector literal
 select from t where px=1 2
 
 === QB008 | a symbol vector likewise
 select from t where sym=`a`b
+
+=== QB008 | a vector literal on the left of the comparison (q 5: where 1 2=a and where `x`y=s are 'length on three rows, #2702)
+r:select from t where 1 2=a
+s:select from t where `x`y=s
+u:select from t where a>0, 1 2<>a
+
+=== clean | a vector literal indexed or applied on the left is no comparison of it (#2702)
+r:select from t where 1 2 3[b]=a
+s:select from t where f[a,1 2]=b
 
 === QB008 | and one ending a clause before the next
 r:select from t where a=1 2, b>0
@@ -470,6 +492,12 @@ a:(type x) in 7 6h
 === QB013 | symbol on the left
 if[`long=type x;1]
 
+=== QB013 profile: general | type parenthesised on the right, or a symbol cast from a string (q 5: `long=(type 1) and (type 1)=`$"long" are 'type, #2698)
+x:1
+a:`long=(type x)
+b:(type x)=`$"long"
+c:type[x]=`$"long"
+
 === clean profile: general | a name that starts with type is not the keyword (q 5: f`count is 1, typeX=`a is 1b)
 f:{[typeTerminal] $[typeTerminal=`count;1;0]}
 typeX:`a
@@ -598,6 +626,13 @@ delete a from t where b>3
 
 === QB016 | the table may be a literal
 delete a from ([]a:1 2;b:3 4) where b>3
+
+=== QB016 | or any expression before the where (q 5: delete a from t lj kt where b=1 and delete a from t,t where b=1 are 'nyi, #2700)
+delete a from t lj kt where b=1
+delete a from t,t where b=1
+
+=== clean | a query after from takes the where for itself (q 5 runs it, #2700)
+delete a from select from t where b=1
 
 === QB016 QB015 profile: general | a query continued onto the next line inside a lambda (q 5: f t is 'nyi, g t is 'length)
 t:([]a:1 2;b:3 4;s:`x`y)
@@ -835,6 +870,9 @@ s:"/" sv string a,("ab";"cd")
 
 === QB003 | after another joined name too
 p:"/" sv string a,b,"xy"
+
+=== QB003 | one character of more than one byte is more than one item (q 5: "/" sv string `a`b,"é" is "a/b/\303/\251", #2696)
+p:"/" sv string a,"é"
 
 === clean | parenthesised, the string joins the result of sv
 m:"claimed by ",(", " sv string clash)," - two workers share it"
@@ -1100,6 +1138,16 @@ u:update a by b,b from t
 t:([]a:1 2;b:3 4)
 r:update a:1,a:2 from t
 
+=== QB019 | and in an exec's list, the keys of its dictionary (q 5: key exec a,a from t and key exec max a,min a from t are `a`a1, #2701)
+t:([]a:1 2;b:3 4)
+r:exec a,a from t
+s:exec max a,min a from t
+
+=== clean | an exec of distinct names (#2701)
+t:([]a:1 2;b:3 4)
+r:exec a,b from t
+s:exec a by a from t
+
 === clean | distinct names
 t:([]a:1 2;b:3 4)
 r:select a,b from t
@@ -1156,11 +1204,18 @@ r2:1b -1
 r3:0x01 -1
 r4:(1) -1
 
+=== QB010 profile: general | a literal atom before a negative literal that ends a lambda, and a byte in parentheses (q 5: each is 'type, #2697)
+f:{[] 1b -1}
+g:{[] "a" -1}
+r:(0x01) -1
+
 === clean profile: general | a literal list before one indexes it (q 5: " ", 0b, 0N) (#500)
 r1:"ab" -1
 r2:10b -1
 r3:(1 2) -1
 r5:s:"x \"a\" -1"
+f:{[] "ab" -1}
+r6:(0x0102) -1
 
 === QB022 | an update or delete on a table value, its result discarded (q 5: t unchanged; #1139)
 t:([]a:1 2;b:3 4)
@@ -1180,6 +1235,26 @@ m:{update a:1 from s; 1}
 n:{update a:1 from v; 1}
 p:{r:$[1b;update a:1 from t;t]; r}
 
+=== QB022 | an update or delete in an if, do or while body, whose value nothing takes (q 5: {[] if[1b; update a:0 from t]; t}[] is t unchanged, #2686)
+t:([]a:1 2 3)
+f:{[] if[1b; update a:0 from t]; t}
+g:{[] do[1; delete from t where a=1]; t}
+h:{[] while[0b; update a:0 from t]}
+k:{[] if[1b; if[1b; delete a from t]; 1]; t}
+
+=== QB022 | a script statement ended by a semicolon (q 5: update a:0 from t; leaves t unchanged, #2687)
+t:([]a:1 2 3)
+update a:0 from t;
+delete from t where a=1;
+
+=== clean | the condition of a control statement, a script statement that is shown or assigned, or by symbol (#2686, #2687)
+t:([]a:1 2 3)
+f:{[] if[count delete from t where a=1; :1]; 0}
+r:update a:0 from t;
+update a:0 from `t;
+update a:0 from t
+g:{[n] if[1b; update a:0 from n]; 1}
+
 === QB024 | a lambda given to peach writes a global (q 5 -s 2: 'noupdate; #1144)
 r1:{g::1;x} peach 1 2
 r2:{`g set 1;x} peach 1 2
@@ -1189,6 +1264,32 @@ r3:{.ns.g::1;x} peach 1 2
 r1:{.ns.a:x} peach 1 2
 r2:{.ns.b : x;x} peach 1 2
 
+=== QB024 | a global assigned through an operator (q 5 -s 2: {.ns.v+:x;x} peach 1 2 and {g,:x;x} peach 1 2 are 'noupdate, #2688)
+r1:{.ns.v+:x;x} peach 1 2
+r2:{.ns.v,:x;x} peach 1 2
+r3:{g,:x;x} peach 1 2
+
+=== QB024 | a global written by name: upsert, insert, an amend, set in brackets (q 5 -s 2: each is 'noupdate, #2689)
+r1:{`t upsert ([]a:enlist x);x} peach 1 2
+r2:{`t insert enlist x;x} peach 1 2
+r3:{@[`g;();:;x];x} peach 1 2
+r4:{.[`g;();:;x];x} peach 1 2
+r5:{set[`g;x];x} peach 1 2
+r6:{upsert[`t;([]a:enlist x)];x} peach 1 2
+
+=== QB024 | peach in brackets, each-parallel, and a lambda projected before peach (q 5 -s 2: each is 'noupdate, #2690)
+r1:peach[{g::x;x};1 2]
+r2:{g::x;x}':[1 2]
+r3:{[a;b] g::a+b; b}[1] peach 1 2
+
+=== clean | a local written through an operator, a 2-slot @ index, a file symbol, and each-prior (#2688, #2689, #2690)
+r1:{b:0;b+:x;b} peach 1 2
+r2:{x+@[`g;0]} peach 1 2
+r3:{`:f upsert x;x} peach 1 2
+r4:{[a;b] g::a+b; b}':[1 2]
+r5:{@[x;0;:;1]} peach (1 2;3 4)
+r6:{x+:1;x} peach 1 2
+
 === clean | a peach lambda that writes only its locals, a file, or a nested lambda's global (#1144)
 r1:{a:1;a+x} peach 1 2
 r2:{`:f set x;x} peach 1 2
@@ -1196,11 +1297,24 @@ r3:{h:{g::1}; count h; x} peach 1 2
 r4:{g::1;x} each 1 2
 
 === QB023 | () matched with a side that is always typed (q 5: ()~0#0, ()~`symbol$() and ()~"" are 0b; #1141)
-a:{()~where x}
+a:{()~til x}
 b:{(til x)~()}
 c:{r:0#0; r,:x; r~()}
 d:{s:`$(); s,:x; ()~s}
 e:{v:getenv x; v~()}
+f:{()~til[x]}
+g:{()~til count x}
+h:{v:til[x]; v~()}
+
+=== clean | where of a dictionary is its keys, which can be () (q 5: ()~where ()!() is 1b, #2684)
+a:{()~where x}
+b:{v:where x; v~()}
+
+=== clean | a typed builtin that is only the first word of its side (q 5: ()~til[0]#() and ()~til each () are 1b, #2685)
+a:{[x;y] ()~til[x]#y}
+b:{()~til each x}
+c:{(til[x]#y)~()}
+d:{v:til[x]#y; v~()}
 
 === clean | () matched with key, a parameter, an untyped local, (::) or ()!() (#1141)
 a:{()~key x}
@@ -1222,6 +1336,22 @@ a:{$[x>1;`a;x>1;`b;`c]}
 b:{$[x>1;`a;x<0;`b;x>1;`c;`d]}
 c:{$[x ~ "a  b";1;x ~ "a  b";2;3]}
 d:{$[null x;0;null  x;1;2]}
+
+=== QB025 | a repeated test that differs only by blanks around an operator (q 5: $[x>1;`a;x > 1;`b;`c] is never `b, #2683)
+a:{$[x>1;`a;x > 1;`b;`c]}
+b:{$[x in y;`a;x in  y;`b;`c]}
+c:{$[(x>1)&y;`a;( x > 1 ) & y;`b;`c]}
+
+=== clean | blanks that change the test keep it apart: an application of a negative number, a drop (#2683)
+a:{$[x-1;`a;x -1;`b;`c]}
+b:{$[x_y;`a;x _ y;`b;`c]}
+
+=== clean | a test that applies a name by juxtaposition, @ or . may answer differently the second time (q 5: with tog:{s::not s;s}, $[tog 0;`a;tog 0;`b;`c] is `b, #2682)
+a:{$[tog 0;`a;tog 0;`b;`c]}
+b:{$[2>nxt@0;`a;2>nxt@0;`b;`c]}
+c:{$[h"ready";`a;h"ready";`b;`c]}
+d:{$[f . 1 2;`a;f . 1 2;`b;`c]}
+e:{$[f -1;`a;f -1;`b;`c]}
 
 === clean | different tests, a test that could change between evaluations, or the else (#1166)
 a:{$[x>1;`a;x>2;`b;`c]}

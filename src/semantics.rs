@@ -1421,7 +1421,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     // take it: with b.q's `update c:0 from `t` loaded, a.q's
     // `f:{select c from t}` runs (q 5, #756), and after `` `a xkey `k ``
     // there, `x lj k` joins (#757).
-    for m in re!(IN_PLACE).captures_iter(code) {
+    for m in in_place(code) {
         let at = m.get(0).unwrap().start();
         let ns = &namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -2802,32 +2802,63 @@ pub fn check(
     // `{.ns.g::1;x} peach 1 2`, and runs `{b:0;b::1;b+x} peach 1 2`. Only a
     // lambda written out as peach's left operand, and only its own body: a
     // nested lambda may never be called. A file symbol, `` `:f set t ``,
-    // writes no global.
+    // writes no global. peach's left operand may be projected first,
+    // `{[a;b] g::b; b}[1] peach 1 2`; the lambda may be peach's first slot,
+    // `peach[{g::x;x};1 2]`; and a unary lambda under `':` is each-parallel,
+    // the same threads: q 5 with `-s 2` refuses all three (#2690).
     for scope in &scopes {
+        if code.as_bytes().get(scope.end) != Some(&b'}') {
+            continue;
+        }
         let after = code.get(scope.end + 1..).unwrap_or("");
-        let next = after.trim_start_matches([' ', '\t']);
-        if code.as_bytes().get(scope.end) != Some(&b'}')
-            || !re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+        let mut next = after.trim_start_matches([' ', '\t']);
+        if next.starts_with('[')
+            && let Some(close) = crate::matching(next, 0, b'[', b']')
         {
+            next = next[close..].trim_start_matches([' ', '\t']);
+        }
+        let unary = if scope.named {
+            scope.params.len() == 1
+        } else {
+            !re!(r"(?:^|[^A-Za-z0-9_.`])[yz](?:[^A-Za-z0-9_]|$)").is_match(&scope.direct)
+        };
+        let parallel = re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+            || (unary && after.starts_with("':"))
+            || re!(r"(?:^|[^A-Za-z0-9_.])peach[ \t]*\[[ \t]*$").is_match(&code[..scope.start]);
+        if !parallel {
             continue;
         }
         let view = local_view(&scope.direct, false);
         // A dotted name is global with one colon too: q 5 with `-s 2`
-        // refuses `{.ns.a:x} peach 1 2` alike (#1204).
-        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(::?)")
+        // refuses `{.ns.a:x} peach 1 2` alike (#1204). So is an assignment
+        // through an operator, `.ns.v+:x` and `g,:x` (#2688).
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*([-+*%&|,^#_!~=<>]?)(::?)")
             .captures_iter(&view)
             .find(|m| {
                 let whole = m.get(0).unwrap();
-                (&m[2] == "::" || m[1].starts_with('.'))
+                (&m[3] == "::" || m[1].starts_with('.') || !m[2].is_empty())
                     && boundary(&view, whole.start())
                     && assigns_value(&view[whole.end()..])
                     && !scope.locals.contains(&m[1])
+                    && !scope.params.contains(&m[1])
             })
             .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
-        let set = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+set(?:[^A-Za-z0-9_.]|$)")
-            .captures_iter(&scope.direct)
-            .find(|m| crate::boundary(&scope.direct, m.get(0).unwrap().start()))
-            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        // A global named by a symbol: `` `g set ``, `set[`g;..]`, `` `t upsert ``,
+        // `` `t insert ``, their bracket forms, and an amend of it,
+        // `@[`g;i;f;..]` or `.[`g;i;f;..]` - q 5 with `-s 2` refuses each
+        // (#2689).
+        let set = re!(
+            r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(?:set|upsert|insert)(?:[^A-Za-z0-9_.]|$)|\b(?:set|upsert|insert)[ \t]*\[[ \t]*`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;|[@.]\[[ \t]*`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;[^;\]]*;"
+        )
+        .captures_iter(&scope.direct)
+        .find(|m| {
+            let at = m.get(0).unwrap().start();
+            crate::boundary(&scope.direct, at) || scope.direct[at..].starts_with('@')
+        })
+        .map(|m| {
+            let name = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+            (m.get(0).unwrap().start(), name.as_str().to_string())
+        });
         let first = match (assigned, set) {
             (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
             (a, b) => a.or(b),
@@ -2889,6 +2920,13 @@ pub fn check(
         // an adapter. Those are not drift and there is nothing to remove. A
         // lambda that reads some but not others is the one that changed.
         let named: Vec<&String> = scope.params.iter().filter(|p| !p.is_empty()).collect();
+        // A slot starting with `_` is refused where the lambda is defined,
+        // which QF002 says; it binds no parameter to leave unread, and the
+        // name inside it is not one (#2695).
+        let signature = &code[scope.start..scope.body];
+        if re!(r"[\[;(][ \t]*_").is_match(signature) {
+            continue;
+        }
         let used = named
             .iter()
             .filter(|p| mentioned.contains(p.as_str()))
@@ -2906,8 +2944,7 @@ pub fn check(
             if !mentioned.contains(param.as_str()) {
                 // On the parameter itself, spanning exactly its name, so an
                 // editor can fade the name rather than the whole signature.
-                let signature = &code[scope.start..scope.body];
-                let at = re!(r"[A-Za-z][A-Za-z0-9_]*")
+                let at = re!(r"[A-Za-z_][A-Za-z0-9_]*")
                     .find_iter(signature)
                     .find(|m| m.as_str() == param.as_str())
                     .map_or(scope.start, |m| scope.start + m.start());
@@ -3062,6 +3099,20 @@ pub fn check(
             p = scopes[i].parent;
         }
     }
+    // Each lambda's multiple assignments, `(a;b):1 2`, by the lambda they
+    // bind locals of: the names they bind and the span of their target, to
+    // be read as assignments and not as reads (#2705). One in the signature,
+    // `{[(a;b):`j] a+b}`, binds parameters and stands before the body.
+    let mut patterns: Vec<Vec<(usize, usize, Vec<&str>)>> = vec![vec![]; scopes.len()];
+    for (at, close, double) in pattern_targets(code) {
+        if let Some(si) = scope_at(&scopes, at).filter(|&si| !double && at >= scopes[si].body) {
+            let names = crate::pattern_names(&code[at..=close])
+                .into_iter()
+                .filter(|n| !n.contains('.'))
+                .collect();
+            patterns[si].push((at, close, names));
+        }
+    }
     for (si, scope) in scopes.iter().enumerate() {
         let direct = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
@@ -3087,12 +3138,31 @@ pub fn check(
                     .or_insert(whole.start());
             }
         }
+        // A name a pattern binds, where the pattern names it.
+        let bound_at = |at: usize, name: &str| {
+            patterns[si]
+                .iter()
+                .any(|(a, c, names)| (*a..=*c).contains(&at) && names.contains(&name))
+        };
+        for (a, c, names) in &patterns[si] {
+            for name in names {
+                if let Some(m) = re!(r"[A-Za-z][A-Za-z0-9_]*")
+                    .find_iter(&code[*a..=*c])
+                    .find(|m| m.as_str() == *name && boundary(code, a + m.start()))
+                {
+                    assigned.entry(name).or_insert(a + m.start() - scope.body);
+                }
+            }
+        }
         if assigned.is_empty() {
             continue;
         }
         let mut read: HashSet<&str> = parse_tree_names(&scope.direct);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
-            if !boundary(&direct, m.start()) || direct[m.end()..].starts_with('.') {
+            if !boundary(&direct, m.start())
+                || direct[m.end()..].starts_with('.')
+                || bound_at(scope.body + m.start(), m.as_str())
+            {
                 continue;
             }
             // A name followed by `:` is being written, not read. `::` is a
@@ -3908,6 +3978,46 @@ const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9
 /// a dictionary, and `` 0!`k `` takes keys away (#588).
 const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|(?m:^|[;:(\[{])[ \t]*[1-9]\d*\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
 
+/// Each match of `IN_PLACE` that changes its table: `` from `t `` only in an
+/// update or a delete, since `` select from `t `` and `` exec a from `t ``
+/// read it and change nothing (#2693).
+fn in_place(code: &str) -> impl Iterator<Item = regex::Captures<'_>> {
+    re!(IN_PLACE).captures_iter(code).filter(move |m| {
+        let at = m.get(0).unwrap().start();
+        !code[at..].starts_with("from") || {
+            // The template's keyword: the nearest one before `from` at its
+            // own bracket depth, in the same statement.
+            let b = code.as_bytes();
+            let mut depth = 0i32;
+            let mut i = at;
+            let mut keyword = None;
+            while i > 0 {
+                i -= 1;
+                match b[i] {
+                    b')' | b']' | b'}' => depth += 1,
+                    b'(' | b'[' | b'{' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    b'\n' if depth == 0 && !b.get(i + 1).is_some_and(u8::is_ascii_whitespace) => {
+                        break;
+                    }
+                    _ => {}
+                }
+                if depth < 0 {
+                    break;
+                }
+                if depth == 0
+                    && boundary(code, i)
+                    && let Some(k) = re!(r"^(?:select|exec|update|delete)\b").find(&code[i..])
+                {
+                    keyword = Some(k.as_str());
+                    break;
+                }
+            }
+            !matches!(keyword, Some("select" | "exec"))
+        }
+    })
+}
+
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
 /// expression - is unknown, and the rules below say nothing about it.
@@ -4210,6 +4320,14 @@ fn named_values(
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
+        // A plain `name:` inside a lambda binds a local, and leaves the
+        // global of that name as it was: `f:{[n] t:n; t}` does not make the
+        // file's `t` unknown (#2692).
+        if scope_at(scopes, whole.start()).is_some()
+            && re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:$").is_match(whole.as_str())
+        {
+            continue;
+        }
         // A namespace indexed by literal symbols writes just those members:
         // `.cfg[`a]:v` is `.cfg.a`, and leaves `.cfg.b` alone.
         let name = key(m.get(1).unwrap().as_str(), whole.start());
@@ -4273,7 +4391,7 @@ fn named_values(
     // after `` `a xkey `k `` joins), and its neighbours (#353), in the
     // bracket form too, and `` 1!`k `` (q 5: `xkey[`a;`k]` and `` 1!`k ``
     // return `` `k `` and key it) (#466).
-    for m in re!(IN_PLACE).captures_iter(code) {
+    for m in in_place(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -4410,10 +4528,13 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
-    // The first phrase, in `qsql_phrases`' order, around each offset: asking
-    // the list for every name read was quadratic in a file of queries
-    // (#709). Each phrase claims the offsets no earlier one has, skipping
-    // claimed runs through `next`.
+    // The innermost phrase around each offset: asking the list for every
+    // name read was quadratic in a file of queries (#709). Each phrase
+    // claims the offsets no later-starting one has, skipping claimed runs
+    // through `next` - so a nested query's where phrase owns its reads, and
+    // `q=sym` in `where sym in exec q from t2 where q=sym` is judged against
+    // `t2` (#2691). Of two phrases starting at one offset, the nested
+    // query's own, later in the list, wins.
     let owner: Vec<u32> = {
         let n = code.len();
         let mut owner = vec![u32::MAX; n];
@@ -4425,7 +4546,10 @@ fn named_values(
             }
             i
         }
-        for (index, &(a, b, _)) in phrases.iter().enumerate() {
+        let mut order: Vec<usize> = (0..phrases.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse((phrases[i].0, i)));
+        for index in order {
+            let (a, b, _) = phrases[index];
             let b = b.min(n);
             let mut i = find(&mut next, a.min(n));
             while i < b {
@@ -5358,6 +5482,13 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
                 && let Some((end, later)) = read.get(&i)
             {
                 for &w in later {
+                    // The phrase before it ends where it starts, rather than
+                    // at the end of the file.
+                    if let Some(last) = own.last_mut()
+                        && last.1 == usize::MAX
+                    {
+                        last.1 = w;
+                    }
                     wheres.push(w);
                     let table = own.last().and_then(|p| p.2);
                     own.push((w, usize::MAX, table));

@@ -1496,7 +1496,7 @@ c:{s:`a; (s;(m;k))::(1;(2;3)); s+m}
 
 === clean | a pattern item's type is a check, not an assignment of the symbol (#2331; q 5: f1 (1;2) is 3, h (1.5;2) is 3f, k is 6, m (5;2) is 3)
 f1:{(i;j:`j):x; i+j}
-h:{(a:`f;b):x; a*2}
+h:{(a:`f;b):x; a*b}
 k:{([kk:v:`j]):x; v+1}
 m:{(a:`j;b:`j):x; a-b}
 n:{ [a:`j] r:a; r+1}

@@ -406,10 +406,10 @@ f:{[x] r:cfg; cfg:1; r}
 f:{r:a
   +a:5; r}
 
-=== clean | a filtered destructuring binds every name it lists, and not its filter (#668; q 5: f 1 2 is 3, and k 1 2 is 1)
-f:{[p] (a:neg;b):p; b:b+1; b}
-g:{[p] (a:`s;b):p; b:b+1; b}
-h:{[p] (a:{x*2};b):p; b:b+1; b}
+=== clean | a filtered destructuring binds every name it lists, and not its filter (#668; q 5: f 1 2 is -1 3, and k 1 2 is 1)
+f:{[p] (a:neg;b):p; b:b+1; (a;b)}
+g:{[p] (a:`s;b):p; b:b+1; (a;b)}
+h:{[p] (a:{x*2};b):p; b:b+1; (a;b)}
 k:{[(a:neg;b)] a+b}
 
 === clean | a dictionary pattern's field matches its key against a pattern, whose filter is no name (#2329; q 5: p is -5, f is 3, g is 2, h is -5)
@@ -508,6 +508,26 @@ f:{[x] return x}
 === clean | a symbol is not a name
 s:`return
 
+=== QF015 | nor does a symbol spelling the keyword define it (q 5: after flags:`true`false!10b, f 1b is 'true, #2703)
+flags:`true`false!10b
+f:{[a] $[a;true;false]}
+
+=== QF015 | nor a select's alias, nor another lambda's local (q 5: g 1 is 'return and k 1 is 'else, #2704)
+t:([]a:1 2)
+r:select return:a from t
+g:{[a] return a}
+h:{[x] else:x+1; else}
+k:{[x] x+else}
+
+=== clean | a table literal's column spelling the keyword is written, not read (#2704)
+detail:([name:`u#`symbol$()] public:`boolean$(); return:())
+
+=== clean | but a symbol set as a global, and the lambda's own local or pattern, do (#2703, #2704)
+`true set 1b
+f:{[a] $[a;true;0b]}
+g:{[x] else:x+1; else}
+h:{[(return;b)] return+b}
+
 === clean | within one statement q evaluates right to left, so this assigns first
 f:{[x] x#a where (a:x mod 7) in 2 3}
 
@@ -544,7 +564,7 @@ f:{[] aa:e; aa}
 g:{[] aa:vv; aa}
 
 === QF005 | the names a multiple assignment binds are locals, which a nested lambda cannot see
-f:{[x] (a;b):x; g:{[v] v+a}; g 1}
+f:{[x] (a;b):x; g:{[v] v+a}; g b}
 
 === clean profile: general | a column an update sets is not a local (q 5, c:10: f ([]a:1 2) is 11, the global)
 f:{[t] t:update c:1 from t; {c+1}[]}
@@ -586,6 +606,17 @@ f:{[a] `a`b}
 
 === QF017 | a local assigned and never read
 f:{[a] b:1; a}
+
+=== QF017 | a name a multiple assignment binds and nothing reads (q 5: {[] (a;b):1 2; b}[] is 2, a unread, #2705)
+g:{[] (a;b):1 2; b}
+
+=== QF017 | nested in the pattern too (#2705)
+g:{[] (a;(b;c)):(1;2 3); a+b}
+
+=== clean | every name a multiple assignment binds is read, or the target is global (#2705)
+g:{[] (a;b):1 2; a+b}
+h:{[] (n;m)::1 2; 0}
+k:{[x] (a:neg;b):x; a+b}
 
 === QF017 | a tree given to eval resolves its symbols as globals, so the local is unread (q 5: f 1 is 'n, or 101 after n:100) (#370)
 f:{[a] n:5; eval (+;`n;a)}
@@ -905,7 +936,7 @@ f:{[a] .z.s:a; .z.s}
 g:{[a] .z.s::a; 1}
 h:{[a] {[b] .z.s:b; .z.s}[a]}
 k:{.z.s:3; .z.s}
-n:{[a] (.z.s;b):(a;2); .z.s}
+n:{[a] (.z.s;b):(a;2); .z.s+b}
 
 === QF019 | but not at the top level, by name, as an amend of the lambda, nor any other letter in a lambda (#2096; q 5: .z.s:1 and `.z.s set a are 'domain, .z.s+:a 'type, .z.t:a 'domain)
 .z.s:1
@@ -1429,7 +1460,7 @@ max,:"a"
 f:{[a] a::5; a}
 g:{b:1; b::2; b}
 h:{x::3; x}
-k:{(b;c):1 2; b::5; b}
+k:{(b;c):1 2; b::5; b+c}
 
 === QF022 | so does a `::` multiple assignment of a parameter or local, which sets the globals only of the other names (q 5: f 0 is 1 with no global a and n 2; g[] is 1 with no global s, m 2 and k 3; #2119)
 f:{[a] (a;n)::(1;2); a}
@@ -1465,6 +1496,30 @@ e:{select from ([]x:1 2) where x>1}
 g:{[px] select from ([]px:px) where px>1}
 h:{lim:10; exec px from t where px<lim}
 k:{[sym] select from (select from t) where sym=sym}
+
+=== clean | a parameter read in a nested query over a table without that column (q 5: f`a gives the a row and f`b the b row, #2691)
+t:([]sym:`a`b;px:1 2)
+t2:([]q:`a`b)
+f:{[sym] select from t where sym in exec q from t2 where q=sym}
+g:{[sym] r:select from t where sym in exec q from t2 where q=sym; r}
+
+=== QF020 QF023 QB001 | another lambda's local of the table's name leaves the global table known (q 5: h[] is 'nope, #2692)
+t:([]sym:`a`b;px:1 2)
+f:{[n] t:n; t}
+h:{[] select nope from t}
+g:{[sym] select from t where sym=sym}
+
+=== QF020 QF023 QB001 | a select or exec over the table by symbol changes nothing (q 5: h[] is 'nope after select from `t, #2693)
+t:([]sym:`a`b;px:1 2)
+r:select from `t
+s:exec px from `t
+h:{[] select nope from t}
+g:{[sym] select from t where sym=sym}
+
+=== clean | but an update or delete by symbol may add a column (#756, #2693)
+t:([]sym:`a`b;px:1 2)
+update nope:1 from `t
+h:{[] select nope from t}
 
 === QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
 a:count:1
