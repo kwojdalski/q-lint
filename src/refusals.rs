@@ -299,9 +299,12 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
     let whole_token = |m: &regex::Captures| {
         let head = &unsym[..m.get(0).unwrap().start()];
         let word = head.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || "._".contains(c));
-        !(head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
-            || head[word.len()..]
-                .starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c)))
+        // A `_` that is a drop, not part of a name, starts the token after
+        // it: `x _12:60` is '12:60 (#2843).
+        (head.ends_with('_') && boundary(unsym, head.len()))
+            || !(head.ends_with(|c: char| c.is_ascii_digit() || c == '.')
+                || head[word.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphabetic() || "._".contains(c)))
     };
     for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})(?::(\d{2}))?"), unsym, whole_token) {
         let whole = m.get(0).unwrap();
@@ -333,6 +336,43 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
                 ),
             ));
         }
+    }
+    // A point after the minutes may stand for the seconds' colon: q 5 reads
+    // `12:30.25` as 12:30:25, so one digit there (`12:00.5`) or seconds past
+    // 59 (`12:00.60`) are refused, as they are under a `v`. Three digits or
+    // more read otherwise, and a `t`, `u` or `c` after the vector reads them
+    // as a fraction or not at all: q 5 takes `12:00.123`, `12:00.5t` and
+    // `12:00.60u` (#2842).
+    for m in crate::captures_where(re!(r"(\d{2,}):(\d{2})\.(\d+)"), unsym, whole_token) {
+        let whole = m.get(0).unwrap();
+        let seconds = &m[3];
+        if command_argument(source, whole.start())
+            || unsym[..whole.start()].ends_with(['D', 'T'])
+            // The seconds and fraction of `10:00:00.1234`.
+            || unsym[..whole.start()]
+                .strip_suffix(':')
+                .is_some_and(|h| h.ends_with(|c: char| c.is_ascii_digit()))
+            || unsym[whole.end()..].starts_with(['.', ':'])
+            || m[2].parse::<u32>().unwrap() > 59
+            || !matches!(
+                vector_suffix(comments, unsym, whole.end()),
+                None | Some('v' | 'z' | 'N')
+            )
+            || !(seconds.len() == 1 || (seconds.len() == 2 && seconds.parse::<u32>().unwrap() > 59))
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QE006",
+            format!(
+                "`{}` is no time: the field after the point is its seconds, which take two \
+                 digits and stop at 59, and q refuses the literal",
+                whole.as_str()
+            ),
+        ));
     }
     // A time's hour of three digits or more leaves room for three digits of
     // fraction: q 5 refuses `100:00:00.1234`, and takes `10:00:00.1234`,
@@ -463,7 +503,9 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
         let whole = m.get(0).unwrap();
         let before = &unsym[..whole.start()];
         let line = before.rfind('\n').map_or(0, |p| p + 1);
-        if unsym[line..].starts_with('\\') {
+        // A system command's argument is no q, but a `\t` or `\ts`
+        // expression is: q 5 refuses `\t a:12:5` as it loads (#2844).
+        if command_argument(source, whole.start()) {
             continue;
         }
         let rest = &unsym[whole.end()..];
@@ -515,11 +557,16 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             // operand of `h 1:30` may be either.
             let left = comments[..whole.start()].trim_end();
             // One digit from 3 to 9 is no verb on any left: q 5 refuses
-            // `x 3:00` with '3: (#2234).
+            // `x 3:00` with '3: (#2234). Nor after a drop or a minus between
+            // operands: q 5 refuses `t _0:30`, `t-1:30` and `1-0:30`, and
+            // takes `-1:30` and `t -1:30`, a negative literal (#2845).
             if whole.start() == line
                 || left.is_empty()
                 || matches!(&m[3], "3" | "4" | "5" | "6" | "7" | "8" | "9")
-                || left.ends_with(|c: char| ":([;{,+*%&|=<>~#$^!?@".contains(c))
+                || left.ends_with(|c: char| ":([;{,+*%&|=<>~#$^!?@_".contains(c))
+                || left.strip_suffix('-').is_some_and(|l| {
+                    l.ends_with(|c: char| c.is_ascii_alphanumeric() || ")]}\"`".contains(c))
+                })
             {
                 refuse(
                     whole.start(),
@@ -548,15 +595,14 @@ fn temporals(path: &str, source: &str, comments: &str, unsym: &str, out: &mut Ve
             ),
         ));
     }
-    for m in re!(r"\b(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)").captures_iter(unsym) {
+    // The year has to start the token: `1.2024.02.30` is not a date. A
+    // drop starts one, where its `_` is no name's: q 5 refuses `1_2024.02.30`
+    // and `x _2024.02.30`, and reads `x_2024.02.30` as a name (#2843).
+    for m in crate::captures_where(re!(r"(\d{4})\.(\d{2})(?:\.(\d{2})|m\b)"), unsym, |m| {
+        boundary(unsym, m.get(0).unwrap().start())
+    }) {
         let whole = m.get(0).unwrap();
         if command_argument(source, whole.start()) {
-            continue;
-        }
-        // The year has to start the token: `1.2024.02.30` is not a date.
-        if !unsym[..whole.start()].ends_with(|c: char| !c.is_ascii_alphanumeric() && c != '.')
-            && whole.start() != 0
-        {
             continue;
         }
         let (year, month): (u32, u32) = (m[1].parse().unwrap(), m[2].parse().unwrap());

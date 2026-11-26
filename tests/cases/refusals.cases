@@ -2427,3 +2427,43 @@ k:2001 0Nm
 l:2000.01.01d 0Nd
 m:0D 12:00:00.12345
 n:2000.01.01T12:00 0D12
+
+=== QE006 profile: general | the seconds after a point in hh:mm.ss take two digits and stop at 59 (#2842; q 5: '12:00.5, '12:00.60, '12:00.99)
+a:12:00.5
+b:12:00.60
+c:12:00.99 12:00
+d:12:00.60v
+
+=== clean profile: general | while two digits of seconds, three or more of fraction, and a t, u or c after them parse (#2842; q 5 parses each)
+a:12:30.25
+b:12:00.123
+c:12:00.5t
+d:12:00.60u
+e:12:00.60c
+
+=== QE006 profile: general | an impossible date, month or time straight after a drop's _ (#2843; q 5: '2024.02.30, '12:60, '2024.13)
+a:1_2024.02.30
+b:x _2024.02.30
+c:x _12:60
+d:x _2024.13m
+
+=== clean profile: general | while a _ inside a name joins the digits to it (#2843; q 5 parses each)
+a:x_2024.02.30
+b:x _2024.02.28
+
+=== QE006 profile: general | a one-digit field in the expression a \t or \ts times (#2844; q 5: '12:5, '12:00:5 and '0D1:30 as the file loads)
+\t a:12:5
+\ts a:12:00:5
+\t:10 a:0D1:30
+
+=== QE006 profile: general | a one-digit hour after a minus between operands or a drop (#2845; q 5: '1:, '0:)
+a:t-1:30
+b:t-0:30
+c:1-1:30
+d:(t)-1:30:00
+e:t _0:30
+
+=== clean profile: general | while a minus that starts a literal makes it negative (#2845; q 5 parses each)
+a:-1:30
+b:t -1:30
+c:t_1:30
