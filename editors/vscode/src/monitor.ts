@@ -9,8 +9,9 @@
 // so in its row rather than failing the call. Nothing is kept on the
 // process. A handle's queue is a count of bytes in kdb+ 4 and a list of
 // message sizes before it, so it is summed. A string (`\cd`) or a name is
-// sent as it is, and every other value as `FULL_TEXT` writes it: `-3!` cuts
-// it at the console width (#1908). The process's command line
+// sent as it is - `\cd`, a TorQ timer's description (#2358) - and every
+// other value as `FULL_TEXT` writes it: `-3!` cuts it at the console width
+// (#1908). The process's command line
 // (`.z.x`) is not read: it can hold a password.
 //
 // TorQ keeps its timers in `.timer.timer`; when that table is there, its
@@ -33,7 +34,7 @@ export const MONITOR = [
   "  `handle`queued`self!(\"f\"$key h;\"f\"${$[0h>type x;x;sum x]}each value h;(key h)=.z.w);",
   "  s\"t\";",
   "  @[{x .z.ts};F;\"\"];",
-  "  $[count tm;{x each y}[F]each tc#tm;()];",
+  "  $[count tm;{[F;r]{[F;v]$[10h=abs type v;(),v;-11h=type v;string v;F v]}[F]each r}[F]each tc#tm;()];",
   "  `key`value!(`p`t`T`g`W`P`c`C`e`s`o`z`S`d`cd;s each(\"p\";\"t\";\"T\";\"g\";\"W\";\"P\";\"c\";\"C\";\"e\";\"s\";\"o\";\"z\";\"S\";\"d\";\"cd\"));",
   "  `key`value!(`version`release`pid`host`os`script`now;(F .z.K;F .z.k;F .z.i;string .z.h;string .z.o;string .z.f;F .z.P)))}",
 ].join("\n");
