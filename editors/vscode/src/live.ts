@@ -59,6 +59,7 @@ import {
   relabelsAfter,
   resaved,
   sshDestination,
+  sshProblem,
   serverTypes,
   givenServerTypes,
   tlsChoices,
@@ -958,7 +959,8 @@ export class Live {
     if (extras.length > 0) {
       const all = "Share All";
       const without = "Share Without Them";
-      const { init, initFile, credentialCommand, launch } = chosen;
+      // As it would be written: what is inside the folder, from it (#3106).
+      const { init, initFile, credentialCommand, launch } = sharedEntry(chosen, true, folder.uri.fsPath);
       const answer = await window.showWarningMessage(
         plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
         { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch }, null, 2) },
@@ -1955,8 +1957,37 @@ export class Live {
   }
 
   private async exportList(): Promise<void> {
+    let processes = this.processes();
+    // What runs at connect can hold a secret - a password in a connect
+    // script, a token in a launch's environment - and the file, by default
+    // in the workspace folder, is one to commit or to send: under a title
+    // that said passwords are not exported, all of it was written with
+    // nothing said. Asked first, as Add to Shared asks (#1528, #3096).
+    const brought = onConnectBrought([], processes)
+      .map(({ label, what }) => ({ label, what: what.filter((w) => w !== "SSH tunnel") }))
+      .filter(({ what }) => what.length > 0);
+    let without = false;
+    if (brought.length > 0) {
+      const all = "Export All";
+      const none = "Export Without Them";
+      const answer = await window.showWarningMessage(
+        plainMessage(
+          `${brought.length} q process(es) have a connect script, credential command or launch definition, which an export writes as they are: a password or a token in one is then in the file. Export them too?`,
+        ),
+        { modal: true, detail: brought.map(({ label, what }) => `${label}: ${what.join(", ")}`).join("\n") },
+        all,
+        none,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      without = answer === none;
+      if (without) {
+        processes = processes.map((p) => sharedEntry(p, false));
+      }
+    }
     const file = await window.showSaveDialog({
-      title: "Export q processes (passwords are not exported)",
+      title: "Export q processes (stored passwords are not exported)",
       filters: { "Process list": ["json"] },
       defaultUri: workspace.workspaceFolders?.[0]
         ? Uri.joinPath(workspace.workspaceFolders[0].uri, "q-processes.json")
@@ -1965,7 +1996,6 @@ export class Live {
     if (file === undefined) {
       return;
     }
-    const processes = this.processes();
     const text = JSON.stringify({ processes }, null, 2) + "\n";
     try {
       await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
@@ -1973,7 +2003,9 @@ export class Live {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
-    void window.showInformationMessage(plainMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`));
+    void window.showInformationMessage(
+      plainMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}${without ? ", without their connect scripts, credential commands and launch definitions" : ""}.`),
+    );
   }
 
   private insertLabel(): void {
@@ -2558,11 +2590,15 @@ export class Live {
       const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);
     }
+    // A shared process's command is its list's folder's: run in the first
+    // folder, the `./creds.sh` of a second folder's list was not found, or
+    // was the first folder's own, its output sent as the password (#3101).
+    const own = process.server === SHARED_SOURCE ? sharedFolders().find((f) => f.uri.toString() === this.sharedFolders.get(process.label))?.uri.fsPath : undefined;
     // Stopped with the connect it is for: by Disconnect, or a connect elsewhere (#2127).
     const output = await runCredentialCommand(process.credentialCommand, {
       signal,
       // A folder on disk: a virtual one's fsPath is no directory (#2514).
-      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
+      cwd: credentialCwd(workspace.isTrusted !== false, own ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);
@@ -2589,7 +2625,7 @@ export class Live {
         title: `SSH tunnel of ${process.label}`,
         value: process.ssh ?? "",
         prompt: `The jump host q-lint runs \`ssh -N -L\` through to reach ${address(process.host, process.port)}, as you would type it: bastion, me@bastion or me@bastion:2222. ssh uses your agent and ~/.ssh/config, and never asks for a password. Empty: connect directly.`,
-        validateInput: (v) => (v.trim() === "" || sshDestination(v) !== undefined ? undefined : "A destination ssh takes: no spaces or quotes, and not starting with -."),
+        validateInput: (v) => (v.trim() === "" ? undefined : sshProblem(v)),
         ignoreFocusOut: true,
       });
       if (given === undefined) {

@@ -8,7 +8,7 @@ const assert = require("node:assert");
 const pkg = require("../package.json");
 const { Live } = require("../out/live.js");
 const { ADMIN_COMMANDS, adminOff, readAdmin } = require("../out/admin.js");
-const { colonParts, csvFields, parseBulk, rowStatus, rowsHtml, toAdd } = require("../out/bulkadd.js");
+const { colonParts, columnsNotRead, csvFields, parseBulk, rowStatus, rowsHtml, toAdd } = require("../out/bulkadd.js");
 const { BulkAdd, bulkAddHtml } = require("../out/bulkaddview.js");
 const vm = require("node:vm");
 
@@ -27,6 +27,36 @@ test("host:port[:label[:tags]] lines, an IPv6 host in brackets", () => {
     ],
   );
   assert.deepStrictEqual(rows.map((r) => r.line), [1, 5, 6]);
+});
+
+test("a q handle is read in q's order, its password never; a four-field line says how it was read (#3098)", () => {
+  assert.deepStrictEqual(colonParts("`:prodhost:5010:bob:hunter2"), { host: "prodhost", port: "5010", user: "bob", password: true });
+  assert.deepStrictEqual(colonParts(":prodhost:5010:bob"), { host: "prodhost", port: "5010", user: "bob" });
+  assert.deepStrictEqual(colonParts("`::5010"), { host: "localhost", port: "5010" });
+  assert.deepStrictEqual(colonParts("`:[::1]:5010::pw:with:colons"), { host: "[::1]", port: "5010", password: true });
+  assert.strictEqual(colonParts(""), undefined);
+  const rows = parseBulk("`:prodhost:5010:bob:hunter2\n:h2:5011:alice\n`::5012\n`:h:99999:bob:hunter3\nprodhost:5013:bob:hunter2\nh:5014:rdb", []);
+  assert.deepStrictEqual(rows.map((r) => r.process), [
+    { label: "prodhost:5010", host: "prodhost", port: 5010, user: "bob", tags: [] },
+    { label: "h2:5011", host: "h2", port: 5011, user: "alice", tags: [] },
+    { label: "localhost:5012", host: "localhost", port: 5012, tags: [] },
+    undefined,
+    { label: "bob", host: "prodhost", port: 5013, tags: ["hunter2"] },
+    { label: "rdb", host: "h", port: 5014, tags: [] },
+  ]);
+  assert.deepStrictEqual(rows.map(rowStatus), [
+    "added; its password was not read: it is asked for on connect",
+    "added",
+    "added",
+    "A port is between 1 and 65535.",
+    // The same line without its `: is a label and a tag, and says so.
+    "added; labelled bob, tagged hunter2",
+    "added",
+  ]);
+  // A handle's password is in no row, nor in the table, even of a line refused.
+  assert.deepStrictEqual([rows[0].text, rows[3].text], ["`:prodhost:5010:bob:***", "`:h:99999:bob:***"]);
+  assert.ok(!JSON.stringify(rows).includes("hunter3") && !rowsHtml(rows).includes("hunter3"));
+  assert.ok(!JSON.stringify(rows[0]).includes("hunter2"));
 });
 
 test("bad lines say why; duplicates of saved or earlier labels are skipped; a shared address is noted", () => {
@@ -55,6 +85,50 @@ test("CSV with a header row: columns in any order, quoted fields, tags, user and
     { label: "h:5001", host: "h", port: 5001, tags: [] },
   ]);
   assert.ok(!JSON.stringify(rows).includes("secret"));
+});
+
+test("a tls cell is yes or no in a word known to be one, and any other is a row not added (#3099)", () => {
+  const cells = ["on", "TRUE", "t", "tls", "enabled", "yes", " Y ", "1", "0", "No", "off", "", "false", "disabled", "maybe", "2", "tls1.3"];
+  const rows = parseBulk(`label,host,port,tls\n${cells.map((c, i) => `p${i},h,${5000 + i},${c}`).join("\n")}`, []);
+  assert.deepStrictEqual(
+    rows.map((r) => (r.process === undefined ? r.problem : r.process.tls === true)),
+    [
+      ...[true, true, true, true, true, true, true, true],
+      ...[false, false, false, false, false, false],
+      'tls is "maybe", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+      'tls is "2", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+      'tls is "tls1.3", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+    ],
+  );
+  assert.strictEqual(toAdd(rows).length, 14);
+  // No tls column, and a line that is not CSV: no TLS, as before.
+  assert.deepStrictEqual(parseBulk("host,port\nh,1\n", [])[0].process, { label: "h:1", host: "h", port: 1, tags: [] });
+});
+
+test("a name, username or User Name column is the label or the user, and a column not read is named (#3113)", async (t) => {
+  const first = (text) => parseBulk(text, [])[0].process;
+  assert.deepStrictEqual(first("name,host,port,username,password\nrdb,h1,5010,bob,pw"), { label: "rdb", host: "h1", port: 5010, user: "bob", tags: [] });
+  assert.deepStrictEqual(first("Host , Port, Label, Tags, User Name, Password\nh1,5010,rdb,prod,bob,pw"), { label: "rdb", host: "h1", port: 5010, user: "bob", tags: ["prod"] });
+  assert.deepStrictEqual(first("host,port,user_name\nh1,5010,bob"), { label: "h1:5010", host: "h1", port: 5010, user: "bob", tags: [] });
+  // Its own name before another: a `name` beside a `label` is not read.
+  assert.deepStrictEqual(first("name,label,host,port,user,username\nn,l,h1,5010,u,un"), { label: "l", host: "h1", port: 5010, user: "u", tags: [] });
+  assert.deepStrictEqual(columnsNotRead("name,label,host,port,user,username\nn,l,h1,5010,u,un"), ["name", "username"]);
+  // Named as the header writes them; a password column is not read on purpose.
+  const csv = "# servers\nHost,Port,Region,Desk <b>,Password,,name\nh1,5010,emea,fx,pw,,rdb";
+  assert.deepStrictEqual(columnsNotRead(csv), ["Region", "Desk <b>"]);
+  assert.deepStrictEqual([columnsNotRead("host,port,label,tags,user,tls\nh,1"), columnsNotRead("h:1:rdb"), columnsNotRead("")], [[], [], []]);
+  const html = rowsHtml(parseBulk(csv, []), columnsNotRead(csv));
+  assert.match(html, /<p class="unread">Columns not read: Region, Desk &#60;b&#62;\.<\/p>$/);
+  assert.ok(!rowsHtml(parseBulk("h:1", [])).includes("not read"));
+  // The form's table and the message after an Add say so too.
+  const { live, bulk } = await setUp(t);
+  const posted = [];
+  bulk.panel = { webview: { postMessage: async (m) => posted.push(m) }, dispose() { bulk.panel = undefined; } };
+  await bulk.handle({ type: "check", text: "host,port,region\nh9,5019,emea" });
+  assert.match(posted[0].html, /Column not read: region\./);
+  await bulk.handle({ type: "add", text: "name,host,port,region\nnine,h9,5019,emea" });
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: added 1 q process(es); column not read: region."]);
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["rdb", "nine"]);
 });
 
 test("the table escapes what was pasted, and the page runs only its own script", () => {

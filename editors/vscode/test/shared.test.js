@@ -15,7 +15,7 @@ const pkg = require("../package.json");
 const { SHARED_COMMANDS, SHARED_FILE, mergeShared, readShared, readSharedFile, withShared } = require("../out/shared.js");
 const { children, serverLabelProblem } = require("../out/discovery.js");
 const { Live } = require("../out/live.js");
-const { sharedPasswordKey } = require("../out/processes.js");
+const { parseProcesses, readProcessFile, sharedPasswordKey } = require("../out/processes.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -58,11 +58,69 @@ test("what runs something is read only in a trusted workspace", () => {
   assert.throws(() => readSharedFile("{", true), SyntaxError);
 });
 
+test("an ssh value that is no destination skips the entry, trusted or not, instead of listing it without its tunnel (#3095)", () => {
+  for (const ssh of ["me@bastion -p 2222", ["bastion"], 22, { host: "bastion" }]) {
+    const text = JSON.stringify([{ label: "rdb", host: "10.0.0.5", port: 5010, user: "bob", ssh }, { label: "hdb", host: "h", port: 2, ssh: "" }]);
+    const said = `Entry 1 (rdb): ssh is ${JSON.stringify(ssh)}, not a destination ssh takes, so it was skipped rather than connected to without its tunnel.`;
+    assert.deepStrictEqual(readProcessFile(text), { processes: [{ label: "hdb", host: "h", port: 2, tags: [] }], problems: [said] }, JSON.stringify(ssh));
+    for (const trusted of [true, false]) {
+      const read = readSharedFile(text, trusted);
+      assert.deepStrictEqual(read.processes, [{ label: "hdb", host: "h", port: 2, tags: [] }], JSON.stringify(ssh));
+      assert.strictEqual(read.problems[0], said);
+    }
+  }
+  // In the list saved here text that is no destination stays, for ssh to
+  // refuse: skipped, the next save wrote the list without the process.
+  assert.deepStrictEqual(parseProcesses([{ label: "rdb", host: "h", port: 1, ssh: " me@bastion -p 2222 " }], true, true), {
+    processes: [{ label: "rdb", host: "h", port: 1, tags: [], ssh: "me@bastion -p 2222" }],
+    problems: [],
+  });
+});
+
+test("untrusted, the entry kept of a label decides whether it is tunnelled, not a repeat of it that is skipped (#3108)", () => {
+  const a = { label: "a", host: "h1", port: 1 };
+  const b = { label: "b", host: "h3", port: 3 };
+  const text = JSON.stringify([a, { label: "a", host: "h2", port: 2, ssh: "bastion" }, b]);
+  for (const trusted of [true, false]) {
+    const read = readSharedFile(text, trusted);
+    assert.deepStrictEqual(read.processes, [{ ...a, tags: [] }, { ...b, tags: [] }], String(trusted));
+    assert.strictEqual(read.problems[0], "Entry 2 (a) repeats a label, and was skipped.");
+    assert.ok(!read.problems.some((p) => p.includes("reached through an SSH tunnel")), JSON.stringify(read.problems));
+  }
+  // The tunnelled one first: that is the one kept, and it is not listed.
+  const first = readSharedFile(JSON.stringify([{ label: "a", host: "h2", port: 2, ssh: "bastion" }, a, b]), false);
+  assert.deepStrictEqual(first.processes, [{ ...b, tags: [] }]);
+  assert.ok(first.problems.includes("a: reached through an SSH tunnel, which is not read while the workspace is not trusted, so not listed."));
+});
+
 test("a process is written into the list in place of its label, with no password", () => {
   const one = withShared(undefined, { label: "rdb", host: "h", port: 1, user: "me", tags: [] });
   assert.deepStrictEqual(JSON.parse(one), { processes: [{ label: "rdb", host: "h", port: 1, user: "me", tags: [] }] });
   const two = withShared('{"note":"kept","processes":[{"label":"rdb","host":"old"},{"label":"x","host":"y","port":2}]}', { label: "rdb", host: "h", port: 1, tags: [] });
   assert.deepStrictEqual(JSON.parse(two), { note: "kept", processes: [{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "x", host: "y", port: 2 }] });
+});
+
+test("sharing a process again keeps what was written into its entry by hand (#3107)", () => {
+  const file = JSON.stringify({
+    team: "fx",
+    processes: [
+      { label: "rdb", host: "old", port: 1, user: "was", comment: "kept by hand", tls: true, owner: "desk", timeout: 9, password: "hunter2", notes: { on: ["call"] } },
+      { label: "hdb", host: "h", port: 3, owner: "desk" },
+    ],
+  });
+  const text = withShared(file, { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1" });
+  assert.deepStrictEqual(JSON.parse(text), {
+    team: "fx",
+    processes: [
+      // The process's own fields are the process's: no user, tls or timeout it has not.
+      { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1", comment: "kept by hand", owner: "desk", notes: { on: ["call"] } },
+      { label: "hdb", host: "h", port: 3, owner: "desk" },
+    ],
+  });
+  assert.deepStrictEqual(Object.keys(JSON.parse(text).processes[0]), ["label", "host", "port", "tags", "init", "comment", "owner", "notes"]);
+  assert.ok(!text.includes("hunter2"));
+  // Read back, it is the process shared.
+  assert.deepStrictEqual(readSharedFile(text, true).processes[0], { label: "rdb", host: "new", port: 2, tags: ["prod"], init: "x:1" });
 });
 
 test("a file whose processes is not a list is not written over, and a file with no list keeps its other fields (#1886)", () => {
@@ -445,6 +503,30 @@ test("several folders' lists are one: a label two of them name is qualified in e
   const holds = { name: "A", path: "/a", read: list([{ label: "rdb", host: "h", port: 1, tags: [] }, { label: "rdb (B)", host: "h", port: 3, tags: [] }]) };
   assert.deepStrictEqual(ports([holds, b]), { "rdb (A)": 1, "rdb (B)": 3, "rdb (B 2)": 2 });
   assert.deepStrictEqual(ports([b, holds]), { "rdb (B)": 2, "rdb (A)": 1, "rdb (B) (A)": 3 });
+});
+
+test("a shared process's credential command runs in the folder whose list names it (#3101)", { skip: process.platform === "win32" }, async (t) => {
+  const q = await someQ(t);
+  const dirs = ["a", "b"].map((n) => fs.mkdtempSync(path.join(os.tmpdir(), `qlint-shared-${n}-`)));
+  t.after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+  // Each folder has a creds.sh of its own, which says where it ran.
+  dirs.forEach((dir, i) => {
+    write(dir, { processes: [{ label: ["rdb", "hdb"][i], host: "127.0.0.1", port: q.port, tags: [], credentialCommand: "./creds.sh" }] });
+    fs.writeFileSync(path.join(dir, "creds.sh"), `#!/bin/sh\npwd -P > '${path.join(dir, "ran")}'\necho 'svc:${["first", "second"][i]}'\n`, { mode: 0o755 });
+  });
+  const ran = () => dirs.map((dir) => (fs.existsSync(path.join(dir, "ran")) ? fs.readFileSync(path.join(dir, "ran"), "utf8").trim() : undefined));
+  const saved = [{ label: "mine", host: "127.0.0.1", port: q.port, tags: [], credentialCommand: "./creds.sh" }];
+  const { live } = await setUp(t, dirs[0], { more: [dirs[1]], saved });
+  await sleep(50);
+  assert.strictEqual(await live.connectTo(".qlint/hdb"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [undefined, fs.realpathSync(dirs[1])]);
+  fs.rmSync(path.join(dirs[1], "ran"));
+  assert.strictEqual(await live.connectTo(".qlint/rdb"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [fs.realpathSync(dirs[0]), undefined]);
+  fs.rmSync(path.join(dirs[0], "ran"));
+  // A saved process is no folder's: the first one on disk, as before.
+  assert.strictEqual(await live.connectTo("mine"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [fs.realpathSync(dirs[0]), undefined]);
 });
 
 test("in a multi-root workspace every folder's shared list is read and watched, and Add asks which (#1841)", async (t) => {

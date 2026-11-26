@@ -15,7 +15,7 @@ const tls = require("node:tls");
 const { spawn, spawnSync } = require("node:child_process");
 const pkg = require("../package.json");
 const { SshTunnel, TUNNEL_COMMANDS, readTunnel, shownError, sshArgs } = require("../out/tunnel.js");
-const { parseProcesses, readProcessFile, sshDestination, withExtras } = require("../out/processes.js");
+const { parseProcesses, readProcessFile, sshDestination, sshProblem, withExtras } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -150,9 +150,57 @@ test("a destination that ssh would read as an option, or as two words, is refuse
   // Read from the saved list and an import; never from a discovery server.
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, ssh: "bastion" }], true).processes[0].ssh, "bastion");
   assert.strictEqual(parseProcesses([{ label: "a", host: "h", port: 1, ssh: "bastion" }]).processes[0].ssh, undefined);
-  assert.strictEqual(readProcessFile('{"processes":[{"label":"a","host":"h","port":1,"ssh":"-oX"}]}').processes[0].ssh, undefined);
+  // One that is none skips its process: it is not dialled without a tunnel (#3095).
+  assert.deepStrictEqual(readProcessFile('{"processes":[{"label":"a","host":"h","port":1,"ssh":"-oX"}]}').processes, []);
   // Edit keeps it.
   assert.deepStrictEqual(withExtras({ label: "a", host: "h", port: 1, tags: [] }, { ssh: "b" }), { label: "a", host: "h", port: 1, tags: [], ssh: "b" });
+});
+
+test("a destination needs a host and, where it names one, a port that is one (#3116)", () => {
+  for (const good of ["bastion", "me@bastion", "bastion:2222", "me@bastion:65535", "::1", "me@fe80::1", "[::1]", "me@[::1]:22", "[bastion]:22"]) {
+    assert.strictEqual(sshDestination(good), good);
+  }
+  const refused = {
+    ":2222": "A host is needed before the port.",
+    "me@": "A host is needed after the @.",
+    "me@:22": "A host is needed after the @.",
+    "@bastion": "A user is needed before the @.",
+    "b:": "The port after the colon is a whole number between 1 and 65535.",
+    "me@b:99999": "The port after the colon is a whole number between 1 and 65535.",
+    "me@b:0": "The port after the colon is a whole number between 1 and 65535.",
+    "b:22x": "The port after the colon is a whole number between 1 and 65535.",
+    "[::1]:": "The port after the colon is a whole number between 1 and 65535.",
+    "b:22:33": "One port only, after one colon: an IPv6 address goes in brackets before it.",
+    "me@-oX": "A host does not start with -.",
+  };
+  for (const [bad, why] of Object.entries(refused)) {
+    assert.deepStrictEqual([sshDestination(bad), sshProblem(bad)], [undefined, why], bad);
+  }
+});
+
+test("a user may hold a backslash or a dollar, and a refusal names the character it refuses (#3117)", () => {
+  for (const good of ["CORP\\me@bastion", "deploy$@bastion", "CORP\\svc$@bastion:2222", "me@corp@bastion"]) {
+    assert.strictEqual(sshDestination(good), good);
+  }
+  const tail = (destination) => sshArgs(destination, 5000, "rdb1", 5010).slice(-4);
+  assert.deepStrictEqual(tail("CORP\\svc$@bastion:2222"), ["-p", "2222", "--", "CORP\\svc$@bastion"]);
+  assert.deepStrictEqual(tail("a:b@bastion:2222"), ["-p", "2222", "--", "a:b@bastion"]);
+  assert.deepStrictEqual(tail("a:b@[::1]:2222"), ["-p", "2222", "--", "a:b@::1"]);
+  assert.deepStrictEqual(tail("a:b@bastion").slice(-2), ["--", "a:b@bastion"]);
+  const refused = {
+    "-oProxyCommand=evil": "A destination does not start with -: ssh would read it as an option.",
+    "a b": "A host ssh takes has no space.",
+    "me @b": "A user ssh takes has no space.",
+    "$(x)@b": "A user ssh takes has no (.",
+    "a;b@b": "A user ssh takes has no ;.",
+    "me\\@b": "A user ssh takes does not end with a \\.",
+    "me@b$": "A host ssh takes has no $.",
+    "me@c\\b": "A host ssh takes has no \\.",
+    "`x`": "A host ssh takes has no `.",
+  };
+  for (const [bad, why] of Object.entries(refused)) {
+    assert.deepStrictEqual([sshDestination(bad), sshProblem(bad)], [undefined, why], bad);
+  }
 });
 
 test("the setting is on by default, and hides Set SSH Tunnel when off", () => {
@@ -369,7 +417,7 @@ test("Set SSH Tunnel sets and clears a saved process's jump host, and Edit keeps
   await stub.commands.get(TUNNEL_COMMANDS.set)("a");
   // The box refuses it; the stub returns it anyway, and it is refused again.
   assert.match(stub.messages.at(-1)[1], /is not an SSH destination/);
-  stub.inputs.push((o) => (assert.strictEqual(o.validateInput("a b"), "A destination ssh takes: no spaces or quotes, and not starting with -."), "me@jump"));
+  stub.inputs.push((o) => (assert.strictEqual(o.validateInput("a b"), "A host ssh takes has no space."), "me@jump"));
   await stub.commands.get(TUNNEL_COMMANDS.set)("a");
   assert.strictEqual(live.processes()[0].ssh, "me@jump");
   stub.inputs.push("a", "h2", "1", "", "");

@@ -49,6 +49,29 @@ test("what a command prints: JSON, user:password, a password for the process's u
   assert.deepStrictEqual(credentialEnv({ label: "a", host: "h", port: 1 }), { QLINT_PROCESS_LABEL: "a", QLINT_PROCESS_HOST: "h", QLINT_PROCESS_PORT: "1" });
 });
 
+test("a JSON list of one object, and a JSON string, are read as JSON; another list says its shape (#3118)", () => {
+  const list = '[{"user":"a","password":"p"}]';
+  assert.deepStrictEqual(parseCredentials(list), { user: "a", password: "p" });
+  // The command's own user, as an object's is taken.
+  assert.deepStrictEqual(parseCredentials(list, "svc"), { user: "a", password: "p" });
+  assert.deepStrictEqual(parseCredentials('\uFEFF[\n  {\n    "token": "t:1"\n  }\n]\n', "svc"), { user: "svc", password: "t:1" });
+  assert.deepStrictEqual(parseCredentials('"s3cret"\n', "svc"), { user: "svc", password: "s3cret" });
+  assert.deepStrictEqual(parseCredentials('"a \\"b\\" \\u00e9"'), { password: 'a "b" \u00e9' });
+  assert.deepStrictEqual(parseCredentials('"bob:pw"'), { user: "bob", password: "pw" });
+  // A shape with no one answer says so, and never what it held.
+  assert.deepStrictEqual(parseCredentials('[{"user":"a","password":"hunter2"},{"user":"b","password":"hunter3"}]'), {
+    problem: "its JSON is a list of 2 entries, where one object with a password or token is expected",
+  });
+  assert.deepStrictEqual(parseCredentials("[]", "svc"), { problem: "its JSON is a list of 0 entries, where one object with a password or token is expected" });
+  assert.deepStrictEqual(parseCredentials('["hunter2"]', "svc"), { problem: "its JSON is a list whose one entry is not an object" });
+  assert.deepStrictEqual(parseCredentials('[{"user":"a"}]'), { problem: "its JSON has no password or token string" });
+  assert.deepStrictEqual(parseCredentials('""', "svc"), { problem: "its JSON is an empty string" });
+  // What only starts like one is a line still, as {s3cret} is (#1376).
+  assert.deepStrictEqual(parseCredentials("[s3cret", "svc"), { user: "svc", password: "[s3cret" });
+  assert.deepStrictEqual(parseCredentials('"s3"cret', "svc"), { user: "svc", password: '"s3"cret' });
+  assert.deepStrictEqual(parseCredentials("12345", "svc"), { user: "svc", password: "12345" });
+});
+
 test("a password keeps the spaces and tabs at its ends; only the line ending goes (#1358)", () => {
   assert.deepStrictEqual(parseCredentials("  pa ss \t\r\n", "fixed"), { user: "fixed", password: "  pa ss \t" });
   assert.deepStrictEqual(parseCredentials("me: pw \n"), { user: "me", password: " pw " });

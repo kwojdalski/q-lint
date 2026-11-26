@@ -196,6 +196,11 @@ test("a port is a whole number from 1 to 65535", () => {
 test("tags are lower case, each once, split on commas or spaces", () => {
   assert.deepStrictEqual(parseTags("Prod, eu  rdb,prod"), ["prod", "eu", "rdb"]);
   assert.deepStrictEqual(parseTags(" , "), []);
+  // A semicolon or a bar separates too, as in Add Many's tags column (#3097).
+  assert.deepStrictEqual([parseTags("prod; eu"), parseTags("prod;eu"), parseTags("prod|eu;"), parseTags(";|")], [["prod", "eu"], ["prod", "eu"], ["prod", "eu"], []]);
+  const read = readProcessFile(JSON.stringify([{ label: "a", host: "h", port: 1, tags: "prod;eu" }, { label: "b", host: "h", port: 2, tags: { prod: true } }, { label: "c", host: "h", port: 3, tags: ["prod;", "eu"] }]));
+  assert.deepStrictEqual(read.processes.map((p) => p.tags), [["prod", "eu"], [], ["prod", "eu"]]);
+  assert.deepStrictEqual(read.problems, ['Entry 2 (b): tags is {"prod":true}, not a list or text, so it was not read.']);
 });
 
 test("a process list is read, and what is wrong with it is said", () => {
@@ -252,6 +257,17 @@ test("an import replaces processes of the same label and adds the rest", () => {
   const b2 = { label: "b", host: "other", port: 3, tags: ["dev"] };
   const c = { label: "c", host: "h", port: 4, tags: [] };
   assert.deepStrictEqual(merge([a, b], [b2, c]), [a, b2, c]);
+});
+
+test("an import keeps what the process of its label holds and the list does not name (#3093)", () => {
+  const held = { init: "x:1", gateway: ["rdb"], launch: { script: "rdb.q" }, credentialCommand: "vault read rdb", timeout: 30, evaluation: "direct" };
+  const rdb = { label: "rdb", host: "h", port: 1, user: "me", tags: ["dev"], tls: true, ssh: "jump", ...held };
+  // Named by its address only: everything it held is still there.
+  assert.deepStrictEqual(merge([rdb], [{ label: "rdb", host: "other", port: 2, tags: [] }]), [{ label: "rdb", host: "other", port: 2, tags: [], ...held }]);
+  // What the list names is the list's, a connect script of either kind for one of the other.
+  const named = { label: "rdb", host: "h", port: 1, tags: [], initFile: "i.q", gateway: ["hdb"], launch: { command: "q" }, credentialCommand: "other", timeout: 5, evaluation: "wrapped" };
+  assert.deepStrictEqual(merge([rdb], [named]), [named]);
+  assert.deepStrictEqual(merge([{ ...rdb, init: undefined, initFile: "old.q" }], [{ label: "rdb", host: "h", port: 1, tags: [] }])[0].initFile, "old.q");
 });
 
 test("processes are grouped by tag, sorted, untagged last", () => {
