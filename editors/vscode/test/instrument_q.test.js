@@ -104,6 +104,20 @@ test("a coverage probe leaves its function callable where q refuses a global wri
   assert.deepStrictEqual(await value(c, "(last value sq;key[`.qlint]~enlist`)"), ["{[x] y:x*x; y}", true]);
 });
 
+// Each probe held its own index as a constant: a function of 120
+// statements with a literal each was refused 'limit once instrumented (#2543).
+test("a function of 150 statements with literals is instrumented, and each statement counted once (#2543)", { skip }, async (t) => {
+  const body = Array.from({ length: 150 }, (_, i) => `a:a+${i + 1000}`).join(";");
+  const src = `{[x] a:x;${body};a}`;
+  const { connection: c } = await connect(t, `long:${src}\n`);
+  const want = Number(await value(c, "long 0"));
+  const cov = coverageText(src, 3);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), ["long"], [src], [cov.text], 3 + cov.statements.length), 1), ["ok"]);
+  assert.strictEqual(Number(await value(c, "long 0")), want);
+  const restored = readRestored(await c.call(restoreExpression("cov")));
+  assert.deepStrictEqual(restored.d.map(Number), [0, 0, 0, ...cov.statements.map(() => 1)]);
+});
+
 test("the locals capture keeps the arguments and locals up to the error", { skip }, async (t) => {
   const { connection: c, dir } = await connect(t, "\\l lib.q\n", { "lib.q": "\\d .ns\nm:{[a;b]\n  c:a+b;\n  d:c*2;\n  d+`x}\n\\d .\n" });
   const [def] = definitions(fs.readFileSync(path.join(dir, "lib.q"), "utf8"));
