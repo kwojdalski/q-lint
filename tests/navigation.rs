@@ -105,6 +105,22 @@ fn a_column_and_a_builtin_are_no_global() {
     );
 }
 
+#[test]
+fn a_column_delete_names_is_no_mention_of_a_global() {
+    // KDB-X drops the column whatever a global `px` holds, so the list of
+    // `delete` is no place the global is read (#2806); the `where` of a row
+    // delete is an expression, and is, and so is the name a delete from a
+    // namespace removes.
+    let source = "px:{x}\nr:delete px from t\ns:delete a, px from t\nd:delete from t where a=px\n\
+                  delete px from `.\n";
+    let reads: Vec<_> = seen(source)
+        .into_iter()
+        .filter(|(_, _, kind)| *kind == 'r')
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(reads, ["t", "t", "t", "a", "px", "px"]);
+}
+
 /// q 5 after these lines has `h`, `x` and `aa` in the root and nothing else:
 /// a symbol is one token over its `:`, and only the expression `\t` times
 /// is q (#2775, #2776).
@@ -1104,6 +1120,37 @@ fn a_file_closed_under_another_spelling_of_its_path_stays_in_the_index() {
         let reply = server.request("workspace/symbol", json!({"query": "helper"}));
         assert_eq!(reply["result"].as_array().unwrap().len(), 1, "{folder:?}");
     }
+}
+
+#[test]
+fn a_column_delete_names_is_no_reference_and_no_bar_to_a_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "px:{x}\nt:([]a:1 2;px:3 4)\nr:delete px from t\nr2:px 1\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        "px:{x}",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 3, 3, 5)]
+    );
+    // And the rename the column refused goes through, leaving the column.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "px:{x}",
+        0,
+        json!({"newName": "price"}),
+    );
+    assert!(reply["error"].is_null(), "{reply}");
+    assert!(!reply["result"].is_null(), "{reply}");
 }
 
 #[test]

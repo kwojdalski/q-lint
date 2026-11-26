@@ -6,9 +6,9 @@
 //! scopes and the writes the checks already read, and stopped there: what a
 //! name holds when the script runs is still not this crate's to say.
 use super::{
-    Scope, assigns_lambda, call_time, chained_value, first_switch, global_multi_assignments,
-    global_writes, holds_functions, local_view, multi_assignments, resolved, scope_at, scopes,
-    top_level_statements,
+    Scope, assigns_lambda, call_time, chained_value, deleted_columns, first_switch,
+    global_multi_assignments, global_writes, holds_functions, local_view, multi_assignments,
+    resolved, scope_at, scopes, top_level_statements, within,
 };
 use crate::{Definition, Local, Mention, Name, Place, boundary, pattern_names, signature};
 use std::collections::{HashMap, HashSet};
@@ -559,6 +559,7 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
         .filter(|w| crate::reserved_word(w))
         .collect();
     let unsymbolled = crate::unsymbolled(code);
+    let deleted = deleted_columns(code);
     for m in re!(NAME).find_iter(&unsymbolled) {
         let word = m.as_str();
         if !boundary(&unsymbolled, m.start()) || writes.contains(&m.start()) || system(m.start()) {
@@ -572,9 +573,11 @@ pub fn mentions(code: &str, comments: &str, raw: &str) -> Vec<Mention> {
         {
             continue;
         }
+        // Nor is a column `delete` names, which q never evaluates (#2806).
         if !word.contains('.')
             && (reserved.contains(word)
-                || scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(word)))
+                || scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(word))
+                || within(&deleted, m.start()))
         {
             continue;
         }

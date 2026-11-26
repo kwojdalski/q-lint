@@ -1643,6 +1643,32 @@ fn commands_blanked(code: &str, raw: &str) -> String {
     String::from_utf8(view).unwrap_or_default()
 }
 
+/// The column list of each `delete a,b from t`, which names columns and
+/// reads nothing: KDB-X, with a global `px:{x}`, runs `delete px from t` to
+/// `t` without its column `px`, and to `t` whole where it has none (#2806).
+/// Not that of `` delete px from `. ``, which names the global it removes.
+/// `code` has strings and comments blank. In order, for `within`.
+fn deleted_columns(code: &str) -> Vec<Range<usize>> {
+    re!(r"\bdelete[ \t]+((?:[A-Za-z][A-Za-z0-9_]*[ \t]*,[ \t]*)*[A-Za-z][A-Za-z0-9_]*)[ \t]+from\b")
+        .captures_iter(code)
+        .filter(|m| {
+            let all = m.get(0).unwrap();
+            boundary(code, all.start())
+                && !code[all.end()..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with('`')
+        })
+        .map(|m| m.get(1).unwrap().range())
+        .collect()
+}
+
+/// Whether `at` is in one of `ranges`, which are in order and apart.
+fn within(ranges: &[Range<usize>], at: usize) -> bool {
+    ranges
+        .get(ranges.partition_point(|r| r.end <= at))
+        .is_some_and(|r| r.start <= at)
+}
+
 pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     let (scopes, namespaces) = scopes(code, raw);
     let first_switch = first_switch(code, raw);
@@ -1677,6 +1703,7 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
         names.insert(key);
     };
     let name = re!(r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
+    let deleted = deleted_columns(&view);
     for m in name.find_iter(&unsymbolled) {
         if !boundary(&unsymbolled, m.start()) {
             continue;
@@ -1689,7 +1716,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
             continue;
         }
         if !m.as_str().contains('.')
-            && scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(m.as_str()))
+            && (scope_at(&scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(m.as_str()))
+                || within(&deleted, m.start()))
         {
             continue;
         }

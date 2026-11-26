@@ -679,6 +679,29 @@ fn a_script_only_measured_or_read_is_reached_and_loaded_nowhere() {
 }
 
 #[test]
+fn a_column_delete_names_is_no_read_of_a_global() {
+    // KDB-X, with `px:{x}` defined, runs `delete px from t` to `t` without
+    // its column `px`: the list names columns and reads nothing (#2806).
+    let g = graph(
+        &[
+            ("lib.q", "px:{x}\nhelper:{x}\n"),
+            ("one.q", "t:([]a:1 2;px:3 4)\nr:delete px from t\n"),
+            ("two.q", "f:{[t] delete a, helper from t}\n"),
+            ("rows.q", "f:{[t] delete from t where a=px}\n"),
+            ("gone.q", "delete px from `.\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "one.q").is_empty());
+    assert!(deps(&g, "two.q").is_empty());
+    assert!(g["one.q"].ambiguous.is_empty() && g["two.q"].ambiguous.is_empty());
+    // A row delete's `where` is an expression, and reads what it names; and
+    // a delete from a namespace names the global it removes.
+    assert_eq!(deps(&g, "rows.q"), ["lib.q"]);
+    assert_eq!(deps(&g, "gone.q"), ["lib.q"]);
+}
+
+#[test]
 fn a_context_switched_to_by_a_computed_name_is_dynamic() {
     // KDB-X runs lib.q, and `key `.app` is ``dfun: the root has no `dfun`,
     // and use.q's read of one is 'dfun (#2813).
