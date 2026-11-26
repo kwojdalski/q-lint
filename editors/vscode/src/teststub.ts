@@ -28,9 +28,10 @@ export interface Target {
 }
 
 /// The function whose definition holds 0-based `line` of `text`, when that
-/// is a function definition and not itself a test.
-export function functionAt(text: string, line: number): Target | undefined {
-  const def = definitions(text).find((d) => d.line <= line && line <= d.endLine);
+/// is a function definition and not itself a test. `path`, the file's in
+/// its workspace, names a KDB-X module's function in its context (#2917).
+export function functionAt(text: string, line: number, path?: string): Target | undefined {
+  const def = definitions(text, path).find((d) => d.line <= line && line <= d.endLine);
   if (def === undefined) {
     return undefined;
   }

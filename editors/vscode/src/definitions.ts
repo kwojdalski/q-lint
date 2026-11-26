@@ -118,6 +118,20 @@ export function moduleContext(path: string): string | undefined {
   return `.m.${parts[0]}${parts.slice(1).map((p) => `.0${p}`).join("")}`;
 }
 
+/// The path `definitions` names a module's context by, for the file at
+/// `fsPath`: `relative`, its path in its workspace folder; outside every
+/// folder - where VS Code gives the whole path back, or none - as the
+/// language server takes such a file, its own name, with its directory's
+/// for an `init.q`. Every reader of a file's definitions that names them to
+/// a process passes it, or a module's `f` is asked for in the root (#2917).
+export function modulePathOf(fsPath: string, relative: string | undefined): string {
+  if (relative !== undefined && relative !== fsPath) {
+    return relative;
+  }
+  const parts = fsPath.split(/[\\/]/);
+  return parts.slice(/^init\.[qk]$/.test(parts[parts.length - 1] ?? "") ? -2 : -1).join("/");
+}
+
 /// The functions `source` defines, in order, cut as q loads the script
 /// (`statements.ts`), so a lambda's text is what loading it gives: blank and
 /// comment lines inside kept, a block comment's lines as comment lines.

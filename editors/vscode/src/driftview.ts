@@ -41,6 +41,7 @@ import {
   DRIFT_COMMANDS,
   changedSince,
   definitions,
+  modulePathOf,
   driftDocument,
   driftRows,
   lastInFile,
@@ -61,15 +62,9 @@ import { plainMessage } from "./history";
 
 
 /// `uri`'s path in its workspace folder, which a KDB-X module's context is
-/// named by (`moduleContext`); outside every folder, as the language server
-/// takes such a file, by its own name - its directory's for an `init.q`.
+/// named by (`moduleContext`).
 function modulePath(uri: Uri): string {
-  const relative = workspace.asRelativePath?.(uri, false);
-  if (relative !== undefined && relative !== uri.fsPath) {
-    return relative;
-  }
-  const parts = uri.fsPath.split(/[\\/]/);
-  return parts.slice(/^init\.[qk]$/.test(parts[parts.length - 1] ?? "") ? -2 : -1).join("/");
+  return modulePathOf(uri.fsPath, workspace.asRelativePath?.(uri, false));
 }
 export const DRIFT_SCHEME = "q-lint-drift";
 /// Files and definitions a drift check reads at most.

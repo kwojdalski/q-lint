@@ -31,6 +31,12 @@ test("a KDB-X module's definitions are named in its context, .m.<module> (#2321)
   assert.strictEqual(moduleContext("pkg\\sub\\init.q"), ".m.pkg.0sub");
   assert.strictEqual(moduleContext("init.q"), ".m.init");
   assert.strictEqual(moduleContext("my-mod/init.q"), undefined);
+  // The path a view names it by: the workspace's, or the file's own (#2917).
+  const { modulePathOf } = require("../out/definitions.js");
+  assert.strictEqual(modulePathOf("/w/pkg/sub/init.q", "pkg/sub/init.q"), "pkg/sub/init.q");
+  assert.strictEqual(modulePathOf("/x/mymod/init.q", "/x/mymod/init.q"), "mymod/init.q");
+  assert.strictEqual(modulePathOf("C:\\x\\mymod\\init.q", undefined), "mymod/init.q");
+  assert.strictEqual(modulePathOf("C:\\x\\mymod.q", "C:\\x\\mymod.q"), "mymod.q");
 });
 
 test("definitions: top-level lambdas, in their context, with their lines", () => {

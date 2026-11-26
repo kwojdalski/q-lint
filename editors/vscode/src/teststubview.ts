@@ -26,6 +26,7 @@ import {
   type TextDocument,
 } from "vscode";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
+import { modulePathOf } from "./definitions";
 import { TEST_STUB_COMMAND, detectStyle, endContext, functionAt, newTestPath, stubText, testFilePatterns, testName, unreadFrom, type Target } from "./teststub";
 import { isBlankLine } from "./statements";
 import { plainMessage } from "./history";
@@ -43,7 +44,7 @@ class StubActions implements CodeActionProvider {
     if (document.uri.scheme !== "file") {
       return [];
     }
-    const target = functionAt(document.getText(), range.start.line);
+    const target = functionAt(document.getText(), range.start.line, modulePathOf(document.uri.fsPath, workspace.asRelativePath?.(document.uri, false)));
     if (target === undefined) {
       return [];
     }
@@ -120,7 +121,7 @@ export async function generateStub(uri?: Uri, line?: number): Promise<boolean> {
     return false;
   }
   const document = await workspace.openTextDocument(source);
-  const target: Target | undefined = functionAt(document.getText(), at);
+  const target: Target | undefined = functionAt(document.getText(), at, modulePathOf(source.fsPath, workspace.asRelativePath?.(source, false)));
   if (target === undefined) {
     void window.showInformationMessage("q-lint: the cursor is not in a function's definition (a top-level `name:{...}` that is not a test).");
     return false;
