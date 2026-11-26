@@ -490,6 +490,9 @@ and clicking it switches. The commands:
 - **Import** and **Export Processes**: a JSON file holding
   `{"processes": [{"label", "host", "port", "user"?, "tags"?, "tls"?}]}`,
   and any of `init`, `initFile`, `ssh`, `gateway`, `evaluation` and `launch` (below).
+  A stored password is never exported; an export of processes with a
+  connect script, credential command or launch definition, any of which
+  may hold a secret, asks first and can leave those out.
   An import replaces processes of the same label, adds the rest, and says
   which entries it skipped. One that would take away a process's TLS, SSH
   tunnel or a tag the read-only guard guards is asked about first. A process

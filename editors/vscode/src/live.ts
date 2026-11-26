@@ -1957,8 +1957,37 @@ export class Live {
   }
 
   private async exportList(): Promise<void> {
+    let processes = this.processes();
+    // What runs at connect can hold a secret - a password in a connect
+    // script, a token in a launch's environment - and the file, by default
+    // in the workspace folder, is one to commit or to send: under a title
+    // that said passwords are not exported, all of it was written with
+    // nothing said. Asked first, as Add to Shared asks (#1528, #3096).
+    const brought = onConnectBrought([], processes)
+      .map(({ label, what }) => ({ label, what: what.filter((w) => w !== "SSH tunnel") }))
+      .filter(({ what }) => what.length > 0);
+    let without = false;
+    if (brought.length > 0) {
+      const all = "Export All";
+      const none = "Export Without Them";
+      const answer = await window.showWarningMessage(
+        plainMessage(
+          `${brought.length} q process(es) have a connect script, credential command or launch definition, which an export writes as they are: a password or a token in one is then in the file. Export them too?`,
+        ),
+        { modal: true, detail: brought.map(({ label, what }) => `${label}: ${what.join(", ")}`).join("\n") },
+        all,
+        none,
+      );
+      if (answer === undefined) {
+        return;
+      }
+      without = answer === none;
+      if (without) {
+        processes = processes.map((p) => sharedEntry(p, false));
+      }
+    }
     const file = await window.showSaveDialog({
-      title: "Export q processes (passwords are not exported)",
+      title: "Export q processes (stored passwords are not exported)",
       filters: { "Process list": ["json"] },
       defaultUri: workspace.workspaceFolders?.[0]
         ? Uri.joinPath(workspace.workspaceFolders[0].uri, "q-processes.json")
@@ -1967,7 +1996,6 @@ export class Live {
     if (file === undefined) {
       return;
     }
-    const processes = this.processes();
     const text = JSON.stringify({ processes }, null, 2) + "\n";
     try {
       await workspace.fs.writeFile(file, Buffer.from(text, "utf8"));
@@ -1975,7 +2003,9 @@ export class Live {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${file.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
-    void window.showInformationMessage(plainMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}.`));
+    void window.showInformationMessage(
+      plainMessage(`q-lint: exported ${processes.length} q process(es) to ${file.fsPath}${without ? ", without their connect scripts, credential commands and launch definitions" : ""}.`),
+    );
   }
 
   private insertLabel(): void {

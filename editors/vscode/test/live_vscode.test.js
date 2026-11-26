@@ -595,6 +595,50 @@ test("Export Processes says why it could not write the file", async (t) => {
   assert.deepStrictEqual(stub.messages.at(-1), ["error", "q-lint: could not write /ro/q-processes.json: EACCES: permission denied, open '/ro/q-processes.json'"]);
 });
 
+// Under the title "passwords are not exported", a connect script's
+// password, a launch's environment and the credential command went into
+// the file with nothing said (#3096).
+test("Export Processes asks before writing connect scripts, credential commands and launch definitions, and can leave them out", async (t) => {
+  const { vscode } = require("./vscode_stub.js");
+  const secret = {
+    ...proc("s", 1),
+    ssh: "me@bastion",
+    init: '.z.pw:{[u;p] p~"hunter2"}',
+    launch: { env: { TOKEN: "tok_live_9f8e7d" } },
+    credentialCommand: "vault kv get -field=pw secret/rdb",
+  };
+  const { live } = await setUp(t, [secret, proc("plain", 2), { ...proc("f", 3), initFile: "init.q" }]);
+  const written = [];
+  const titles = [];
+  vscode.window.showSaveDialog = async (o) => (titles.push(o.title), vscode.Uri.file("/out/q-processes.json"));
+  vscode.workspace.fs = { writeFile: async (_uri, bytes) => void written.push(Buffer.from(bytes).toString("utf8")) };
+  // Escape: no file is asked for, and nothing is written.
+  let asked;
+  stub.picks.push((o) => ((asked = o), undefined));
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.match(asked.message, /^2 q process\(es\) have a connect script, credential command or launch definition, which an export writes as they are: .* Export them too\?$/);
+  assert.deepStrictEqual(asked.items, [{ modal: true, detail: "s: connect script, credential command, launch definition\nf: connect script" }, "Export All", "Export Without Them"]);
+  assert.deepStrictEqual([titles, written], [[], []]);
+  stub.picks.push("Export Without Them");
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[0]).processes, [{ ...proc("s", 1), ssh: "me@bastion" }, proc("plain", 2), proc("f", 3)]);
+  assert.ok(!/hunter2|tok_live|vault/.test(written[0]));
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: exported 3 q process(es) to /out/q-processes.json, without their connect scripts, credential commands and launch definitions."]);
+  stub.picks.push("Export All");
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[1]).processes, live.processes());
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: exported 3 q process(es) to /out/q-processes.json."]);
+  // The title promises what is true of every export: the stored passwords.
+  assert.deepStrictEqual(titles, ["Export q processes (stored passwords are not exported)", "Export q processes (stored passwords are not exported)"]);
+  // A list with none of them is exported unasked.
+  const { live: bare } = await setUp(t, [proc("plain", 2), { ...proc("t", 4), ssh: "me@bastion" }]);
+  vscode.window.showSaveDialog = async () => vscode.Uri.file("/out/q-processes.json");
+  vscode.workspace.fs = { writeFile: async (_uri, bytes) => void written.push(Buffer.from(bytes).toString("utf8")) };
+  await stub.commands.get("q-lint.exportProcesses")();
+  assert.deepStrictEqual(JSON.parse(written[2]).processes, bare.processes());
+  assert.ok(!stub.messages.some(([kind]) => kind === "warning"));
+});
+
 // Edit a server's auth header while a fetch with the old one is out: the
 // Edit's fetch was taken for that one, as its URL was the same, so the
 // server went on showing the old header's 401 until the next refresh.
