@@ -22,7 +22,7 @@
 // and a scan by q's own script rules (those `statements.ts` cuts code by) is
 // all the question needs. It never runs the code.
 
-import { blockDepth } from "./statements";
+import { blockDepth, contextAfter } from "./statements";
 
 /// The command, for `package.json`'s manifest test.
 export const PARAM_CACHE = {
@@ -381,14 +381,18 @@ export function parameters(text: string, lambda: Lambda, mask: boolean[] = codeM
 }
 
 /// The statement that caches a call of a lambda taking `params` under `id`,
-/// trapped, so a call where q refuses the write still answers (#2548).
-export function cacheStatement(id: string, params: string[]): string {
+/// trapped, so a call where q refuses the write still answers (#2548). The
+/// lambda is defined in `context`: `set` of a bare name assigns in the
+/// root, where the body's lines, run under the file's `\d`, do not look, so
+/// the names are the context's (#2407).
+export function cacheStatement(id: string, params: string[], context = "."): string {
   const store = `${CACHE_NAMESPACE}.${id}`;
+  const name = (p: string): string => "`" + (context === "." ? p : `${context}.${p}`);
   if (params.length === 1) {
-    return `@[\`${store} set;${params[0]};::];@[\`${params[0]} set;${params[0]};::];`;
+    return `@[\`${store} set;${params[0]};::];@[${name(params[0])} set;${params[0]};::];`;
   }
   const values = `(${params.join(";")})`;
-  return `@[\`${store} set;${values};::];@[${params.map((p) => "`" + p).join("")} set';${values};::];`;
+  return `@[\`${store} set;${values};::];@[${params.map(name).join("")} set';${values};::];`;
 }
 
 /// The untrapped statement q-lint inserted before #2548, recognised so it
@@ -399,6 +403,11 @@ function untrappedStatement(id: string, params: string[]): string {
     return `${store}:${params[0]};\`${params[0]} set ${store};`;
   }
   return `${store}:(${params.join(";")});${params.map((p) => "`" + p).join("")} set'${store};`;
+}
+
+/// The context a `\d` above `lambda` leaves its definition in.
+function contextOf(text: string, lambda: Lambda): string {
+  return contextAfter(text.slice(0, text.lastIndexOf("\n", lambda.open) + 1));
 }
 
 /// A fresh id: `p` and six hex digits, none of `taken`; the next one up
@@ -446,9 +455,11 @@ function inserted(text: string, lambda: Lambda, params: string[], mask: boolean[
     if (match === null) {
       return undefined;
     }
-    // Each form with how often it names the namespace: any more is not q-lint's.
+    // Each form with how often it names the namespace: any more is not
+    // q-lint's. Unqualified under a `\d`, as before #2407, too.
     const form = (
       [
+        [cacheStatement(match[1], params, contextOf(text, lambda)), 1],
         [cacheStatement(match[1], params), 1],
         [untrappedStatement(match[1], params), 2],
       ] as const
@@ -498,7 +509,7 @@ export function toggleAt(text: string, offset: number, random: () => number = Ma
           : "q-lint: this lambda reads none of x, y and z, so it has no parameters to cache.",
     };
   }
-  const statement = cacheStatement(newId(cachedIds(text, all, mask), random), params);
+  const statement = cacheStatement(newId(cachedIds(text, all, mask), random), params, contextOf(text, lambda));
   return { kind: "insert", ...placement(text, lambda, statement), params };
 }
 
