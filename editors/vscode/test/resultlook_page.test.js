@@ -252,6 +252,29 @@ test("a quote or trade history, a crossed book and rows of no side are not drawn
   assert.ok(page.body.all((e) => e.className === "note").some((e) => e.textContent === "2 rows have a side that is neither buy nor sell: left out of the book."));
 });
 
+test("a histogram of the first column only, then Line, draws the line's columns (#3138)", () => {
+  FakeChart.made = [];
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const kind = () => page.body.all((e) => e.tagName === "SELECT")[0];
+  const choose = (k) => {
+    kind().value = k;
+    kind().fire("change");
+  };
+  const boxes = () => page.body.all((e) => e.tagName === "INPUT" && e.type === "checkbox");
+  page.send(result("s.1", [["px", 9, ["1", "2", "3"]], ["size", 7, ["10", "20", "30"]]], { view: "chart" }));
+  choose("histogram");
+  assert.strictEqual(boxes().length, 2);
+  boxes()[1].checked = false;
+  boxes()[1].fire("change");
+  assert.deepStrictEqual(page.state.columns, [0]);
+  choose("line");
+  assert.deepStrictEqual([page.rendered().chart.note, page.rendered().chart.datasets.map((d) => d.label)], [undefined, ["size"]]);
+  assert.deepStrictEqual(boxes().map((b) => b.checked), [true]);
+  // And the histogram is as it was left.
+  choose("histogram");
+  assert.deepStrictEqual(boxes().map((b) => b.checked), [true, false]);
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });

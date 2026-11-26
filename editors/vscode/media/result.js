@@ -78,6 +78,12 @@
       return { columns: can };
     }
     const columns = can.filter(function (c) { return chosen.indexOf(c) >= 0; });
+    // Ticked for a kind that draws other columns - a histogram's first -
+    // and none of them is this kind's: every one, as before any is ticked,
+    // not a note that none is ticked beside a ticked box (#3138).
+    if (columns.length === 0 && chosen.length > 0) {
+      return { columns: can };
+    }
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
