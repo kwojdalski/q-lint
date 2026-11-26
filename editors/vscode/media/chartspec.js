@@ -598,8 +598,10 @@
   /// on, a row begun where the next entry would pass `right`. On one row,
   /// four of ten long names started past the image's edge, so the file did
   /// not say which line was which (#3132). `most` rows at most: the entries
-  /// there is no row for are counted in a last "and N more".
-  function legendRows(items, left, right, most) {
+  /// there is no row for are counted in a last "and N more", with `more`,
+  /// those `items` already leaves out.
+  function legendRows(items, left, right, most, more) {
+    const unlisted = more || 0;
     const wide = function (label) { return 24 + label.length * 6.5; };
     const rows = [[]];
     let x = left;
@@ -616,14 +618,14 @@
       rows[rows.length - 1].push({ x: x, label: label, colour: items[k].colour });
       x += wide(label);
     }
-    if (k < items.length) {
+    if (k < items.length || unlisted > 0) {
       const last = rows[rows.length - 1];
-      const more = function () { return "and " + (items.length - k) + " more"; };
-      while (last.length > 1 && x + more().length * 6.5 > right) {
+      const rest = function () { return "and " + (items.length - k + unlisted) + " more"; };
+      while (last.length > 1 && x + rest().length * 6.5 > right) {
         x = last.pop().x;
         k--;
       }
-      last.push({ x: x, label: more(), colour: null });
+      last.push({ x: x, label: rest(), colour: null });
     }
     return rows;
   }

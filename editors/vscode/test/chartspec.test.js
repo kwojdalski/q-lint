@@ -255,6 +255,9 @@ test("a saved chart's legend wraps to rows inside the image, the plot giving way
   const many = C.legendRows(names.concat(names).map((label) => ({ label, colour: "#f00" })), 64, 780, 2);
   assert.deepStrictEqual(many.map((row) => row.map((e) => e.label)), [names.slice(0, 5), names.slice(5, 9).concat(["and 11 more"])]);
   assert.ok(many[1][4].x + "and 11 more".length * 6.5 <= 780 && many[1][4].colour === null);
+  // Entries the items leave out already are counted with them (#3141).
+  assert.deepStrictEqual(C.legendRows([{ label: "a", colour: "#f00" }], 64, 780, 10, 3)[0].map((e) => e.label), ["a", "and 3 more"]);
+  assert.deepStrictEqual(C.legendRows(names.concat(names).map((label) => ({ label, colour: "#f00" })), 64, 780, 2, 3)[1].at(-1).label, "and 14 more");
 });
 
 test("a table keyed by several columns charts its values only, each row named by every key (#3123)", () => {

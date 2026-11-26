@@ -277,12 +277,27 @@
     return "#" + x.map(function (v, i) { return Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0"); }).join("");
   }
 
+  /// The `k`-th colour (from 0) for a value past the palette's: hues a
+  /// golden angle apart, so that no two near in turn are near in hue, in
+  /// two lightnesses. "#rrggbb".
+  function hueColour(k) {
+    const h = ((k * 137.508) % 360) / 60;
+    const l = k % 2 ? 0.44 : 0.62;
+    const c = (1 - Math.abs(2 * l - 1)) * 0.62;
+    const x = c * (1 - Math.abs((h % 2) - 1));
+    const m = l - c / 2;
+    const parts = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h) % 6];
+    return "#" + parts.map(function (v) { return Math.round((v + m) * 255).toString(16).padStart(2, "0"); }).join("");
+  }
+
   /// What a map of `rows` draws: {type, map, datasets: [{label, data,
-  /// colours}], legend, dropped, note?}. Each point {x: longitude, y:
+  /// colours}], legend, legendMore, dropped, note?}. Each point {x: longitude, y:
   /// latitude, r, row}. `size`: a numeric column whose square root scales
   /// the points from 3 to 15 pixels; `colour`: a column whose value colours
   /// them, a numeric one from the theme's first colour to its fourth, any
-  /// other one colour per value. -1 for neither. Rows with no position,
+  /// other one colour per value - the theme's, then further ones of their
+  /// own (#3141) - of which the legend names twelve, `legendMore` counting
+  /// the rest. -1 for neither. Rows with no position,
   /// or one off the map, are dropped and counted.
   function mapData(grid, rows, opts, look) {
     const cols = mapColumns(grid);
@@ -328,6 +343,7 @@
     };
     let colourOf = function () { return palette[0]; };
     const legend = [];
+    let more = 0;
     if (colour >= 0 && grid.columns[colour].numeric) {
       const span = range(colour);
       // One value alone is the legend's one entry, and drawn in its colour:
@@ -344,10 +360,32 @@
       }
     } else if (colour >= 0) {
       const seen = new Map();
+      // Past the palette's colours a value has one of its own: taken in
+      // turn again, the seventh value was drawn as the first (#3141).
+      // Nor, while there are few, one near a colour taken already.
+      const used = new Set(palette.map(function (c) { return String(c).toLowerCase(); }));
+      const near = function (c) {
+        const a = rgb(c);
+        return used.size < 24 && Array.from(used).some(function (u) {
+          const b = rgb(u);
+          return b && Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 96;
+        });
+      };
+      let hue = 0;
       kept.forEach(function (r) {
         const t = grid.cells[colour][r];
         if (!seen.has(t)) {
-          seen.set(t, palette[seen.size % palette.length]);
+          let c = palette[seen.size];
+          if (c === undefined) {
+            // In a few tries: there are only so many colours, and a
+            // column of thousands of values shares them.
+            let tries = 0;
+            do {
+              c = hueColour(hue++);
+            } while (++tries < 16 && (used.has(c) || near(c)));
+            used.add(c);
+          }
+          seen.set(t, c);
         }
       });
       seen.forEach(function (c, t) {
@@ -355,6 +393,7 @@
           legend.push({ label: t === "" ? "(null)" : t, colour: c });
         }
       });
+      more = seen.size - legend.length;
       colourOf = function (r) { return seen.get(grid.cells[colour][r]); };
     }
     const data = kept.map(function (r) { return { x: grid.values[cols.lon][r], y: grid.values[cols.lat][r], r: radius(r), row: r }; });
@@ -366,6 +405,7 @@
       size: size,
       colour: colour,
       legend: legend,
+      legendMore: more,
       dropped: dropped,
       datasets: [{ label: grid.columns[cols.lat].name + ", " + grid.columns[cols.lon].name, data: data, colours: kept.map(colourOf) }],
     };
@@ -680,7 +720,9 @@
   /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
   /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
   /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
-  /// legend?} - `xWhole`, an x in whole units (dates), ticked by whole ones.
+  /// legend?, legendItems?, legendMore?} - `xWhole`, an x in whole units
+  /// (dates), ticked by whole ones; `legendMore`, the entries the legend
+  /// leaves out, which it counts.
   /// `opts`: {width, height, background, title, at, left} - `at`, a y offset,
   /// for a pane inside another SVG, and `left`, the one margin of such panes,
   /// so that their x axes line up.
@@ -712,7 +754,7 @@
     const pw = W - left - right;
     // The legend in as many rows as it takes (#3132), a third of the image
     // at most.
-    const legend = spec.legend === false ? [] : C.legendRows(spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)));
+    const legend = spec.legend === false ? [] : C.legendRows(spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)), spec.legendMore);
     const bottom = spec.legend === false && !spec.xTitle ? 28 : C.legendMargin(legend);
     const ph = H - top - bottom;
     // Halved, so a span past the largest double does not overflow.
@@ -815,6 +857,7 @@
       xTitle: "longitude",
       yTitle: "latitude",
       legendItems: data.legend && data.legend.length ? data.legend : undefined,
+      legendMore: data.legendMore,
       legend: Boolean(data.legend && data.legend.length),
       note: data.note,
     }, look, opts);

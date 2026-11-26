@@ -304,3 +304,29 @@ test("a zoom is kept while the panes' points meet it (#3128)", () => {
   // Nothing to judge it by: kept, for the rows that come back.
   assert.deepStrictEqual(M.zoomOver({ panes: [] }, { min: 1, max: 2 }), { min: 1, max: 2 });
 });
+
+test("a map coloured by more values than the theme has colours gives each its own, and its legend counts the ones it leaves out (#3141)", () => {
+  const cities = ["NYC", "LDN", "TKY", "HKG", "SGP", "FRA", "SYD", "CHI"];
+  const places = (names) => grid([["lat", 9, names.map((_, i) => String(i % 90))], ["lon", 9, names.map((_, i) => String(i % 180))], ["city", 11, names]]);
+  const g = places(cities);
+  const d = M.mapData(g, all(g), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual(d.legend.map((e) => e.label), cities);
+  const colours = d.legend.map((e) => e.colour);
+  assert.deepStrictEqual(colours.slice(0, 6), look.colours, "the theme's first");
+  assert.strictEqual(new Set(colours).size, 8, colours.join(" "));
+  assert.ok(colours.every((c) => /^#[0-9a-f]{6}$/.test(c)));
+  assert.deepStrictEqual(d.datasets[0].colours, colours, "a point in its value's colour");
+  assert.strictEqual(d.legendMore, 0);
+  assert.ok(!M.mapSvg(d, look, {}, WORLD).includes(" more<"));
+  // Fifteen values: twelve named, the rest counted; every point its own colour still.
+  const many = places(cities.concat(["a", "b", "c", "d", "e", "f", "g"]));
+  const m = M.mapData(many, all(many), { size: -1, colour: 2 }, look);
+  assert.deepStrictEqual([m.legend.length, m.legendMore, new Set(m.datasets[0].colours).size], [12, 3, 15]);
+  assert.ok(M.mapSvg(m, look, {}, WORLD).includes(">and 3 more<"));
+  // More values than there are colours: they are shared, not looked for without end.
+  const names = [...Array(3000).keys()].map(String);
+  const lots = places(names);
+  assert.strictEqual(M.mapData(lots, all(lots), { size: -1, colour: 2 }, look).legendMore, 2988);
+  // No colour column, or a number: no count.
+  assert.strictEqual(M.mapData(g, all(g), { size: -1, colour: -1 }, look).legendMore, 0);
+});
