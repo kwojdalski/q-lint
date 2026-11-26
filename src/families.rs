@@ -237,6 +237,12 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
             };
             start = end - given.len() + parsed.end();
         }
+        // A symbol is looked up or read from disk, never evaluated: `get
+        // hsym `$"/data/update/",d` reads the file of that name, and sent
+        // over a handle it names a variable there (#3012).
+        if given.starts_with('`') || re!(r"^hsym\b").is_match(given) {
+            continue;
+        }
         // Built where it is run, or into a local this lambda runs on a later
         // statement - `q:"select ...",s; value q`, the commoner way to write
         // it (#2735). Any assignment of the local before the call counts.

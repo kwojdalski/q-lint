@@ -174,6 +174,10 @@ f:{eval "select from t where a=",x}
 g:{@[eval;"select from t where a=",x;{x}]}
 k:{[s] q:"select from t where a=",s; eval q}
 
+=== clean | get of a symbol reads a file or a variable, whatever its text says (#3012)
+f:{[d] get hsym `$"/data/update/",d}
+g:{[d] get `$":/data/delete/",d}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}
