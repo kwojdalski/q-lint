@@ -313,6 +313,26 @@ test("each process tool sends what the guard reads as read-only under reval, and
   assert.strictEqual(await stub.commands.get(PASTE.copyJson)("til 2"), "[0,1]");
 });
 
+// The timeout ran on while Run Anyway was asked: it fired at an idle
+// connection ("no query is running"), and the query sent again had none.
+test("the query timeout does not run while Run Anyway is asked, and times the query sent again (#2559)", { skip, timeout: 60_000 }, async (t) => {
+  const box = new Sandbox("f:{g::1; t:.z.p; while[.z.p<t+0D00:00:01.5]; `ran};");
+  t.after(() => box.stop());
+  await box.start();
+  const { stub, live } = await toolsOn(t, box);
+  stub.config.user["query.timeout"] = 1;
+  stub.picks.push(async () => (await sleep(1500), "Run Anyway"));
+  const started = Date.now();
+  await live.run("f[]");
+  const took = Date.now() - started;
+  assert.ok(!stub.messages.some(([, m]) => /no query is running/.test(m)), JSON.stringify(stub.messages));
+  const [entry] = live.history();
+  assert.strictEqual(entry.code, "f[]");
+  assert.notStrictEqual(entry.outcome, "ok", JSON.stringify(entry));
+  assert.match(entry.error ?? "", /timed out after 1 s/);
+  assert.ok(took < 3200, `${took} ms`);
+});
+
 test("Record Query Snapshot's lambda has a reval twin that refuses a write (#2424)", { skip, timeout: 60_000 }, async (t) => {
   const { SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY } = require("../out/snapshot.js");
   const { readAnswer } = require("../out/query.js");
