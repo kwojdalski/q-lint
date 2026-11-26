@@ -6945,8 +6945,12 @@ fn lint_rules(
         //
         // `{[t;x] ...}` makes `x` the second argument, and every q reader
         // arrives expecting it to be the first.
+        //
+        // A typed or filtered slot binds its name all the same: q 5 runs
+        // ``{[a;x:`j] x}[1;2]`` as 2 (#2725).
         for (i, slot) in sig.slots.iter().enumerate() {
-            if let Some(expected) = ["x", "y", "z"].iter().position(|n| n == slot)
+            let slot = typed_at(slot).map_or(*slot, |at| slot[..at].trim());
+            if let Some(expected) = ["x", "y", "z"].iter().position(|&n| n == slot)
                 && expected != i
             {
                 add(
