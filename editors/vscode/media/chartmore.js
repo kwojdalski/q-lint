@@ -565,39 +565,12 @@
 
   // --- SVG
 
-  /// Series of points on linear axes as an SVG document, drawn by hand as
-  /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
-  /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
-  /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
-  /// legend?} - `xWhole`, an x in whole units (dates), ticked by whole ones.
-  /// `opts`: {width, height, background, title, at} - `at`, a y offset, for
-  /// a pane inside another SVG.
-  function xySvg(spec, look, opts) {
-    opts = opts || {};
-    const W = opts.width || 800;
-    const H = opts.height || 450;
-    const xml = C.xml;
-    const fg = xml(look.foreground || "#333");
-    const border = xml(look.border || "#ccc");
-    const left = 64;
-    const right = 20;
-    const top = opts.title ? 40 : 16;
-    const bottom = spec.legend === false && !spec.xTitle ? 28 : 64;
-    const pw = W - left - right;
-    const ph = H - top - bottom;
-    const out = ['<svg xmlns="http://www.w3.org/2000/svg"' + (opts.at !== undefined ? ' x="0" y="' + opts.at + '"' : "") + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + xml(look.font || "sans-serif") + '" font-size="11">'];
-    if (opts.background) {
-      out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
-    }
-    if (opts.title) {
-      out.push('<text x="' + W / 2 + '" y="22" text-anchor="middle" font-size="14" fill="' + fg + '">' + xml(opts.title) + "</text>");
-    }
+  /// What an xySvg() `spec` spans: its points that have a value (`all`),
+  /// its x and y ranges, the y axis' ticks, those of them in range, and
+  /// the left margin their labels need (#3133).
+  function xyAxes(spec) {
     const all = [];
     spec.series.forEach(function (s) { s.points.forEach(function (p) { if (p.y !== null && isFinite(p.y)) { all.push(p); } }); });
-    if (all.length === 0 && !spec.outline) {
-      out.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.note || "Nothing to chart.") + "</text></svg>");
-      return out.join("\n");
-    }
     const extent = function (pick, fixed, zero) {
       if (fixed) {
         return fixed;
@@ -614,13 +587,53 @@
     };
     const xr = extent(function (p) { return p.x; }, spec.xRange, false);
     const yr = extent(function (p) { return p.y; }, spec.yRange, spec.series.some(function (s) { return s.area; }));
+    const yt = C.ticks(yr.lo, yr.hi);
+    const yValues = yt.values.filter(function (v) { return v >= yr.lo && v <= yr.hi; });
+    return { all: all, xr: xr, yr: yr, yt: yt, yValues: yValues, left: C.yMargin(yValues.map(function (v) { return C.short(v, yt.step); }), Boolean(spec.yTitle)) };
+  }
+
+  /// Series of points on linear axes as an SVG document, drawn by hand as
+  /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
+  /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
+  /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
+  /// legend?} - `xWhole`, an x in whole units (dates), ticked by whole ones.
+  /// `opts`: {width, height, background, title, at, left} - `at`, a y offset,
+  /// for a pane inside another SVG, and `left`, the one margin of such panes,
+  /// so that their x axes line up.
+  function xySvg(spec, look, opts) {
+    opts = opts || {};
+    const W = opts.width || 800;
+    const H = opts.height || 450;
+    const xml = C.xml;
+    const fg = xml(look.foreground || "#333");
+    const border = xml(look.border || "#ccc");
+    const right = 20;
+    const top = opts.title ? 40 : 16;
+    const bottom = spec.legend === false && !spec.xTitle ? 28 : 64;
+    const ph = H - top - bottom;
+    const out = ['<svg xmlns="http://www.w3.org/2000/svg"' + (opts.at !== undefined ? ' x="0" y="' + opts.at + '"' : "") + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + xml(look.font || "sans-serif") + '" font-size="11">'];
+    if (opts.background) {
+      out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
+    }
+    if (opts.title) {
+      out.push('<text x="' + W / 2 + '" y="22" text-anchor="middle" font-size="14" fill="' + fg + '">' + xml(opts.title) + "</text>");
+    }
+    const axes = xyAxes(spec);
+    if (axes.all.length === 0 && !spec.outline) {
+      out.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.note || "Nothing to chart.") + "</text></svg>");
+      return out.join("\n");
+    }
+    const xr = axes.xr;
+    const yr = axes.yr;
+    const yt = axes.yt;
+    const left = opts.left || axes.left;
+    const pw = W - left - right;
     // Halved, so a span past the largest double does not overflow.
     const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v / 2 - xr.lo / 2) / (xr.hi / 2 - xr.lo / 2)) * pw); };
     const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v / 2 - yr.lo / 2) / (yr.hi / 2 - yr.lo / 2)) * ph); };
     const f = function (v) { return v.toFixed(1); };
     out.push('<clipPath id="plot' + (opts.at || 0) + '"><rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '"/></clipPath>');
-    const yt = C.ticks(yr.lo, yr.hi);
-    yt.values.filter(function (v) { return v >= yr.lo && v <= yr.hi; }).forEach(function (v) {
+    axes.yValues.forEach(function (v) {
       out.push('<line x1="' + left + '" x2="' + (left + pw) + '" y1="' + f(Y(v)) + '" y2="' + f(Y(v)) + '" stroke="' + border + '" stroke-width="0.5"/>');
       out.push('<text x="' + (left - 6) + '" y="' + f(Y(v)) + '" dy="0.32em" text-anchor="end" fill="' + fg + '">' + xml(C.short(v, yt.step)) + "</text>");
     });
@@ -740,9 +753,9 @@
       out.push('<text x="' + W / 2 + '" y="18" text-anchor="middle" font-size="14" font-family="' + xml(look.font || "sans-serif") + '" fill="' + xml(look.foreground || "#333") + '">' + xml(opts.title) + "</text>");
     }
     const xRange = opts.range ? { lo: opts.range.min, hi: opts.range.max } : undefined;
-    data.panes.forEach(function (p, k) {
+    const specs = data.panes.map(function (p, k) {
       const last = k === data.panes.length - 1;
-      out.push(xySvg({
+      return {
         series: [{ label: p.label, colour: colours[k % colours.length], mode: "line", points: inRange(p.data, opts.range) }],
         xRange: xRange || (function () {
           let lo = Infinity;
@@ -755,7 +768,13 @@
         xTitle: last ? (data.x >= 0 ? grid.columns[0].name : "row") : "",
         yTitle: p.label,
         legend: false,
-      }, look, { width: W, height: each, at: (opts.title ? 24 : 0) + k * each }));
+      };
+    });
+    // One margin for every pane, the widest any needs, so that a time is
+    // at the same x in each (#3133).
+    const left = specs.reduce(function (w, spec) { return Math.max(w, xyAxes(spec).left); }, 0);
+    specs.forEach(function (spec, k) {
+      out.push(xySvg(spec, look, { width: W, height: each, at: (opts.title ? 24 : 0) + k * each, left: left }));
     });
     out.push("</svg>");
     return out.join("\n");

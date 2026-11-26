@@ -227,9 +227,32 @@
   /// With `step`, the distance to the next label, the digits that tell the
   /// two apart, so bins over a narrow range of prices are not all
   /// "1.08341 - 1.08341".
+  ///
+  /// A million and up, or under a thousandth, is in exponent form only
+  /// where that is the shorter: a spread of `0.0001` and an order id of
+  /// `1234567.2` are plain digits, not `1.00000e-4` and `1.23456720e+6`,
+  /// which is also wider than an axis has room for (#3133, #3145).
   function short(v, step) {
     const digits = step > 0 && v !== 0 ? Math.min(15, Math.max(6, Math.ceil(Math.log10(Math.abs(v) / step)) + 2)) : 6;
-    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(step > 0 ? Math.max(3, digits - 1) : 3) : String(+v.toPrecision(digits));
+    if (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3)) {
+      const most = step > 0 ? Math.max(4, digits) : 4;
+      const exponent = v.toExponential(most - 1);
+      const plain = String(+v.toPrecision(most));
+      return plain.length <= exponent.length ? plain : exponent;
+    }
+    return String(+v.toPrecision(digits));
+  }
+
+  /// About the pixels a character of an SVG chart's 11 px text is wide.
+  const CHAR = 6.6;
+
+  /// The margin an SVG chart's y axis needs for its tick `labels`: their
+  /// widest and the gap to the axis - and, `titled`, the axis' title
+  /// written up the edge - or 64 pixels, whichever is more. A fixed 64 cut
+  /// a label of ten characters at the image's edge (#3133).
+  function yMargin(labels, titled) {
+    const widest = labels.reduce(function (w, l) { return Math.max(w, String(l).length); }, 0);
+    return Math.max(64, Math.ceil(widest * CHAR + (titled ? 30 : 12)));
   }
 
   /// What a chart of `kind` over `rows` of the grid draws, before colours:
@@ -526,11 +549,8 @@
     const fg = look.foreground || "#333";
     const border = look.border || "#ccc";
     const y2 = Number.isInteger(opts.y2) && kind !== "histogram" && kind !== "candlestick" && data.datasets.some(function (d) { return d.column === opts.y2; }) ? opts.y2 : -1;
-    const left = 64;
-    const right = y2 >= 0 ? 64 : 20;
     const top = opts.title ? 40 : 16;
     const bottom = 64;
-    const pw = W - left - right;
     const ph = H - top - bottom;
     const out = [
       '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + font + '" font-size="11">',
@@ -578,6 +598,11 @@
     const main = axis(data.datasets.filter(function (d) { return d.column !== y2; }));
     const alt = y2 >= 0 ? axis(data.datasets.filter(function (d) { return d.column === y2; })) : null;
     const yOf = function (d) { return d.column === y2 && alt ? alt.y : main.y; };
+    // Each side as wide as its axis' labels (#3133).
+    const labelled = function (a) { return a.ticks.values.map(function (v) { return short(v, a.ticks.step); }); };
+    const left = yMargin(labelled(main));
+    const right = alt ? yMargin(labelled(alt)) : 20;
+    const pw = W - left - right;
     // Gridlines and the left axis's labels; the right axis's labels.
     main.ticks.values.forEach(function (v) {
       const y = main.y(v).toFixed(1);
@@ -742,6 +767,7 @@
     ticks: ticks,
     WHOLE: WHOLE,
     short: short,
+    yMargin: yMargin,
     xml: xml,
   };
   if (typeof module !== "undefined" && module.exports) {

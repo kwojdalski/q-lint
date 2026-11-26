@@ -196,3 +196,20 @@ test("a table of exactly open, high, low and close draws candles against its row
   assert.deepStrictEqual(C.chartData(timed, [0, 1], "candlestick", [], 20).labels, ["10", "20"]);
   assert.strictEqual(C.ohlcColumns(cols("open", "a", "b", "c2")), null, "three columns after the first, and no four names");
 });
+
+test("a value of a million, or under a thousandth, is in plain digits where they are the shorter, and the SVG's margin is as wide as its labels (#3133, #3145)", () => {
+  assert.strictEqual(C.short(1234567.2, 0.2), "1234567.2");
+  assert.strictEqual(C.short(6000000, 2000000), "6000000");
+  assert.strictEqual(C.short(0.0001, 0.0001), "0.0001");
+  assert.strictEqual(C.short(1.0852 - 1.0851, (1.0852 - 1.0851) / 10), "0.0001");
+  assert.strictEqual(C.short(1e12, 2e11), "1.00000e+12", "the exponent form where it is the shorter");
+  assert.strictEqual(C.short(1.5e-9, 0), "1.5e-9");
+  // Labels of 14 characters, at 6.6 px each, right-aligned at the axis.
+  const ids = [123456789012.2, 123456789012.4, 123456789012.9];
+  const g = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "id", numeric: true, type: 9 }], cells: [["a", "b", "c"], ids.map(String)], values: [null, ids] };
+  const svg = C.chartSvg(g, [0, 1, 2], "line", C.chartData(g, [0, 1, 2], "line", [1], 20), { colours: ["#f00"] }, {});
+  const labels = [...svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="end"[^>]*>([^<]*)</g)].map((m) => [Number(m[1]), m[2]]);
+  assert.ok(labels.length > 1 && labels.every(([, t]) => /^1234567890\d\d(\.\d)?$/.test(t)), JSON.stringify(labels));
+  labels.forEach(([x, t]) => assert.ok(x - t.length * 6.6 >= 0, t + " starts at " + (x - t.length * 6.6)));
+  assert.strictEqual(C.yMargin(["0", "10"]), 64, "the margin short labels always had");
+});

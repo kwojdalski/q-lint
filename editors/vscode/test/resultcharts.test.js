@@ -202,3 +202,20 @@ test("a map coloured by a number with one value has one legend entry, and its po
   const none = grid([["lat", 9, ["10"]], ["lon", 9, ["20"]], ["c", 7, [""]]]);
   assert.deepStrictEqual(M.mapData(none, all(none), { size: -1, colour: 2 }, look).legend, []);
 });
+
+test("an FX book's spread is in plain digits, and each SVG's left margin is as wide as its y labels (#3133, #3145)", () => {
+  const fx = grid([["bid", 9, ["1.0851"]], ["bs", 7, ["5"]], ["ask", 9, ["1.0852"]], ["as", 7, ["4"]]]);
+  assert.strictEqual(M.depthTitle(M.depthData(fx, [0])), "mid 1.08515 · spread 0.0001");
+  const ends = (svg) => [...svg.matchAll(/<text x="([\d.]+)"[^>]*text-anchor="end"[^>]*>([^<]*)</g)].map((m) => [Number(m[1]), m[2]]);
+  // Sizes of 14 characters, and the axis' title up the edge beside them.
+  const book = grid([["bid", 9, ["99"]], ["bs", 9, ["123456789012.5"]], ["ask", 9, ["101"]], ["as", 9, ["123456789012.5"]]]);
+  const depth = ends(M.depthSvg(M.depthData(book, [0]), look, {}));
+  assert.ok(depth.length > 1, JSON.stringify(depth));
+  depth.forEach(([x, t]) => assert.ok(x - t.length * 6.6 >= 20, t + " starts at " + (x - t.length * 6.6)));
+  // Linked panes keep one margin, the widest, so a time is at one x in each.
+  const t = grid([["t", 7, ["1", "2", "3"]], ["a", 9, ["1", "2", "3"]], ["b", 9, ["123456789012.2", "123456789012.4", "123456789012.9"]]]);
+  const linked = M.linkedSvg(t, M.linkedData(t, [0, 1, 2], [1, 2]), look, ["#ff0000", "#00ff00"], {});
+  const margins = [...linked.matchAll(/<clipPath id="[^"]*"><rect x="([\d.]+)"/g)].map((m) => Number(m[1]));
+  assert.strictEqual(margins.length, 2);
+  assert.ok(margins[0] === margins[1] && margins[0] > 64, margins.join(" "));
+});
