@@ -569,7 +569,7 @@ f:{[x]
 f:{[(a;b)] '1}
 g:{[a:`j] '1}
 
-=== clean | a continued line after an operand makes it each
+=== QE009 | a continued line after an operand makes it each, detached by its blank (#2852; q 5 refuses the lambda as it loads, with ')
 h:{a
   '1}
 

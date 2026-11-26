@@ -734,3 +734,19 @@ a:x cor
  each
 b:x cor
  each[y]
+
+=== QE009 profile: general | a detached ' or ': at the start of an indented continuation line, or before one (#2852; q 5: '', '':, ')
+a:x
+ 'y
+b:x
+ ':y
+c:x '
+  y
+
+=== clean profile: general | while with nothing applied, brackets, or a signal after an infix keyword, it parses (#2852; q 5 parses each)
+e:x
+ '
+f:x
+ '[y]
+g:x in
+ '"a"

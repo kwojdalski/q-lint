@@ -1916,11 +1916,26 @@ fn detached_iterator(
         {
             continue;
         }
-        let line_start = code[..i].rfind('\n').map_or(0, |p| p + 1);
+        let mut line_start = code[..i].rfind('\n').map_or(0, |p| p + 1);
         if crate::system_command(&source[line_start..]) {
             continue;
         }
-        let before = view[line_start..i].trim_end_matches([' ', '\t']);
+        let mut before = view[line_start..i].trim_end_matches([' ', '\t']);
+        // An indented line continues the statement above it, past blank
+        // lines: `a:x` over ` 'y` is `a:x 'y`, and q 5 refuses it (#2852).
+        if before.is_empty()
+            && line_start > 0
+            && source[line_start..i]
+                .bytes()
+                .all(|b| matches!(b, b' ' | b'\t'))
+        {
+            let above = view[..line_start].trim_end_matches([' ', '\t', '\r', '\n']);
+            line_start = above.rfind('\n').map_or(0, |p| p + 1);
+            if crate::system_command(&source[line_start..]) {
+                continue;
+            }
+            before = &above[line_start..];
+        }
         let Some(&last) = before.as_bytes().last() else {
             continue;
         };
@@ -1947,7 +1962,10 @@ fn detached_iterator(
         let end = i + 1 + usize::from(c.get(i + 1) == Some(&b':'));
         // More iterators after it derive more, and apply nothing: q 5 parses
         // `(avg '')G`, and refuses `x '/y`.
+        // What it applies to may start the indented line after it: `a:x '`
+        // over `  y` is refused too.
         let rest = view[end..].trim_start_matches(['\'', '/', '\\', ':', ' ', '\t']);
+        let rest = continued(rest);
         if rest.is_empty() || rest.starts_with(['\r', '\n', '[', ';', ')', ']', '}']) {
             continue;
         }
