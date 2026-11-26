@@ -2802,32 +2802,63 @@ pub fn check(
     // `{.ns.g::1;x} peach 1 2`, and runs `{b:0;b::1;b+x} peach 1 2`. Only a
     // lambda written out as peach's left operand, and only its own body: a
     // nested lambda may never be called. A file symbol, `` `:f set t ``,
-    // writes no global.
+    // writes no global. peach's left operand may be projected first,
+    // `{[a;b] g::b; b}[1] peach 1 2`; the lambda may be peach's first slot,
+    // `peach[{g::x;x};1 2]`; and a unary lambda under `':` is each-parallel,
+    // the same threads: q 5 with `-s 2` refuses all three (#2690).
     for scope in &scopes {
+        if code.as_bytes().get(scope.end) != Some(&b'}') {
+            continue;
+        }
         let after = code.get(scope.end + 1..).unwrap_or("");
-        let next = after.trim_start_matches([' ', '\t']);
-        if code.as_bytes().get(scope.end) != Some(&b'}')
-            || !re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+        let mut next = after.trim_start_matches([' ', '\t']);
+        if next.starts_with('[')
+            && let Some(close) = crate::matching(next, 0, b'[', b']')
         {
+            next = next[close..].trim_start_matches([' ', '\t']);
+        }
+        let unary = if scope.named {
+            scope.params.len() == 1
+        } else {
+            !re!(r"(?:^|[^A-Za-z0-9_.`])[yz](?:[^A-Za-z0-9_]|$)").is_match(&scope.direct)
+        };
+        let parallel = re!(r"^peach(?:[^A-Za-z0-9_.]|$)").is_match(next)
+            || (unary && after.starts_with("':"))
+            || re!(r"(?:^|[^A-Za-z0-9_.])peach[ \t]*\[[ \t]*$").is_match(&code[..scope.start]);
+        if !parallel {
             continue;
         }
         let view = local_view(&scope.direct, false);
         // A dotted name is global with one colon too: q 5 with `-s 2`
-        // refuses `{.ns.a:x} peach 1 2` alike (#1204).
-        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*(::?)")
+        // refuses `{.ns.a:x} peach 1 2` alike (#1204). So is an assignment
+        // through an operator, `.ns.v+:x` and `g,:x` (#2688).
+        let assigned = re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*([-+*%&|,^#_!~=<>]?)(::?)")
             .captures_iter(&view)
             .find(|m| {
                 let whole = m.get(0).unwrap();
-                (&m[2] == "::" || m[1].starts_with('.'))
+                (&m[3] == "::" || m[1].starts_with('.') || !m[2].is_empty())
                     && boundary(&view, whole.start())
                     && assigns_value(&view[whole.end()..])
                     && !scope.locals.contains(&m[1])
+                    && !scope.params.contains(&m[1])
             })
             .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
-        let set = re!(r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+set(?:[^A-Za-z0-9_.]|$)")
-            .captures_iter(&scope.direct)
-            .find(|m| crate::boundary(&scope.direct, m.get(0).unwrap().start()))
-            .map(|m| (m.get(0).unwrap().start(), m[1].to_string()));
+        // A global named by a symbol: `` `g set ``, `set[`g;..]`, `` `t upsert ``,
+        // `` `t insert ``, their bracket forms, and an amend of it,
+        // `@[`g;i;f;..]` or `.[`g;i;f;..]` - q 5 with `-s 2` refuses each
+        // (#2689).
+        let set = re!(
+            r"`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+(?:set|upsert|insert)(?:[^A-Za-z0-9_.]|$)|\b(?:set|upsert|insert)[ \t]*\[[ \t]*`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;|[@.]\[[ \t]*`(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*;[^;\]]*;"
+        )
+        .captures_iter(&scope.direct)
+        .find(|m| {
+            let at = m.get(0).unwrap().start();
+            crate::boundary(&scope.direct, at) || scope.direct[at..].starts_with('@')
+        })
+        .map(|m| {
+            let name = m.get(1).or(m.get(2)).or(m.get(3)).unwrap();
+            (m.get(0).unwrap().start(), name.as_str().to_string())
+        });
         let first = match (assigned, set) {
             (Some(a), Some(b)) => Some(if a.0 <= b.0 { a } else { b }),
             (a, b) => a.or(b),

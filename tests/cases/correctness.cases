@@ -1209,6 +1209,32 @@ r3:{.ns.g::1;x} peach 1 2
 r1:{.ns.a:x} peach 1 2
 r2:{.ns.b : x;x} peach 1 2
 
+=== QB024 | a global assigned through an operator (q 5 -s 2: {.ns.v+:x;x} peach 1 2 and {g,:x;x} peach 1 2 are 'noupdate, #2688)
+r1:{.ns.v+:x;x} peach 1 2
+r2:{.ns.v,:x;x} peach 1 2
+r3:{g,:x;x} peach 1 2
+
+=== QB024 | a global written by name: upsert, insert, an amend, set in brackets (q 5 -s 2: each is 'noupdate, #2689)
+r1:{`t upsert ([]a:enlist x);x} peach 1 2
+r2:{`t insert enlist x;x} peach 1 2
+r3:{@[`g;();:;x];x} peach 1 2
+r4:{.[`g;();:;x];x} peach 1 2
+r5:{set[`g;x];x} peach 1 2
+r6:{upsert[`t;([]a:enlist x)];x} peach 1 2
+
+=== QB024 | peach in brackets, each-parallel, and a lambda projected before peach (q 5 -s 2: each is 'noupdate, #2690)
+r1:peach[{g::x;x};1 2]
+r2:{g::x;x}':[1 2]
+r3:{[a;b] g::a+b; b}[1] peach 1 2
+
+=== clean | a local written through an operator, a 2-slot @ index, a file symbol, and each-prior (#2688, #2689, #2690)
+r1:{b:0;b+:x;b} peach 1 2
+r2:{x+@[`g;0]} peach 1 2
+r3:{`:f upsert x;x} peach 1 2
+r4:{[a;b] g::a+b; b}':[1 2]
+r5:{@[x;0;:;1]} peach (1 2;3 4)
+r6:{x+:1;x} peach 1 2
+
 === clean | a peach lambda that writes only its locals, a file, or a nested lambda's global (#1144)
 r1:{a:1;a+x} peach 1 2
 r2:{`:f set x;x} peach 1 2
