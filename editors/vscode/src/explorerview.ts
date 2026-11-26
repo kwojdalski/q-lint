@@ -56,8 +56,9 @@ import { borrowWhenFree } from "./infoview";
 import { readInsight } from "./insightconfig";
 import type { Live } from "./live";
 import { QError } from "./qclient";
-import { blockAt } from "./statements";
+import { blockAt, lineContext } from "./statements";
 import { TABLE_INFO, HOVER_COLUMNS, readTableInfo, tableMarkdown, type TableInfo } from "./tableinfo";
+import { inStringOrComment } from "./temporal";
 
 const ICONS: Record<Node["kind"], string> = {
   namespace: "symbol-namespace",
@@ -351,7 +352,12 @@ export class ProcessExplorer implements TreeDataProvider<Node> {
     if (kept === undefined || this.live.activeLabel() !== kept.process || !insight().editorTableHover) {
       return undefined;
     }
-    const word = nameAt(document.lineAt(position.line).text, position.character);
+    // Not in a comment or a string, as the examples hover reads them
+    // (#1663): the word there names no table, and this hover asks the
+    // process about it (#2922).
+    const above = Array.from({ length: position.line + 1 }, (_, i) => document.lineAt(i).text);
+    const { commented, quoted } = lineContext(above);
+    const word = commented || inStringOrComment(above[position.line], position.character, quoted) ? undefined : nameAt(above[position.line], position.character);
     const entry = word === undefined ? undefined : tableNamed(kept.gathered, word);
     if (word === undefined || entry === undefined) {
       return undefined;
