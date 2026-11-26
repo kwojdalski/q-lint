@@ -1265,14 +1265,33 @@ fn hopen_literal(path: &str, source: &str, code: &str, comments: &str, out: &mut
 /// r w y, in either case, are refused whatever the argument. Others are only
 /// refused for some arguments - `"s"$()` is an empty symbol list, while
 /// `"s"$"abc"` is 'type - and depend on what is cast, so are not here.
+/// A character that is no letter names no type either, whatever is cast:
+/// KDB-X refuses `" "$"ab"`, `"1"$1`, `"_"$1` and `"9"$()`, and every other
+/// printable one but `*`, which hands its argument back (#2888).
 fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
-    for m in re!(concat!(r#""([A-Za-z])""#, blank!(), r"*\$")).captures_iter(comments) {
+    for m in re!(concat!(r#""([\x20-\x7e&&[^"\\]])""#, blank!(), r"*\$")).captures_iter(comments) {
         let whole = m.get(0).unwrap();
         // A string in the source - blank in `code` - and not inside a longer one.
         if code.as_bytes()[whole.start()] != b' ' || comments[..whole.start()].ends_with('\\') {
             continue;
         }
         let c = &m[1];
+        // Between two strings a `,`, a `;` or a blank has a quote on each
+        // side as well: `"a","$"` and `("x";"$y")`. So for these the quote
+        // has to open a string.
+        if !c.chars().all(|c| c.is_ascii_alphabetic()) {
+            if c == "*" || !opens_string(comments, whole.start()) {
+                continue;
+            }
+            out.push(Finding::at(
+                path,
+                source,
+                whole.start(),
+                "QT030",
+                format!("`\"{c}\"$` casts to a type q does not have: 'type"),
+            ));
+            continue;
+        }
         // QT031. An uppercase cast parses text, so it takes a string: q 5
         // `"J"$1`, `"J"$1 2`, `"D"$20230101` and `"S"$`a` are each 'type.
         // `"C"$` is the exception for an atom: q 5 hands `1`, `` `a ``,
@@ -1312,6 +1331,23 @@ fn cast_character(path: &str, source: &str, code: &str, comments: &str, out: &mu
             ));
         }
     }
+}
+
+/// Whether the quote at `at` opens a string, rather than closing one:
+/// read from the start of `comments`, where every quote left is a string's
+/// and a backslash inside one escapes the next character.
+fn opens_string(comments: &str, at: usize) -> bool {
+    let (mut inside, mut escaped) = (false, false);
+    for &b in &comments.as_bytes()[..at] {
+        if escaped {
+            escaped = false;
+        } else if inside && b == b'\\' {
+            escaped = true;
+        } else if b == b'"' {
+            inside = !inside;
+        }
+    }
+    !inside
 }
 
 /// Whether a literal QT031 matched is one atom: no space, at most one

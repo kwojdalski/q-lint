@@ -291,6 +291,19 @@ h2:hopen `:localhost:5000
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
 
+=== QT030 profile: general | a character that is no letter is no type either (#2888; q 5: each is 'type)
+r:" "$"ab"
+r2:"1"$1
+r3:"_"$1
+r4:"9"$()
+r5:f[" " $ x]
+
+=== clean profile: general | but the star hands its argument back, and a quote between two strings opens no string (#2888; q 5: 1, "a$", ("x";"$y"))
+a:"*"$1
+b:"a","$"
+c:("x";"$y")
+d:"a\"","$b"
+
 === clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
 a:1b
 mode:"w"
