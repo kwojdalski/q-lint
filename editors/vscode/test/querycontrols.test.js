@@ -635,3 +635,19 @@ test("a line -3! writes is cut a character short of the width, as q cuts it; a t
   assert.deepStrictEqual(width({ kind: "list", attr: 0, v: [til(50), til(50)] }), [80, 80]);
   assert.deepStrictEqual(width({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: ["a", "b"] }, v: { kind: "list", attr: 0, v: [til(100), til(100)] } }), [80, 80]);
 });
+
+test("the process's \\P is asked once a connection, again after a statement that sets it, and never of a gateway call (#2570)", async () => {
+  const atom = { value: 0.1 + 0.2, type: -9, message: Buffer.from("0100000011000000f7343333333333d33f", "hex") };
+  const sent = [];
+  let p = 0;
+  const fake = { evaluate: async (text) => (sent.push(text), text === "\\P" ? { value: p, type: -6 } : text.startsWith("\\P ") ? ((p = Number(text.slice(3))), { value: null, type: 101 }) : atom) };
+  const options = { size: [25, 80], limit: 10, unlimited: false, grid: false };
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
+  assert.deepStrictEqual((await runUnwrapped(fake, ["x"], options)).text, ["0.30000000000000004"]);
+  assert.deepStrictEqual(sent, ["x", "\\P", "x"]);
+  assert.deepStrictEqual((await runUnwrapped(fake, ["\\P 3", "x"], options)).text, ["0.3"]);
+  assert.deepStrictEqual(sent.slice(3), ["\\P 3", "x", "\\P"]);
+  sent.length = 0;
+  await runUnwrapped({ evaluate: async (text) => (sent.push(text), atom) }, ['.gw.syncexec["x";`rdb]'], options);
+  assert.deepStrictEqual(sent, ['.gw.syncexec["x";`rdb]']);
+});
