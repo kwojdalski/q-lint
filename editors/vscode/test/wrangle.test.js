@@ -179,6 +179,17 @@ test("a filter on a general column matches the whole cell, and in takes one cell
   assert.strictEqual(f("like", '"a*"'), 'select from t where s like "a*"');
 });
 
+test("a like filter on a symbol column starts from the cell's text as a string, the pattern like takes (#3092)", () => {
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "like"), 'enlist "a"');
+  assert.strictEqual(w.filterValue(payload({ cells: [['a"b c', "b"], ["1.5", ""], ['"x y"', ',"z"'], ["a", "b"]] }), 0, 0, "like"), '"a\\"b c"');
+  // An enumeration is its symbols' text; a string is the literal it was.
+  assert.strictEqual(w.filterValue(payload(), 3, 1, "like"), 'enlist "b"');
+  assert.strictEqual(w.filterValue(payload(), 2, 0, "like"), '"x y"');
+  // Every other test starts from the cell's literal.
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "="), "`a");
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "in"), "`a");
+});
+
 test("a column named i is refused: in q-sql i is the row's index, whatever the table holds (#3081, #3089)", () => {
   assert.match(w.columnProblem("i"), /the column i cannot be named in q-sql \(i there is the row's index/);
   assert.strictEqual(w.columnProblem("ix"), undefined);

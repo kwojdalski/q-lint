@@ -41,6 +41,7 @@ import {
   columnProblem,
   editStatement,
   filterOps,
+  filterValue,
   guessTable,
   stepText,
   stringColumn,
@@ -234,7 +235,7 @@ export class ResultTools {
         const value = await window.showInputBox({
           title: `q-lint: keep the rows where ${column} ${op.label} ...`,
           prompt: "A q expression",
-          value: (payload.cells[at]?.length ?? 0) > 0 ? cellLiteral(payload, at, 0) : "",
+          value: (payload.cells[at]?.length ?? 0) > 0 ? filterValue(payload, at, 0, op.label as FilterOp) : "",
           validateInput: (v) => (v.trim() === "" ? "Give a q value" : undefined),
         });
         return value === undefined ? undefined : { kind, column, op: op.label as FilterOp, value, strings, general };

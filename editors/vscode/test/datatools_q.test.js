@@ -407,3 +407,17 @@ test("= and in on a column of lists or tables run on the value they start from, 
   const lists = await connection.queryGrid(statements(w.wrangleQuery("([] s:(1 2;3 4;5 6); v:1 2 3)", [{ kind: "filter", column: "s", op: "in", value: "(1 2;5 6)", general: true }])), SIZE, 1000);
   assert.deepStrictEqual(cells(lists, "v"), ["1", "3"]);
 });
+
+test("like on a symbol or enumerated column runs on the value it starts from (#3092)", { skip }, async (t) => {
+  const q = await startQ(() => "e:`ab`cd`ef\n");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const from of ["([] s:`ab`cd`ef; v:1 2 3)", "([] s:`e$`ab`cd`ef; v:1 2 3)"]) {
+    const base = (await connection.queryGrid(statements(from), SIZE, 1000)).grid;
+    const code = w.wrangleQuery(from, [{ kind: "filter", column: "s", op: "like", value: w.filterValue(base, 0, 0, "like") }]);
+    const answer = await connection.queryGrid(statements(code), SIZE, 1000);
+    assert.ok(answer.ok, `${code}: ${answer.error}`);
+    assert.deepStrictEqual(cells(answer, "v"), ["1"], code);
+  }
+});

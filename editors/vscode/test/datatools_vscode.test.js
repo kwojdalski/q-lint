@@ -157,6 +157,14 @@ test("a filter step says whether its column is a general list, which is matched 
   assert.deepStrictEqual(tools.wrangleSteps("rdb", live.ran.at(-1).code), [{ kind: "filter", column: "s", op: "=", value: "1 2", strings: false, general: true }]);
 });
 
+test("a like filter on a symbol column is pre-filled with a string, not the symbol like refuses (#3092)", async () => {
+  const { live } = setUp();
+  stub.picks.push("$(filter) Filter rows...", "like");
+  stub.inputs.push((options) => (assert.strictEqual(options.value, 'enlist "a"'), options.value));
+  await run(RESULT_VIEW.wrangleColumn, { webviewSection: "column", column: 0 });
+  assert.strictEqual(live.ran.at(-1).code, 'select from (select from t) where sym like enlist "a"');
+});
+
 test("a wrangle step on a column named i is refused: a filter or a cast of it reads the row's index (#3089)", async () => {
   const { live } = setUp();
   live.shown = { process: "rdb", code: "t", payload: { ...payload, names: ["i", "px"], types: [7, 9], cells: [["10", "20"], ["1.5", "2"]], raw: [[10, 20], [1.5, 2]] } };

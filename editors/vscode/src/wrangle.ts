@@ -20,7 +20,7 @@
 // symbol under `~`. Every row with those values is changed.
 import { charKinds } from "./explorer";
 import type { GridPayload } from "./grid";
-import { atomLiteral, plainName, rawColumn, readable, symbolLiteral } from "./qliteral";
+import { atomLiteral, plainName, qString, rawColumn, readable, symbolLiteral } from "./qliteral";
 import { blockDepth, statements } from "./statements";
 
 export const FILTER_OPS = ["=", "<>", "<", ">", "<=", ">=", "like", "in", "null", "not null"] as const;
@@ -347,4 +347,15 @@ export function editStatement(payload: GridPayload, column: number, row: number,
 export function cellLiteral(payload: GridPayload, column: number, row: number): string {
   const raw = rawColumn(payload, column);
   return atomLiteral(payload.types[column], payload.cells[column]?.[row] ?? "", raw === undefined ? undefined : raw[row]).literal;
+}
+
+/// The value a filter's prompt starts from: the cell's literal, but for
+/// `like` on a symbol or enumerated column its text as a string, the
+/// pattern `like` takes - a symbol there is 'type (#3092).
+export function filterValue(payload: GridPayload, column: number, row: number, op: FilterOp): string {
+  const type = payload.types[column];
+  if (op === "like" && (type === 11 || (type >= 20 && type <= 76))) {
+    return qString(payload.cells[column]?.[row] ?? "");
+  }
+  return cellLiteral(payload, column, row);
 }
