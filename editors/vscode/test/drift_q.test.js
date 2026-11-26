@@ -236,3 +236,33 @@ test("a function with a logpoint compares the same, is covered, and takes a relo
   assert.strictEqual((await c.evaluate('"f"$.ns.h 1')).value, 21);
   assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, ["f", ".ns.h"]);
 });
+
+// `use` answers the module's `export`, a dictionary of the functions
+// themselves: a reload of `.m.modd.fd` alone left `md.fd` the old one.
+test("a reloaded module function is the one its use handles call (#2972)", { skip }, async (t) => {
+  const mod = "hlp:{x*2}\nfd:{hlp x+1}\nexport:([fd])\n";
+  const script = "md:use`modd\n.app.sub.h:use`modd\nother:([fd:{hlp x+1}])\nfv::md\n";
+  const c = await connect(t, script, { "modd/init.q": mod });
+  const value = async (text) => Number((await c.evaluate(`"f"$${text}`)).value);
+  assert.strictEqual(await value("md.fd 1"), 4);
+  const before = definitions(mod, "modd/init.q");
+  const now = definitions(mod.replace("hlp x+1", "hlp x+2"), "modd/init.q");
+  const plan = reloadPlan(changedSince(before, now), await states(c, now));
+  assert.deepStrictEqual(plan.send.map((s) => s.name), [".m.modd.fd"]);
+  const [s] = plan.send;
+  assert.strictEqual(await c.call(REDEFINE, s.name, s.held, s.text), s.text);
+  assert.strictEqual(await value(".m.modd.fd 1"), 6);
+  // The handles the process holds, and the next `use`, call the new one.
+  assert.strictEqual(await value("md.fd 1"), 6);
+  assert.strictEqual(await value(".app.sub.h.fd 1"), 6);
+  assert.strictEqual(await value("(use`modd)[`fd] 1"), 6);
+  // A dictionary that is not the module's is left alone, and no view is evaluated.
+  assert.strictEqual((await c.evaluate(".Q.s1 other")).value, "(,`fd)!,{hlp x+1}");
+  assert.deepStrictEqual((await c.evaluate('string system"B"')).value, ["fv"]);
+  // With a logpoint on it, what the module exported is still found.
+  await addLogpoint((...sent) => c.call(...sent), ".m.modd.fd");
+  const held = (await states(c, now)).get(".m.modd.fd").text;
+  await redefineKeepingLogpoint((...sent) => c.call(...sent), ".m.modd.fd", held, "{hlp x+3}");
+  assert.strictEqual(await value("md.fd 1"), 8);
+  assert.strictEqual(await value(".m.modd.fd 1"), 8);
+});

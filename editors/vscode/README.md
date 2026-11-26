@@ -2037,7 +2037,12 @@ new one, or one the process does not hold as a lambda is listed as not
 sent. You are asked on every save that sends something, until you pick
 **Reload on Every Save** for that file and process, which lasts until the
 window closes or the setting is turned off; a production process is never
-offered it.
+offered it. A KDB-X module's function (`.m.<module>.<name>`) is replaced
+in what the module exports too: in its `export`, which the next `use`
+answers, and in every global holding what it exported - `` m:use`mymod ``
+keeps the functions themselves, so `m.f` would otherwise run the old one.
+A handle kept in a local or a projection keeps what it has. **Redefine on
+Process** does the same.
 
 **Find Callers in Process**, on a function in the explorer or the name
 under the cursor, lists the loaded functions that call it, read from what q

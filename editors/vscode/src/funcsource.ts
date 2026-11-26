@@ -56,6 +56,32 @@ export const SOURCE = [
   ` \`type\`text\`ctx\`params!("f"$t;$[100h=t;last v;${FULL_TEXT}[${TEXT_LIMIT};f]];$[100h=t;string first v 3;""];$[100h=t;(),v 1;\`$()])}`,
 ].join("\n");
 
+/// A q function `{[nm;olds;new]}`: when `nm` is a KDB-X module's function
+/// (`.m.<module>.<name>`) the module exports - as one of `olds`, what the
+/// name held - puts `new` in its place in the module's `export`, which is
+/// what `use` answers, and in every global that holds what the module
+/// exported: `` m:use`mymod `` keeps the functions themselves, not their
+/// names, so `m.f` went on running the old one (#2972). A handle kept
+/// anywhere else - a local, a projection - is a reference like any other.
+const EXPORTED = [
+  "{[nm;olds;new]",
+  " p:` vs nm;if[not(3<count p)&`m~p 1;:(::)];",
+  " e:` sv(-1_p),`export;was:@[get;e;{::}];",
+  " if[not 99h=type was;:(::)];",
+  " i:where{[o;v]any v~/:o}[olds]each value was;if[0=count i;:(::)];",
+  " if[(last p)in key[was]i;i:i where(last p)=key[was]i];",
+  " now:@[was;key[was]i;:;new];e set now;",
+  " todo:enlist`.;seen:`$();",
+  " while[(count todo)&1000>count seen;",
+  "  ns:first todo;todo:1_todo;seen,:ns;",
+  "  d:@[get;ns;{()!()}];k:((key d)except`)except$[ns~`.;views[];`$()];",
+  "  kids:$[ns~`.;`$();k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  "  todo,:$[ns~`.;` sv'`,'(key`)except`q`Q`h`j`o`qlint;` sv'ns,'kids];",
+  "  k:k except kids;k:k where was~/:d k;",
+  "  {x set y}[;now]each $[ns~`.;k;` sv'ns,'k]];",
+  " }",
+].join("\n");
+
 export const REDEFINE = [
   "{[nm;was;src]",
   " nm:`$(),nm;if[nm in views[];'\"not a lambda on the process\"];old:get nm;src:(),src;",
@@ -63,7 +89,8 @@ export const REDEFINE = [
   " if[not 100h=type old;'\"not a lambda on the process\"];",
   // `was` is the function's own text, though a logpoint is in what the
   // name holds (#2971).
-  ` if[not((),was)~last value first ${ORIGINAL}[nm;old];'"changed on the process since it was opened"];`,
+  ` own:first ${ORIGINAL}[nm;old];`,
+  " if[not((),was)~last value own;'\"changed on the process since it was opened\"];",
   " c:first(value old)3;d:system\"d\";",
   " system\"d \",$[null c;\".\";\".\",string c];",
   " r:@[{(1b;value x)};src;{(0b;x)}];",
@@ -71,6 +98,7 @@ export const REDEFINE = [
   " if[not first r;'last r];",
   " if[not 100h=type last r;'\"the text is not a function\"];",
   " nm set last r;",
+  ` ${EXPORTED}[nm;(old;own);last r];`,
   " last value last r}",
 ].join("\n");
 
