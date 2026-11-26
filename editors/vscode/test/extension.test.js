@@ -16,7 +16,7 @@ const within = (promise, ms) => Promise.race([promise, sleep(ms).then(() => "sti
 /// A fresh copy of the extension over stand-ins. `behaviour(command)` says
 /// what the server named `command` does when started: "ok", "fail" or
 /// "hang" (it never answers `initialize`).
-function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir() } = {}) {
+function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir(), folders = undefined } = {}) {
   const world = { clients: [], errors: [], infos: [], commands: {}, started: [], queried: [], executed: [] };
   class LanguageClient {
     constructor(id, name, server, options) {
@@ -69,7 +69,7 @@ function load({ settings = {}, behaviour = () => "ok", extensionPath = os.tmpdir
       },
     },
     workspace: {
-      workspaceFolders: undefined,
+      workspaceFolders: folders,
       getConfiguration: () => ({
         get: (key, fallback) => (key in settings ? settings[key] : fallback),
         inspect: (key) => (key in settings ? { globalValue: settings[key] } : {}),
@@ -256,6 +256,21 @@ test("on Windows a serverPath naming a .cmd wrapper is started through a shell, 
   await w.extension.activate(w.context);
   await sleep(100);
   assert.deepStrictEqual(w.clients[0].server.run, { command: '"C:\\my tools\\qlinter.cmd"', args: ['"--lsp"'], options: { shell: true } });
+  await w.extension.deactivate();
+});
+
+// A relative configFile was joined to the first folder's fsPath, a
+// vscode-vfs one's /acme/desk: qlinter exited 2 on a file not there (#2516).
+test("a relative configFile is the first folder on disk's, not a virtual first folder's", { skip: process.platform === "win32" && "POSIX paths" }, async () => {
+  const virtual = { scheme: "vscode-vfs", fsPath: "/acme/desk", path: "/acme/desk" };
+  const local = { scheme: "file", fsPath: "/w/local", path: "/w/local" };
+  const w = load({ settings: { serverPath: "/opt/qlinter", configFile: "qlinter.toml" }, folders: [{ uri: virtual, name: "desk", index: 0 }, { uri: local, name: "local", index: 1 }] });
+  await w.extension.activate(w.context);
+  await sleep(100);
+  const config = (args) => args[args.indexOf("--config") + 1];
+  assert.strictEqual(config(w.clients[0].server.run.args), "/w/local/qlinter.toml");
+  assert.strictEqual(config(w.linter().args), "/w/local/qlinter.toml");
+  assert.strictEqual(config(w.baseline().args), "/w/local/qlinter.toml");
   await w.extension.deactivate();
 });
 

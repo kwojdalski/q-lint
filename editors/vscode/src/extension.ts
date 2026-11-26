@@ -344,10 +344,10 @@ export async function activate(
     context,
     live,
     () => {
-      const { serverPath } = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+      const { serverPath } = launch(workspace.getConfiguration("q-lint"), diskFolder());
       return serverPath ? [serverPath] : [bundledServer(context), pathServer()].filter((c): c is string => !!c);
     },
-    () => lintToolArgs(launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath).args),
+    () => lintToolArgs(launch(workspace.getConfiguration("q-lint"), diskFolder()).args),
   );
   const chatParticipant = registerChat(context, live);
   registerQsqlDraft(context, live);
@@ -392,7 +392,7 @@ export async function activate(
   // The dashboard's qlinter is the one the server is started from, with the
   // profile and configuration file the settings give it.
   const problemsDashboard = registerProblemsDashboard(context, () => {
-    const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const settings = launch(workspace.getConfiguration("q-lint"), diskFolder());
     const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
@@ -404,7 +404,7 @@ export async function activate(
   registerQsqlTools(context);
   const errorExplainer = registerErrorExplainer(context, live);
   registerBaseline(context, () => {
-    const settings = launch(workspace.getConfiguration("q-lint"), workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const settings = launch(workspace.getConfiguration("q-lint"), diskFolder());
     const command = settings.serverPath || serverBinary(context);
     return { command, args: settings.args.filter((a) => a !== "--lsp") };
   });
@@ -514,6 +514,13 @@ function executable(command: string, args: string[]): { command: string; args: s
   return run.shell ? { command: run.command, args: run.args, options: { shell: true } } : { command, args };
 }
 
+/// The first workspace folder on disk, which a relative
+/// `q-lint.configFile` is read against: a virtual one's (vscode-vfs) path is
+/// not on this disk, and qlinter exited 2 on it (#2516).
+function diskFolder(): string | undefined {
+  return workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath;
+}
+
 function stop(): Promise<void> {
   return serial.run(async () => {
     await client?.stop().catch(() => {});
@@ -525,7 +532,7 @@ function stop(): Promise<void> {
 async function start(context: ExtensionContext): Promise<void> {
   const settings = launch(
     workspace.getConfiguration("q-lint"),
-    workspace.workspaceFolders?.[0]?.uri.fsPath,
+    diskFolder(),
   );
   launched = undefined;
   if (!settings.enabled) {
