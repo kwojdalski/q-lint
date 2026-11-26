@@ -313,8 +313,26 @@ export function ruleValue(op: RuleOp, text: string, numeric: boolean): number | 
 /// A colour as Excel's ARGB.
 const argb = (hex: string): string => `FF${hex.slice(1).toUpperCase()}`;
 
-/// Text as an Excel formula's string literal.
-const formulaText = (text: string): string => `"${text.replace(/"/g, '""')}"`;
+/// Text as an Excel formula's string literal: the characters XML cannot
+/// hold dropped, as the cells drop them, and over 255 characters - the
+/// most Excel takes in one literal - literals joined with `&` (#2660).
+const formulaText = (text: string): string => {
+  const kept = text.replace(NOT_XML, "");
+  const parts: string[] = [];
+  for (let at = 0; at < kept.length || parts.length === 0; ) {
+    let end = Math.min(at + 255, kept.length);
+    // A surrogate pair is not split between two literals.
+    if (end < kept.length && /[\ud800-\udbff]/.test(kept[end - 1])) {
+      end--;
+    }
+    parts.push(`"${kept.slice(at, end).replace(/"/g, '""')}"`);
+    at = end;
+  }
+  return parts.join("&");
+};
+
+/// The characters XML 1.0 cannot hold at all, as xlsx.ts's xmlText drops them.
+const NOT_XML = /[^\t\n\r\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10FFFF}]/gu;
 
 /// A top or bottom N rule's Nth greatest or least value of column `c` over
 /// every row `payload` holds, ties included, as the grid's rule ranks them;
@@ -435,7 +453,8 @@ export function xlsxRules(
   return { dxfs, formatting };
 }
 
-/// Text in XML character data or an attribute.
+/// Text in XML character data or an attribute, without the characters
+/// XML cannot hold (#2660).
 export function xmlAttr(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return text.replace(NOT_XML, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
