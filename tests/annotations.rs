@@ -2296,6 +2296,49 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
 }
 
 #[test]
+fn a_file_is_named_under_its_folder_where_the_workspace_has_several() {
+    // #2963. Folders A and B each hold a lib.q that defines `ff`. A hover
+    // and a link's tooltip named both `lib.q`, so nothing said which
+    // project a signature came from; with more than one folder each is
+    // named under its own, as an editor names it.
+    let dir = tempfile::tempdir().unwrap();
+    for (folder, lib) in [
+        ("A", "/ adds\nff:{[a;b] a}\n"),
+        ("B", "/ ident\nff:{[c] c}\n"),
+    ] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        std::fs::write(dir.path().join(folder).join("lib.q"), lib).unwrap();
+    }
+    let text = "\\l lib.q\nff[1]\n";
+    std::fs::write(dir.path().join("B").join("main.q"), text).unwrap();
+    let (mut server, _) = Server::over(&dir.path().join("A"), &[], client(), Value::Null);
+    let main = server.open(&dir.path().join("B"), "main.q", text);
+    let tooltips = |server: &mut Server| -> Vec<String> {
+        let reply = server.whole("textDocument/documentLink", &main, json!({}));
+        let links = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"));
+        links
+            .iter()
+            .map(|l| l["tooltip"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // One folder: no folder's name leads.
+    assert_eq!(tooltips(&mut server), ["Open lib.q"]);
+    let b = file_uri(&dir.path().join("B"));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[{"uri":b,"name":"B"}],"removed":[]}}}),
+    );
+    assert_eq!(tooltips(&mut server), ["Open B/lib.q"]);
+    let words = hover_text(&mut server, &main, 1, 0);
+    assert!(
+        words.contains("B/lib.q") && words.contains("A/lib.q"),
+        "{words}"
+    );
+}
+
+#[test]
 fn each_workspace_folder_is_the_root_of_its_own_relative_loads() {
     // #2045. Folders A and B each hold main.q (`\l lib.q`) and lib.q. A q
     // started in B loads B's lib.q, so B's main.q leads there, and renaming
