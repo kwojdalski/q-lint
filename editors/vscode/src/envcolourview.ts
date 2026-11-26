@@ -30,7 +30,7 @@ export class EnvironmentColour {
 
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "activeProcess" | "onDidChange">,
+    private readonly live: Pick<Live, "activeProcess" | "onDidChange"> & Partial<Pick<Live, "reconnectingProcess">>,
   ) {
     context.subscriptions.push(
       workspace.onDidChangeConfiguration((event) => {
@@ -88,7 +88,9 @@ export class EnvironmentColour {
   }
 
   private draw(): void {
-    const process = this.live.activeProcess();
+    const connected = this.live.activeProcess();
+    // Abort's reconnect: queries still go there, so its colour stays (#3018).
+    const process = connected ?? this.live.reconnectingProcess?.();
     const colours = readEnvColours(workspace.getConfiguration("q-lint").get<unknown>("processes.environmentColor.colors"));
     const found = process === undefined ? undefined : envColourOf(process.tags, colours);
     if (process === undefined || found === undefined) {
@@ -103,7 +105,7 @@ export class EnvironmentColour {
     this.item ??= window.createStatusBarItem("q-lint.environment", StatusBarAlignment.Left, 49);
     this.item.name = "q-lint: environment colour";
     this.item.text = `$(circle-large-filled) ${iconsEscaped(found.tag.toUpperCase())}`;
-    this.item.tooltip = `Connected to ${process.label}, tagged ${found.tag} (q-lint.processes.environmentColor).`;
+    this.item.tooltip = `${connected === undefined ? "Reconnecting" : "Connected"} to ${process.label}, tagged ${found.tag} (q-lint.processes.environmentColor).`;
     this.item.backgroundColor = paint.background === undefined ? undefined : new ThemeColor(paint.background);
     this.item.color = paint.background !== undefined ? undefined : paint.hex ?? (paint.theme === undefined ? undefined : new ThemeColor(paint.theme));
     this.item.show();

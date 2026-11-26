@@ -799,3 +799,51 @@ test("two Run Lines during a bound file's connect each draw their result at thei
   assert.deepStrictEqual(answers[0], [0, ["2"]], JSON.stringify(answers));
   assert.ok(answers.every(([line, text]) => (line === 0) === (text[0] === "2")), JSON.stringify(answers));
 });
+
+// During a connect, and during Abort's reconnect - which waits, perhaps for
+// minutes, until the process is free - the bar said "not connected" and the
+// process's environment colour went, while a query sent then is sent there.
+test("the status bar says a connect and Abort's reconnect are under way, and the environment colour stays through the reconnect (#3018)", async (t) => {
+  const { EnvironmentColour } = require("../out/envcolourview.js");
+  let delay = 300;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => delay);
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("a", a.port, { tags: ["prod"] })], { "processes.environmentColor.enable": true });
+  const items = [];
+  const create = vscode.window.createStatusBarItem;
+  vscode.window.createStatusBarItem = (id, ...rest) => {
+    const item = { ...create(id, ...rest), id, shown: false, show() { this.shown = true; }, hide() { this.shown = false; }, dispose() {} };
+    items.push(item);
+    return item;
+  };
+  t.after(() => (vscode.window.createStatusBarItem = create));
+  new EnvironmentColour(context, live);
+  const colour = () => items.find((item) => item.id === "q-lint.environment");
+  const connect = live.connectTo("a");
+  await until(() => a.logins.length === 1);
+  assert.strictEqual(live.api().statusText(), "$(sync~spin) q: connecting to a");
+  assert.strictEqual(await connect, true);
+  assert.strictEqual(live.api().statusText(), "$(plug) q: a");
+  assert.strictEqual(colour().shown, true);
+  const slow = live.run("slow");
+  await until(() => live.isBusy());
+  delay = 400;
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  assert.strictEqual(live.api().statusText(), "$(sync~spin) q: reconnecting to a");
+  assert.strictEqual(colour().shown, true, "the colour of the process the next query goes to");
+  assert.match(colour().tooltip, /^Reconnecting to a, tagged prod/);
+  await until(() => live.activeLabel() === "a");
+  assert.strictEqual(live.api().statusText(), "$(plug) q: a");
+  assert.match(colour().tooltip, /^Connected to a, tagged prod/);
+  // Stopped by Disconnect, neither stays.
+  const again = live.run("slow");
+  await until(() => live.isBusy());
+  await stub.commands.get("q-lint.abortQuery")();
+  await again;
+  assert.strictEqual(colour().shown, true);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(colour().shown, false);
+  await until(() => live.api().statusText() === "$(debug-disconnect) q: not connected", 1000);
+  assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
+});

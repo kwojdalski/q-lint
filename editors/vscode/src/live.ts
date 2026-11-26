@@ -645,6 +645,9 @@ export class Live {
   /// as it becomes the active one: edited or tagged meanwhile, as it is now (#1700).
   private connectingTo: string | undefined;
   private connectingAs: Process | undefined;
+  /// Whether the connect under way is Abort's reconnect, which waits for
+  /// the process to be free.
+  private connectingAgain = false;
   /// Set by Disconnect, or a connect to another process, to stop a
   /// reconnect after an abort from trying again.
   private reconnectStopped = false;
@@ -1204,6 +1207,13 @@ export class Live {
     return this.connection?.isOpen ? this.active : undefined;
   }
 
+  /// The process Abort's reconnect is waiting for, until it connects or is
+  /// stopped: a query sent meanwhile goes there, so what marks the process
+  /// - its environment colour - stays while it does (#3018).
+  reconnectingProcess(): Process | undefined {
+    return this.connection === undefined && this.connecting !== undefined && this.connectingAgain && this.stopConnect?.signal.aborted !== true ? this.connectingAs : undefined;
+  }
+
   /// The process the file `uri` is bound to by Choose Connection for File,
   /// if any: where hot reload on save (#934) sends its definitions.
   fileBinding(uri: Uri): string | undefined {
@@ -1533,6 +1543,14 @@ export class Live {
       const { label: to, attempt, of } = this.reconnecting;
       this.status.text = `$(sync~spin) q: reconnecting to ${iconsEscaped(to)} (${attempt} of ${of})`;
       this.status.tooltip = `The connection to ${to} dropped; q-lint is reconnecting (q-lint.connection.autoReconnect). q-lint: Disconnect stops it.`;
+    } else if (this.connecting !== undefined && this.connectingAs !== undefined && this.stopConnect?.signal.aborted !== true) {
+      // A connect under way, and Abort's reconnect, which may wait minutes
+      // for the process to be free: not "not connected" (#3018).
+      const to = this.connectingAs.label;
+      this.status.text = `$(sync~spin) q: ${this.connectingAgain ? "reconnecting" : "connecting"} to ${iconsEscaped(to)}`;
+      this.status.tooltip = this.connectingAgain
+        ? `q-lint reconnects to ${to} once it is free of the query that was aborted; a query sent meanwhile waits and goes there. q-lint: Disconnect stops it.`
+        : `Connecting to ${to}. q-lint: Disconnect stops it.`;
     } else {
       this.status.text = "$(debug-disconnect) q: not connected";
       this.status.tooltip = "Click to connect to a q process.";
@@ -2373,6 +2391,7 @@ export class Live {
     this.stopConnect = cut;
     this.connectingTo = this.passwordKey(process);
     this.connectingAs = process;
+    this.connectingAgain = untilFree;
     this.connecting = (async () => {
       if (this.connection !== undefined) {
         const old = this.connection;
@@ -2475,7 +2494,11 @@ export class Live {
     })().finally(() => {
       this.connecting = undefined;
       this.connectingAs = undefined;
+      this.connectingAgain = false;
+      // A connect that failed leaves the bar saying so, not "connecting" (#3018).
+      this.showStatus();
     });
+    this.showStatus();
     return this.connecting;
   }
 
@@ -4190,10 +4213,6 @@ export class Live {
     this.running = undefined;
     this.connection = undefined;
     connection.abort();
-    this.showStatus();
-    // Said now: the reconnect may fail, and fires nothing then (#1702).
-    this.processesView.refresh();
-    this.changed.fire("disconnected");
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
@@ -4201,9 +4220,21 @@ export class Live {
     // to another address or user since it was connected has its password
     // stored for that one, never to be sent to where the connection was (#2124).
     const again = process.server === undefined ? (this.processes().find((p) => p.label === process.label) ?? process) : process;
-    void this.open(again, true).then((connected) => {
+    const disconnects = this.disconnects;
+    // Started before "disconnected" is said, for what hears it to find the
+    // reconnect under way (`reconnectingProcess`, #3018).
+    const reconnect = this.open(again, true);
+    this.showStatus();
+    // Said now: the reconnect may fail, and fires nothing then (#1702).
+    this.processesView.refresh();
+    this.changed.fire("disconnected");
+    void reconnect.then((connected) => {
       if (connected) {
         void window.showInformationMessage(plainMessage(`q-lint: reconnected to ${again.label}.`));
+      } else if (disconnects === this.disconnects && this.connection === undefined) {
+        // It failed, or a connect elsewhere replaced it: no longer the
+        // process queries go to. Disconnect has said so itself.
+        this.changed.fire("disconnected");
       }
     });
     void window.showInformationMessage(
