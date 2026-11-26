@@ -1517,8 +1517,64 @@ fn k_writes(raw: &str, namespaces: &[(usize, String)]) -> Vec<String> {
         .collect()
 }
 
+/// Where `system` is handed a `d` command joined at run time, `system "d ",ns`:
+/// a switch to a context the text does not name. KDB-X runs `ns:".app"`,
+/// `system "d ",ns`, `dfun:{x}`, and `` key `.app `` is ``` ``dfun ``` (#2813).
+/// `view` has strings blank, and `raw` is the source.
+fn computed_contexts(raw: &str, view: &str) -> Vec<usize> {
+    re!(r"\bsystem\b")
+        .find_iter(view)
+        .filter(|m| {
+            boundary(view, m.start())
+                && re!(r#"^[ \t]*[(\[]?[ \t]*"d[ \t][^"\n]*"[ \t]*,"#).is_match(&raw[m.end()..])
+        })
+        .map(|m| m.start())
+        .collect()
+}
+
+/// The context `unplaced` gives a stretch of code whose context is computed:
+/// no name is written under it, so one `resolved` there is told apart.
+const UNPLACED: &str = "?";
+
+/// `namespaces` with each stretch of top-level code after a computed
+/// `system "d ",ns` - up to the next switch that names its context - put in
+/// `UNPLACED`, so what is assigned there is a global of no known name
+/// rather than one of the context before it. The switch stays for the call
+/// to end in a lambda, so one there is left to `dynamic` to list.
+fn unplaced(
+    code: &str,
+    raw: &str,
+    scopes: &[Scope],
+    namespaces: &[(usize, String)],
+) -> Vec<(usize, String)> {
+    let mut placed = namespaces.to_vec();
+    for at in computed_contexts(raw, code) {
+        if scope_at(scopes, at).is_some() {
+            continue;
+        }
+        let named = |p: usize| {
+            let end = code[p..].find('\n').map_or(code.len(), |i| p + i + 1);
+            !raw[..p].ends_with('\n') || opens(&code[p..end], &raw[p..end]).is_some()
+        };
+        let end = namespaces
+            .iter()
+            .map(|(p, _)| *p)
+            .find(|&p| p > at && named(p))
+            .unwrap_or(code.len());
+        for (p, ns) in &mut placed {
+            if (at..end).contains(p) {
+                *ns = UNPLACED.into();
+            }
+        }
+        let after = placed.partition_point(|(p, _)| *p <= at);
+        placed.insert(after, (at, UNPLACED.into()));
+    }
+    placed
+}
+
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
+    let namespaces = unplaced(code, raw, &scopes, &namespaces);
     let mut globals = global_writes(code, raw, &scopes, &namespaces, resolved, true);
     for name in k_writes(raw, &namespaces) {
         globals.entry(name).or_default();
@@ -1535,6 +1591,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
         .1;
         globals.entry(resolved(&m[1], ns)).or_default();
     }
+    globals.retain(|name, _| !name.starts_with(UNPLACED));
     let lambdas = holds_functions(code, raw, &globals, &scopes, &namespaces)
         .into_iter()
         .filter_map(|(name, function)| function.then_some(name))
@@ -1713,7 +1770,9 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     names.sort();
     let mut relative: Vec<_> = relative.into_iter().collect();
     relative.sort();
-    let writes = global_writes(code, raw, &scopes, &namespaces, resolved, false);
+    let placed = unplaced(code, raw, &scopes, &namespaces);
+    let mut writes = global_writes(code, raw, &scopes, &placed, resolved, false);
+    writes.retain(|name, _| !name.starts_with(UNPLACED));
     let mut implicit_defines: Vec<_> = writes
         .iter()
         .filter(|(name, at)| !name.starts_with('.') && at.iter().any(|&a| a < first_switch))
@@ -1722,7 +1781,8 @@ pub fn references(code: &str, raw: &str, symbols: bool) -> crate::References {
     implicit_defines.sort();
     let mut defines: Vec<_> = writes
         .into_keys()
-        .chain(k_writes(raw, &namespaces))
+        .chain(k_writes(raw, &placed))
+        .filter(|name| !name.starts_with(UNPLACED))
         .collect();
     defines.sort();
     defines.dedup();
@@ -2159,7 +2219,8 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
 
 /// The places a name is reached by a value computed at run time, which no
 /// amount of reading resolves: `value "..."`, `get` of anything but a
-/// literal, a name built with `` ` sv ``, `set` into a computed name, and a
+/// literal, a name built with `` ` sv ``, `set` into a computed name, a
+/// switch to a computed context, and a
 /// load whose path is concatenated or that `value` runs from a string. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string. `call_time`
 /// holds the literal symbols `call_time` says are resolved where the lambda
@@ -2181,6 +2242,9 @@ fn dynamic(
     }
     for &at in moved {
         push(at, "load");
+    }
+    for at in computed_contexts(raw, view) {
+        push(at, "namespace");
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).

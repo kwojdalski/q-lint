@@ -596,6 +596,41 @@ fn system_applied_in_parentheses_by_dot_or_to_each_loads() {
 }
 
 #[test]
+fn a_context_switched_to_by_a_computed_name_is_dynamic() {
+    // KDB-X runs lib.q, and `key `.app` is ``dfun: the root has no `dfun`,
+    // and use.q's read of one is 'dfun (#2813).
+    let g = graph(
+        &[
+            (
+                "lib.q",
+                "ns:\".app\"\nsystem \"d \",ns\ndfun:{x}\n.abs.g:1\nsystem \"d .\"\nroot:2\n",
+            ),
+            ("use.q", "r:dfun\n"),
+            ("abs.q", "r:.abs.g+root\n"),
+        ],
+        false,
+    );
+    assert_eq!(kinds(&g, "lib.q"), [(2, "namespace")]);
+    assert!(deps(&g, "use.q").is_empty());
+    // A name written in full is where it says, and one after a switch that
+    // names its context is in that context.
+    assert_eq!(deps(&g, "abs.q"), ["lib.q"]);
+    // Bracketed, and in a lambda, where it is listed and moves nothing here.
+    let g = graph(
+        &[
+            (
+                "lib.q",
+                "f:{system[\"d \",string x]}\nkept:1\nsystem \"d .a\"\n",
+            ),
+            ("use.q", "r:kept\n"),
+        ],
+        false,
+    );
+    assert_eq!(kinds(&g, "lib.q"), [(1, "namespace")]);
+    assert_eq!(deps(&g, "use.q"), ["lib.q"]);
+}
+
+#[test]
 fn a_change_of_directory_in_a_lambda_moves_no_load_below_it() {
     // KDB-X: under `cdTo:{system "cd ",x}`, never called, `\l lib.q` loads
     // the lib.q beside the script, and `lf` is 1 (#2821). So under a lambda

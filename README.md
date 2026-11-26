@@ -294,7 +294,9 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
-`set` into a computed name, and a
+`set` into a computed name (an amend, `insert` or functional delete of one
+too), a `system "d ",ns` switching to a context joined at run time, listed as
+`namespace`, and a
 concatenated `system "l ",path` or a `value "\\l lib.q"`, both listed as
 `load`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument

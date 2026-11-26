@@ -1154,6 +1154,28 @@ fn a_foreign_keyword_in_a_script_loaded_under_a_context_is_read_there() {
 }
 
 #[test]
+fn a_name_assigned_under_a_computed_context_is_not_a_root_definition() {
+    // KDB-X runs lib.q, then use.q to 'dfun: `system "d ",ns` put `dfun` in
+    // `.app`, the context `ns` held (#2813).
+    let repo = Repo::new();
+    repo.write(
+        "lib.q",
+        "ns:\".app\"\nsystem \"d \",ns\ndfun:{x}\nsystem \"d .\"\nkept:1\n",
+    )
+    .write("use.q", "r:dfun\n")
+    .write("ok.q", "r:kept\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["use.q", "lib.q"]].concat()),
+        ["QF018"]
+    );
+    assert_eq!(
+        repo.codes(".", &[&style[..], &["ok.q", "lib.q"]].concat()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
     // q 5: after main.q's `\d .a` / `\l b.q`, the root has no `ff`, and
     // d.q's `h:{ff}` throws 'ff (#525).
