@@ -258,6 +258,26 @@ test("a shared process's password is kept by its folder and address, not its lab
   assert.notStrictEqual(keyOf(a, { label: "rdb", host: "h", port: 1 }), keyOf(b, { label: "rdb", host: "h", port: 1 }));
 });
 
+// Kept by the first folder's URI, a password given with the repository
+// opened alone was asked for again in a workspace with a folder before it,
+// and reordering the folders forgot them all (#2513).
+test("a shared process's password is kept by the folder whose list names it, whichever folder is first", async (t) => {
+  const q = await someQ(t);
+  const tools = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-tools-"));
+  const desk = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-desk-"));
+  const rdb = { label: "rdb", host: "127.0.0.1", port: q.port, user: "me" };
+  write(desk, [rdb]);
+  const { live, context } = await setUp(t, tools, { more: [desk] });
+  await sleep(50);
+  context.secrets.all.set(keyOf(desk, rdb), "pw-for-desk");
+  const asked = [];
+  stub.inputs.push((o) => (asked.push(o.title), "asked"));
+  assert.strictEqual(await live.connectTo(".qlint/rdb"), true);
+  assert.deepStrictEqual(asked, [], "the password given for desk's rdb is used");
+  assert.strictEqual(live.sharedFolder(".qlint/rdb"), require("vscode").Uri.file(desk).toString());
+  stub.inputs.length = 0;
+});
+
 test("in an untrusted workspace, a shared process brings no connect script, tunnel or launch", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
   write(dir, [{ label: "a", host: "localhost", port: 1, init: "evil[]", launch: { command: "rm" } }, { label: "b", host: "10.0.0.5", port: 1, ssh: "jump" }]);

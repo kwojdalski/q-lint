@@ -745,6 +745,9 @@ export class Live {
   /// The workspace's shared process list as last read (#955), when it is
   /// on and the file is there, and the watcher on the file.
   private shared: Discovered | undefined;
+  /// The folder (its URI) whose list names each shared process, by its
+  /// qualified label: what its password is kept by (#2513).
+  private sharedFolders = new Map<string, string>();
   private sharedWatcher: Disposable | undefined;
   /// Bumped by each read, so a slow one does not overwrite a later one.
   private sharedRead = 0;
@@ -1005,10 +1008,17 @@ export class Live {
   /// Where `process`'s password is kept: a shared-list process's by this
   /// folder and its address too (#1824).
   private passwordKey(process: Pick<Process, "label" | "server"> & Partial<Pick<Process, "host" | "port" | "user" | "tls" | "ssh">>): string {
-    const folder = workspace.workspaceFolders?.[0]?.uri.toString();
     return process.server === SHARED_SOURCE && process.host !== undefined && process.port !== undefined
-      ? sharedPasswordKey({ ...process, host: process.host, port: process.port }, folder ?? "")
+      ? sharedPasswordKey({ ...process, host: process.host, port: process.port }, this.sharedFolder(process.label))
       : passwordKey(process);
+  }
+
+  /// The folder (its URI) whose shared list names the process `label`
+  /// (qualified, `.qlint/rdb`): not the first folder, so opening the
+  /// repository in another workspace, or reordering its folders, keeps its
+  /// password (#2513). The first folder's for one no list names now.
+  sharedFolder(label: string): string {
+    return this.sharedFolders.get(label) ?? workspace.workspaceFolders?.[0]?.uri.toString() ?? "";
   }
 
   /// Read the shared list again. A process whose host, port or user changed
@@ -1058,12 +1068,18 @@ export class Live {
         }
         const merged = mergeShared(lists, workspace.workspaceFolders?.[0]?.uri.fsPath);
         const read = { ...merged, problems: [...merged.problems, ...broken] };
+        const uris = new Map(found.map(({ folder }) => [folder.uri.fsPath, folder.uri.toString()]));
+        const folderOf = new Map(read.processes.map((p, i) => [qualified(SHARED_SOURCE, p.label), uris.get(read.folders[i]) ?? ""]));
         const before = this.context.workspaceState.get<unknown>(SHARED_SEEN_KEY);
         const seen = parseProcesses(Array.isArray(before) ? before : [], true).processes;
         for (const label of passwordsToForget(seen, read.processes)) {
           const was = seen.find((p) => p.label === label);
           if (was !== undefined) {
-            await this.context.secrets.delete(this.passwordKey({ ...was, label: qualified(SHARED_SOURCE, label), server: SHARED_SOURCE }));
+            // Kept by the folder it was read from, or, read in another
+            // window, by the one that names it now.
+            const key = qualified(SHARED_SOURCE, label);
+            const folder = this.sharedFolders.get(key) ?? folderOf.get(key) ?? this.sharedFolder(key);
+            await this.context.secrets.delete(sharedPasswordKey({ ...was, label: key }, folder));
           }
         }
         await this.context.workspaceState.update(
@@ -1083,6 +1099,7 @@ export class Live {
           return;
         }
         this.shared = { server, state: { processes: read.processes, problems: read.problems, loading: false, removed: false, fetchedAt: Date.now() } };
+        this.sharedFolders = folderOf;
         if (read.secrets.length > 0) {
           void window.showWarningMessage(plainMessage(secretsWarning(read.secrets)));
         }
