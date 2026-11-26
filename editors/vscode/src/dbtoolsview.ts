@@ -47,7 +47,7 @@ const nameOf = (arg: TableArg): string | undefined =>
   typeof arg === "string" ? arg : arg !== null && typeof arg === "object" && typeof arg.name === "string" && (arg.kind === undefined || arg.kind === "table") ? arg.name : undefined;
 
 /// The tables of the root and how they are held, read in one call.
-const TABLES = "{[x] t:tables`.;(string t;string{@[{p:.Q.qp get x;$[1b~p;`partitioned;0b~p;`splayed;`memory]};x;`memory]}each t)}";
+export const TABLES = "{[x] t:tables`.;(string t;string{@[{p:.Q.qp get x;$[1b~p;`partitioned;0b~p;`splayed;`memory]};x;`memory]}each t)}";
 
 /// Columns a meta is read for at most.
 const META_COLUMNS = 10_000;
@@ -123,6 +123,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (off("columnManager")) return dbOff("columnManager");
     const table = await pickTable(live, arg, "Change a column of which table on disk?", ["partitioned", "splayed"]);
     if (table === undefined) return "no table";
+    if (off("columnManager")) return dbOff("columnManager");
     const got = await tableInfo(live, table);
     if (got === undefined) return "not read";
     const { process, info } = got;
@@ -136,6 +137,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     const { columns, everywhere } = columnsOf(info.columns.map((c) => c.name), readColumnDirs(dirs.value));
     const op = given ?? (await askOp(columns.filter((c) => c !== field)));
     if (op === undefined) return "cancelled";
+    if (off("columnManager")) return dbOff("columnManager");
     const problem = opProblem(op, columns, field, everywhere, Object.fromEntries(info.columns.map((c) => [c.name, c.type])));
     if (problem !== undefined) return say(`q-lint: ${problem}.`);
     const script = columnScript(table, op, process.label);
@@ -172,6 +174,8 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (off("documenter")) return dbOff("documenter");
     const as = format === "markdown" || format === "html" ? format : (await window.showQuickPick(["Markdown", "HTML"], { title: "Document the process as" }))?.toLowerCase();
     if (as === undefined) return "cancelled";
+    // Turned off while its pick was open, it sends nothing (#2420).
+    if (off("documenter")) return dbOff("documenter");
     const got = await read(live, DOCUMENT, DOCUMENT_LIMIT);
     if (got === undefined) return "not read";
     // No workspace: the functions go undocumented.
@@ -206,6 +210,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
       if (picked === undefined) return "cancelled";
       deep = picked.label === full;
     }
+    if (off("partitionCheck")) return dbOff("partitionCheck");
     const got = await read(live, PARTITION_CHECK, CHECK_PARTITIONS, deep);
     if (got === undefined) return "not read";
     try {
@@ -237,6 +242,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (off("attributeAdvisor")) return dbOff("attributeAdvisor");
     const table = await pickTable(live, arg, "Advise attributes for which table?");
     if (table === undefined) return "no table";
+    if (off("attributeAdvisor")) return dbOff("attributeAdvisor");
     const got = await read(live, ATTRIBUTE_SAMPLE, table, ATTRIBUTE_ROWS);
     if (got === undefined) return "not read";
     try {
@@ -257,6 +263,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (off("schemaMigration")) return dbOff("schemaMigration");
     const table = await pickTable(live, arg, "Migrate which table?");
     if (table === undefined) return "no table";
+    if (off("schemaMigration")) return dbOff("schemaMigration");
     const from = await tableInfo(live, table);
     if (from === undefined) return "not read";
     let to: { info: TableInfo; where: string } | undefined;
@@ -268,9 +275,11 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
       const there = "A table on another process";
       const which = await window.showQuickPick([here, there], { title: `Migrate ${table} to the schema of` });
       if (which === undefined) return "cancelled";
+      if (off("schemaMigration")) return dbOff("schemaMigration");
       if (which === here) {
         const name = await pickTable(live, undefined, `Migrate ${table} to the schema of which table?`);
         if (name === undefined) return "cancelled";
+        if (off("schemaMigration")) return dbOff("schemaMigration");
         const got = await tableInfo(live, name);
         if (got !== undefined) to = { info: got.info, where: `${name} on ${got.process.label}` };
       } else {
@@ -278,6 +287,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
         if (process === undefined) return "cancelled";
         const name = await window.showInputBox({ title: `Migrate ${table} to the schema of which table on ${process.label}?`, value: table, validateInput: (v) => (/^\.?[A-Za-z][\w.]*$/.test(v.trim()) ? undefined : "A table's name") });
         if (name === undefined) return "cancelled";
+        if (off("schemaMigration")) return dbOff("schemaMigration");
         try {
           const info = readTableInfo(await live.callSeparate(process, (connection) => connection.call(TABLE_INFO, name.trim(), META_COLUMNS)));
           to = { info, where: `${name.trim()} on ${process.label}` };
@@ -287,6 +297,7 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
       }
     }
     if (to === undefined) return "not read";
+    if (off("schemaMigration")) return dbOff("schemaMigration");
     const script = migrationScript(table, from.info, `${table} on ${from.process.label}`, to.info, to.where, from.process.label);
     await openDocument(script, "q");
     if (sameSchema(schemaDiff(from.info, to.info))) say(`q-lint: ${table} already has the schema of ${to.where}.`);
@@ -298,12 +309,14 @@ export function registerDbTools(context: ExtensionContext, live: Live): { state:
     if (off("testData")) return dbOff("testData");
     const table = await pickTable(live, arg, "Generate test data shaped as which table?");
     if (table === undefined) return "no table";
+    if (off("testData")) return dbOff("testData");
     const got = await tableInfo(live, table);
     if (got === undefined) return "not read";
     const options = given !== undefined ? fillOptions(got.info, given) : await askTestData(got.info);
     if (options === undefined) return "cancelled";
     const format = given?.format ?? (await window.showQuickPick(["q code", "CSV"], { title: "Make the rows as" }))?.toLowerCase();
     if (format === undefined) return "cancelled";
+    if (off("testData")) return dbOff("testData");
     const short = table.replace(/^.*\./, "");
     const text = format === "csv" ? testDataCsv(got.info, options) : testDataQ(got.info, short, options);
     await openDocument(text, format === "csv" ? "csv" : "q");
