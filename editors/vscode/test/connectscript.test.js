@@ -4,6 +4,7 @@
 const { stub } = require("./vscode_stub.js");
 const test = require("node:test");
 const assert = require("node:assert");
+const path = require("node:path");
 const pkg = require("../package.json");
 const { parseProcesses, processTooltip, readProcessFile } = require("../out/processes.js");
 const { CONNECT_SCRIPT_COMMANDS, onConnectBrought, onConnectOf, scriptOf, scriptPath, scriptsBrought, scriptSummary, sharedEntry, withScript } = require("../out/connectscript.js");
@@ -441,6 +442,47 @@ test("a connection apart whose connect script fails or times out is not handed o
   t.after(() => e.close());
   const failing = { label: "e", host: "127.0.0.1", port: e.port, tags: [], initFile: "/nowhere/init.q" };
   await assert.rejects(live.openSeparate(failing), /the connect script of e failed: could not read/);
+});
+
+test("a launch's working directory, script and program, and a credential command's program, inside the folder are shared relative (#3106)", { skip: process.platform === "win32" }, () => {
+  const { launchPlan } = require("../out/launcher.js");
+  const p = proc("rdb", {
+    initFile: "/repo/q/init.q",
+    launch: { cwd: "/repo/torq", script: "/repo/torq/torq.q", command: "/repo/bin/q", args: ["-x", "/repo/kept"], env: { A: "/repo/kept" } },
+    credentialCommand: "/repo/bin/creds.sh rdb /repo/kept",
+  });
+  const shared = sharedEntry(p, true, "/repo");
+  assert.deepStrictEqual(shared, {
+    ...p,
+    initFile: "q/init.q",
+    launch: { cwd: "torq", script: "torq.q", command: "../bin/q", args: ["-x", "/repo/kept"], env: { A: "/repo/kept" } },
+    credentialCommand: "./bin/creds.sh rdb /repo/kept",
+  });
+  assert.ok(!JSON.stringify({ ...shared.launch, args: [], env: {} }).includes("/repo"));
+  // A clone starts the same files, from its own folder.
+  const plan = launchPlan({ ...shared, host: "localhost", port: 5010 }, "q", "/home/c/repo", "/home/c");
+  assert.deepStrictEqual([plan.cwd, plan.args[0], path.resolve(plan.cwd, plan.command)], ["/home/c/repo/torq", "/home/c/repo/torq/torq.q", "/home/c/repo/bin/q"]);
+  const launch = (l) => sharedEntry(proc("a", { launch: l }), true, "/repo").launch;
+  // Started in the folder itself, written or not; a program beside it is a path, not a name on PATH.
+  assert.deepStrictEqual(launch({ cwd: "/repo", script: "/repo/a.q", command: "/repo/q" }), { cwd: ".", script: "a.q", command: "./q" });
+  assert.deepStrictEqual(launch({ script: "/repo/q/a.q", command: "/repo/bin/q" }), { script: "q/a.q", command: "./bin/q" });
+  // A relative directory, or one under ${workspaceFolder}, is from the folder already.
+  assert.deepStrictEqual(launch({ cwd: "torq", script: "/repo/torq/torq.q" }), { cwd: "torq", script: "torq.q" });
+  assert.deepStrictEqual(launch({ cwd: "${workspaceFolder}/torq", script: "/repo/hdb.q" }), { cwd: "${workspaceFolder}/torq", script: "../hdb.q" });
+  // What is outside the folder is where it was; so is what starts outside it, or under ~.
+  const outside = { cwd: "/opt/kx", script: "/repo/a.q", command: "/usr/local/bin/q" };
+  assert.deepStrictEqual(launch(outside), outside);
+  assert.deepStrictEqual(launch({ cwd: "/repo/torq", script: "/srv/a.q", command: "q" }), { cwd: "torq", script: "/srv/a.q", command: "q" });
+  assert.deepStrictEqual(launch({ cwd: "~/x", script: "/repo/a.q" }), { cwd: "~/x", script: "/repo/a.q" });
+  assert.deepStrictEqual(launch({ cwd: "/repository", script: "/repository/a.q" }), { cwd: "/repository", script: "/repository/a.q" });
+  const command = (c) => sharedEntry(proc("a", { credentialCommand: c }), true, "/repo").credentialCommand;
+  assert.deepStrictEqual(
+    ['"/repo/my bin/creds.sh" rdb', "vault read /repo/x", "/repository/creds.sh", "/repo", "cd /tmp && /repo/creds.sh"].map(command),
+    ['"./my bin/creds.sh" rdb', "vault read /repo/x", "/repository/creds.sh", "/repo", "cd /tmp && /repo/creds.sh"],
+  );
+  // Shared without them, and with no folder, as before.
+  assert.deepStrictEqual(sharedEntry(p, false, "/repo"), proc("rdb", {}));
+  assert.deepStrictEqual(sharedEntry(p, true), p);
 });
 
 // Set Connect Script keeps the full path, which Share All committed: every

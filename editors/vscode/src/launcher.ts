@@ -4,7 +4,7 @@
 import * as os from "os";
 import { isIP, isIPv6 } from "node:net";
 import { statSync } from "node:fs";
-import { scriptPath } from "./connectscript";
+import { inFolder, scriptPath } from "./connectscript";
 import { onPath } from "./relations";
 import { quote } from "./terminal";
 import { splitArgs, type Launch, type Process } from "./processes";
@@ -128,12 +128,6 @@ export function fromWorkspace(launch: Launch, home: string = os.homedir()): bool
   }
   const relative = (file: string | undefined): boolean => file !== undefined && scriptPath(file, home, undefined) === undefined;
   return relative(launch.script) || (/[\\/]/.test(launch.command ?? "") && relative(launch.command));
-}
-
-/// `cwd` without a `${workspaceFolder}` it starts with: relative, which is
-/// from the folder.
-function inFolder(cwd: string): string {
-  return /^\$\{workspaceFolder\}([\\/]|$)/.test(cwd) ? `.${cwd.slice("${workspaceFolder}".length)}` : cwd;
 }
 
 /// What starting `process` runs: its command (else `qBinary`), its script,

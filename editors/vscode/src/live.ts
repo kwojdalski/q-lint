@@ -959,7 +959,8 @@ export class Live {
     if (extras.length > 0) {
       const all = "Share All";
       const without = "Share Without Them";
-      const { init, initFile, credentialCommand, launch } = chosen;
+      // As it would be written: what is inside the folder, from it (#3106).
+      const { init, initFile, credentialCommand, launch } = sharedEntry(chosen, true, folder.uri.fsPath);
       const answer = await window.showWarningMessage(
         plainMessage(`${chosen.label} has a ${extras.join(", ")}. ${SHARED_FILE} is committed with the code: everyone who clones it reads what is written there, as shown below. Share them too?`),
         { modal: true, detail: JSON.stringify({ init, initFile, credentialCommand, launch }, null, 2) },

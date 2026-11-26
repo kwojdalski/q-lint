@@ -2,7 +2,7 @@
 // every connect, before any query. No `vscode` import, so node tests it;
 // `live.ts` runs it and asks for it.
 import * as path from "path";
-import type { Process } from "./processes";
+import type { Launch, Process } from "./processes";
 import { relativeInside } from "./workspacewrite";
 
 export const CONNECT_SCRIPT_COMMANDS = {
@@ -98,16 +98,53 @@ export function onConnectOf<P extends Process>(process: P, old: Process | undefi
   } as P;
 }
 
+/// `cwd` without a `${workspaceFolder}` it starts with: relative, which is
+/// from the folder.
+export function inFolder(cwd: string): string {
+  return /^\$\{workspaceFolder\}([\\/]|$)/.test(cwd) ? `.${cwd.slice("${workspaceFolder}".length)}` : cwd;
+}
+
+/// `launch` as a clone starts it: its working directory, script and program
+/// inside `folder`, kept by their full paths here, written from where each
+/// is read - the directory from the folder, the script and the program from
+/// the directory. One outside the folder, or under `~`, is as it was.
+function sharedLaunch(launch: Launch, folder: string): Launch {
+  const within = (file: string): boolean => path.resolve(file) === path.resolve(folder) || relativeInside(folder, file) !== undefined;
+  const from = launch.cwd === undefined ? folder : launch.cwd.startsWith("~") ? undefined : path.resolve(folder, inFolder(launch.cwd));
+  const relative = (file: string | undefined): string | undefined =>
+    file !== undefined && path.isAbsolute(file) && from !== undefined && within(from) && relativeInside(folder, file) !== undefined ? path.relative(from, file).split(path.sep).join("/") : undefined;
+  const cwd = launch.cwd !== undefined && path.isAbsolute(launch.cwd) && within(launch.cwd) ? path.relative(folder, launch.cwd).split(path.sep).join("/") || "." : undefined;
+  const script = relative(launch.script);
+  // With no slash it would be a name, looked for on PATH.
+  const command = relative(launch.command)?.replace(/^(?!\.\.?\/)/, "./");
+  return { ...launch, ...(cwd !== undefined ? { cwd } : {}), ...(script !== undefined ? { script } : {}), ...(command !== undefined ? { command } : {}) };
+}
+
 /// `process` as the shared list is given it (#1528): with what runs or
 /// reaches somewhere at connect (`all`), or without - but always with its SSH
 /// tunnel, which holds no secret: without it every clone dials its own
 /// host:port, and sends the password there (#1715). A connect script file
 /// inside `folder`, kept by its full path here, is written relative to it:
 /// the list is read in every clone, where that is where the file is (#1717).
+/// So are a launch's working directory, script and program, and the program
+/// a credential command starts with, which is run in the folder: by this
+/// machine's paths, Start Process and the command failed in every other
+/// clone (#3106).
 export function sharedEntry<P extends Process>(process: P, all: boolean, folder?: string): P {
   if (all) {
-    const relative = process.initFile === undefined || folder === undefined || !path.isAbsolute(process.initFile) ? undefined : relativeInside(folder, process.initFile);
-    return relative !== undefined ? { ...process, initFile: relative.split(path.sep).join("/") } : process;
+    if (folder === undefined) {
+      return process;
+    }
+    const relative = process.initFile === undefined || !path.isAbsolute(process.initFile) ? undefined : relativeInside(folder, process.initFile);
+    const command = process.credentialCommand;
+    const program = command === undefined ? null : /^(["']?)(.*)$/s.exec(command);
+    const own = program !== null && [`${folder}/`, `${folder}${path.sep}`].some((dir) => program[2].startsWith(dir));
+    return {
+      ...process,
+      ...(relative !== undefined ? { initFile: relative.split(path.sep).join("/") } : {}),
+      ...(process.launch !== undefined ? { launch: sharedLaunch(process.launch, folder) } : {}),
+      ...(own ? { credentialCommand: `${program![1]}.${program![2].slice(folder.length)}` } : {}),
+    };
   }
   return { ...onConnectOf(process, undefined), ...(process.ssh !== undefined ? { ssh: process.ssh } : {}) };
 }
