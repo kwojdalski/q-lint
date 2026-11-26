@@ -144,6 +144,12 @@ test("the process that loaded a file holds every definition read from it (#2921)
   const defs = definitions(file);
   const rows = driftRows(defs.map((def) => ({ file: "a.q", def })), await states(c, defs));
   assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}`), ["h:same", "k:same", ".ns._g:same", ".ns.1a:same", "m:same", ".dd.q1:same", ".ee.q2:same"]);
+  // Behind `q)` prompts too, where a `system "d .ns"` switches as well (#3009, #2916).
+  const prompted = 'q)ph:{x};pk:{y}\n\\d .pq\nq)p1:{x};system "d .pr";p2:{y}\np3:{z}\n\\d .\nq)system "d .ps"\np4:{x}\n\\d .\n';
+  const p = await connect(t, prompted);
+  const behind = definitions(prompted);
+  const same = driftRows(behind.map((def) => ({ file: "a.q", def })), await states(p, behind));
+  assert.deepStrictEqual(same.map((r) => `${r.name}:${r.status}`), ["ph:same", "pk:same", ".pq.p1:same", ".pr.p2:same", ".pr.p3:same", ".ps.p4:same"]);
   // `f::{x+1}` at the top level is a view there, which is no lambda (#1865).
   assert.deepStrictEqual((await c.evaluate("string views[]")).value, ["f"]);
 });

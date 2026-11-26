@@ -165,6 +165,10 @@ test("system[\"d .ns\"], a switch beside other code on its line, and a name that
   assert.strictEqual(contextAfter("\\d .1a\nf:1"), ".1a");
   // A definition under one is named in it.
   assert.deepStrictEqual(definitions('f:{x}\na:1;system "d .ns"\ng:{x}\nsystem["d .1a"]\nh:{x}\n').map((d) => d.name), ["f", ".ns.g", ".1a.h"]);
+  // Behind `q)` prompts it switches as `\d` behind them does (#2785).
+  assert.strictEqual(contextSwitch('q)system "d .ns"'), ".ns");
+  assert.strictEqual(contextLeft('q)q)a:1;system["d .ns"]'), ".ns");
+  assert.strictEqual(contextLeft('k)system "d .ns"'), undefined);
 });
 
 test("the lines above tell whether a line is commented out, or starts inside a string (#2910)", () => {
