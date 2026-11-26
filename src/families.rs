@@ -82,6 +82,46 @@ fn applied(
     argument(code, comments, source, after)
 }
 
+/// Each string literal the file gives q to run in this process, as the
+/// offset of its opening quote and the text q reads: one in what `value`,
+/// `get`, `parse` or `-5!` is applied to, however applied, and one sent to
+/// handle 0. KDB-X 5 calls `myf` for each of `value "myf 1"`, `eval parse
+/// "myf 1"`, `eval -5!"myf 1"` and `0 "myf 1"`, and `get "myf"` is the
+/// function (#3005). In order, each once.
+pub(crate) fn evaluated_strings(code: &str, comments: &str, source: &str) -> Vec<(usize, String)> {
+    let literal = re!(r#""((?:[^"\\]|\\.)*)""#);
+    let text = |body: &str| String::from_utf8_lossy(&crate::q_bytes(body)).into_owned();
+    let mut out = vec![];
+    for m in re!(r"\b(?:value|get|parse)\b|-5!").find_iter(code) {
+        let extent = match m.as_str() {
+            "-5!" => argument(code, comments, source, m.end()),
+            _ if !boundary(code, m.start()) => None,
+            _ => applied(code, comments, source, m.start(), m.end()),
+        };
+        let Some((start, end)) = extent.filter(|(start, end)| start < end) else {
+            continue;
+        };
+        let Some(given) = comments.get(start..end) else {
+            continue;
+        };
+        for s in literal.captures_iter(given) {
+            out.push((start + s.get(0).unwrap().start(), text(&s[1])));
+        }
+    }
+    for (_, given) in crate::semantics::handle_zero(code, source) {
+        if let Some(s) = comments
+            .get(given..)
+            .and_then(|rest| literal.captures(rest))
+            && s.get(0).unwrap().start() == 0
+        {
+            out.push((given, text(&s[1])));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Whether `start..end` builds a query: joins a string that names a qSQL
 /// statement with something that is not a string literal.
 fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) -> bool {

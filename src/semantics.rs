@@ -2450,7 +2450,7 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
 /// or a comment is blank; a `0` in a longer token (`10`, `0.5`, `a0`, `0:`)
 /// or closing a vector literal (`1 0 "ab"`, which indexes nothing and runs
 /// nothing) is no handle.
-fn handle_zero(view: &str, raw: &str) -> Vec<(usize, usize)> {
+pub(crate) fn handle_zero(view: &str, raw: &str) -> Vec<(usize, usize)> {
     let token = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'`');
     re!(r"0[ij]?")
         .find_iter(view)

@@ -376,6 +376,16 @@ pub fn symbol_mentions(source: &str, leaf: &str) -> Vec<Mention> {
     semantics::navigate::symbols(&v.code, source, leaf)
 }
 
+/// Each string literal `source` gives q to run in the process itself, as
+/// the offset of its opening quote and the text q reads: one in what
+/// `value`, `get`, `parse` or `-5!` is applied to, and one sent to handle 0.
+/// What it names is named by no token of the file, so a rename reads it
+/// apart (#3005).
+pub fn evaluated_strings(source: &str) -> Vec<(usize, String)> {
+    let v = views(source);
+    families::evaluated_strings(&v.code, &v.comments, source)
+}
+
 /// The path of the load at byte `offset` of `source` - `\l path`,
 /// `system "l path"` or a file symbol, as `References::loads` reads it - as
 /// its start and length, when the offset is in one. Its end counts: a cursor
