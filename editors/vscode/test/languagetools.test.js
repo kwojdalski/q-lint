@@ -253,6 +253,16 @@ test("Explain q Error refuses when off, and explains the last failure or the one
   }
 });
 
+test("a baseline line added to a CRLF configuration file ends in CRLF too (#2523)", () => {
+  assert.strictEqual(
+    pyprojectWithBaseline('[project]\r\nname = "x"\r\n\r\n[tool.qlinter]\r\nprofile = "style"\r\n'),
+    '[project]\r\nname = "x"\r\n\r\n[tool.qlinter]\r\nbaseline = "qlinter-baseline.json"\r\nprofile = "style"\r\n',
+  );
+  assert.strictEqual(pyprojectWithBaseline('[project]\r\nname = "x"\r\n'), '[project]\r\nname = "x"\r\n\r\n[tool.qlinter]\r\nbaseline = "qlinter-baseline.json"\r\n');
+  assert.strictEqual(pyprojectWithBaseline('[tool.qlinter]\r\nbaseline = "b.json"\r\n'), undefined);
+  assert.strictEqual(tomlWithBaseline('# top\r\nprofile = 1\r\n'), '# top\r\nbaseline = "qlinter-baseline.json"\r\nprofile = 1\r\n');
+});
+
 test("a baseline is named first in qlinter.toml, its count read, and its paths made relative", async () => {
   assert.strictEqual(tomlWithBaseline(""), 'baseline = "qlinter-baseline.json"\n');
   assert.strictEqual(tomlWithBaseline('profile = "style"\n\n[lint]\nignore = ["QS"]\n'), 'baseline = "qlinter-baseline.json"\nprofile = "style"\n\n[lint]\nignore = ["QS"]\n');
