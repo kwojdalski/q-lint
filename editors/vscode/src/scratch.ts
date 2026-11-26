@@ -39,7 +39,7 @@ export function scratchHeader(label: string): string {
 
 export function registerScratchBuffers(
   context: ExtensionContext,
-  live: Pick<Live, "pick">,
+  live: Pick<Live, "pick" | "sharedFolder">,
 ): { open: (row?: ProcessArg) => Promise<{ path: string; label: string } | string> } {
   const open = async (row?: ProcessArg): Promise<{ path: string; label: string } | string> => {
     if (!toolOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "scratchBuffer")) {
@@ -52,7 +52,8 @@ export function registerScratchBuffers(
       return "no process";
     }
     const dir = join(context.globalStorageUri.fsPath, "scratch");
-    const scope = process.server === SHARED_SOURCE ? sharedScope(process, workspace.workspaceFolders?.[0]?.uri.toString() ?? "") : undefined;
+    // By the folder whose list names it, as its password is (#2513).
+    const scope = process.server === SHARED_SOURCE ? sharedScope(process, live.sharedFolder(process.label)) : undefined;
     const path = join(dir, scratchFileName(process.label, scope));
     try {
       mkdirSync(dir, { recursive: true });
