@@ -60,6 +60,24 @@ export const CAST_TYPES: { letter: string; name: string }[] = [
   { letter: "t", name: "time" },
 ];
 
+/// Why a result of this shape cannot be wrangled, or undefined when it can:
+/// the grid shows a dictionary as its `key` and `value` columns, a list as
+/// `value`, and one keyed by a table as its key columns and `value` - none
+/// a table that q-sql selects from, so every step was refused or failed
+/// 'type (#2538). Only those shapes end in a column `value` after the key
+/// columns, or with none: a table's own `value` column is a reserved word
+/// no step could name either.
+export function wrangleShape(payload: { keys: number; names: string[] }): string | undefined {
+  const value = payload.names.at(-1) === "value";
+  if (value && payload.keys === 0 && payload.names.length === 1) {
+    return "it is a list, not a table";
+  }
+  if (value && payload.keys > 0 && payload.keys === payload.names.length - 1) {
+    return "it is a dictionary, not a table";
+  }
+  return undefined;
+}
+
 /// Why `code` cannot be the start of a wrangle, or undefined when it can:
 /// one statement that is an expression.
 export function wrangleBase(code: string): string | undefined {

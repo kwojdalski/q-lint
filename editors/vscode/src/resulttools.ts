@@ -47,6 +47,7 @@ import {
   wrangleBase,
   wrangleQuery,
   wrangleScript,
+  wrangleShape,
   type FilterOp,
   type Step,
 } from "./wrangle";
@@ -124,10 +125,14 @@ export class ResultTools {
   // --- the Data Wrangler (#961)
 
   /// The wrangle the result on show belongs to, or a new one from it.
-  private wrangleOf(shown: { process: string; code: string }): Wrangle | string {
+  private wrangleOf(shown: { process: string; code: string; payload: GridPayload }): Wrangle | string {
     const kept = this.wrangles.get(`${shown.process}\0${shown.code}`);
     if (kept !== undefined) {
       return kept;
+    }
+    const shape = wrangleShape(shown.payload);
+    if (shape !== undefined) {
+      return shape;
     }
     // A gateway's result was sent as a `.gw.syncexec` call: its steps are
     // built over the query inside, sent to the same servers (#2436).

@@ -17,6 +17,13 @@ const payload = (over = {}) => ({
 });
 
 test("a wrangle starts only from a single expression (#961)", () => {
+  // #2538: a dictionary or a list, shown as key/value columns, is no table.
+  assert.match(w.wrangleShape({ keys: 1, names: ["key", "value"] }), /dictionary/);
+  assert.match(w.wrangleShape({ keys: 1, names: ["s", "value"] }), /dictionary/);
+  assert.match(w.wrangleShape({ keys: 0, names: ["value"] }), /list/);
+  assert.strictEqual(w.wrangleShape({ keys: 0, names: ["sym", "px"] }), undefined);
+  assert.strictEqual(w.wrangleShape({ keys: 1, names: ["sym", "px"] }), undefined);
+  assert.strictEqual(w.wrangleShape({ keys: 0, names: ["a", "value"] }), undefined);
   assert.strictEqual(w.wrangleBase("select from trade where sym=`a"), undefined);
   assert.strictEqual(w.wrangleBase("trade"), undefined);
   assert.strictEqual(w.wrangleBase("select a:x from t"), undefined);
