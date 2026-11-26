@@ -166,6 +166,19 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   assert.strictEqual(w.guessTable('select from trade where s like "from quote"'), "trade");
 });
 
+// `s=1 2` compares item by item, 'length against a column of lists, and
+// `s in 1 2` is 'type there.
+test("a filter on a general column matches the whole cell, and in takes one cell as the item looked for (#3091)", () => {
+  const f = (op, value) => w.stepCode({ kind: "filter", column: "s", op, value, general: true }, "t");
+  assert.strictEqual(f("=", "1 2"), "select from t where s~\\:1 2");
+  assert.strictEqual(f("<>", "1 2"), "select from t where not s~\\:1 2");
+  assert.strictEqual(f("=", "1,2"), "select from t where s~\\:(1,2)");
+  assert.strictEqual(f("in", "1 2"), "select from t where s in {$[0h=type x;x;enlist x]}1 2");
+  // Its other tests are as they were: only a column of strings counts its characters for a null.
+  assert.strictEqual(f("null", ""), "select from t where null s");
+  assert.strictEqual(f("like", '"a*"'), 'select from t where s like "a*"');
+});
+
 test("a column named i is refused: in q-sql i is the row's index, whatever the table holds (#3081, #3089)", () => {
   assert.match(w.columnProblem("i"), /the column i cannot be named in q-sql \(i there is the row's index/);
   assert.strictEqual(w.columnProblem("ix"), undefined);

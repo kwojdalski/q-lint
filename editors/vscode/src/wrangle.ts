@@ -32,7 +32,8 @@ export const filterOps = (strings: boolean): FilterOp[] => FILTER_OPS.filter((o)
 
 export type Step =
   /// `strings`: the column holds strings, which are matched whole (#2014).
-  | { kind: "filter"; column: string; op: FilterOp; value: string; strings?: boolean }
+  /// `general`: it is a general list, each cell matched whole (#3091).
+  | { kind: "filter"; column: string; op: FilterOp; value: string; strings?: boolean; general?: boolean }
   | { kind: "sort"; column: string; descending: boolean }
   | { kind: "rename"; column: string; to: string }
   /// `strings`: the column holds strings, which are parsed rather than cast.
@@ -120,12 +121,18 @@ export function stepCode(step: Step, x: string): string {
       const v = r.includes(",") ? `(${r})` : r;
       // A string is equal as a whole, and null when it is empty: `=` and
       // `null` ask each of its characters, 'length and 'type here (#2014).
+      // So is a cell of any general column - a list, a table - which `=`
+      // compares item by item (#3091).
       const whole: Partial<Record<FilterOp, string>> =
-        step.strings === true ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` } : {};
+        step.strings === true
+          ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}`, null: `0=count each ${c}`, "not null": `0<count each ${c}` }
+          : step.general === true
+            ? { "=": `${c}~\\:${v}`, "<>": `not ${c}~\\:${v}` }
+            : {};
       // And `in` takes a list of them: one string is a list of characters
       // to it, 'type against a column of strings, so a value that is no
       // general list is the one item looked for (#3090).
-      const items = step.strings === true ? "{$[0h=type x;x;enlist x]}" : "";
+      const items = step.strings === true || step.general === true ? "{$[0h=type x;x;enlist x]}" : "";
       const test =
         whole[step.op] ?? (step.op === "null" ? `null ${c}` : step.op === "not null" ? `not null ${c}` : step.op === "in" ? `${c} in ${items}${v}` : `${c}${step.op === "like" ? " like " : step.op}${v}`);
       return `select from ${x} where ${test}`;

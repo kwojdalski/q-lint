@@ -384,3 +384,26 @@ test("a one-character value typed into a column of strings is stored as a string
   assert.deepStrictEqual((await shown("tt")).cells[1], [',"x"', '"cd"', '"ef"']);
   assert.deepStrictEqual((await shown("([] t:type each tt`s)")).cells[0], ["10", "10", "10"]);
 });
+
+test("= and in on a column of lists or tables run on the value they start from, the first cell (#3091)", { skip }, async (t) => {
+  const q = await startQ(() => "");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  for (const [from, column, kept] of [
+    ["([] s:(1 2;3 4;1 2); v:1 2 3)", 0, { "=": ["1", "3"], "<>": ["2"], in: ["1", "3"] }],
+    ["([] v:1 2 3; t:(([] a:1 2);([] a:1 2);1))", 1, { "=": ["1", "2"], "<>": ["3"], in: ["1", "2"] }],
+  ]) {
+    const base = (await connection.queryGrid(statements(from), SIZE, 1000)).grid;
+    const step = (op, value) => ({ kind: "filter", column: base.names[column], op, value, strings: w.stringColumn(base, column), general: base.types[column] === 0 });
+    for (const op of ["=", "<>", "in"]) {
+      const code = w.wrangleQuery(from, [step(op, w.cellLiteral(base, column, 0))]);
+      const answer = await connection.queryGrid(statements(code), SIZE, 1000);
+      assert.ok(answer.ok, `${code}: ${answer.error}`);
+      assert.deepStrictEqual(cells(answer, "v"), kept[op], code);
+    }
+  }
+  // A list of cells is still a list of them.
+  const lists = await connection.queryGrid(statements(w.wrangleQuery("([] s:(1 2;3 4;5 6); v:1 2 3)", [{ kind: "filter", column: "s", op: "in", value: "(1 2;5 6)", general: true }])), SIZE, 1000);
+  assert.deepStrictEqual(cells(lists, "v"), ["1", "3"]);
+});
