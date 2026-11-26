@@ -20,6 +20,7 @@ import { plainMessage } from "./history";
 import { onProcessPath, processGit } from "./relations";
 import { selectedMany } from "./clicked";
 import { gitName, runGit } from "./changedlines";
+import { linkProblem } from "./workspacewrite";
 
 /// The scheme of the read-only documents a comparison shows.
 export const CELLS_SCHEME = "q-lint-qnb-cells";
@@ -382,6 +383,12 @@ export class NotebookStrip {
       };
     }
     const attributes = where === "info" ? path.resolve(folder, info.stdout.trim()) : path.join(root, ".gitattributes");
+    // A .gitattributes the repository ships as a link would take the line
+    // outside it (#1830, #2517): it is not written through.
+    const link = where === "info" ? undefined : linkProblem(root, attributes);
+    if (link !== undefined) {
+      return { error: `${link}; add the line "${ATTRIBUTE_LINE}" to the file it should go in yourself, or choose .git/info/attributes.` };
+    }
     // The line is the chosen file's own to have (#1950): another file's -
     // this clone's, when the committed one is asked for, or a subfolder's -
     // says nothing of it. Then as git reads it from the top, its last

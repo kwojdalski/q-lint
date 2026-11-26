@@ -461,6 +461,26 @@ test("the setup never changes a filter set otherwise, asks before replacing its 
   assert.match(fake.messages.at(-1), /is not in a git repository/);
 });
 
+test("the setup does not write through a .gitattributes the repository ships as a symbolic link (#2517)", async () => {
+  const { dir, git } = repo({ "a.q": "x:1\n" });
+  const victim = path.join(path.dirname(dir), `${path.basename(dir)}-victim.txt`);
+  fs.writeFileSync(victim, "export SECRET=1\n");
+  fs.symlinkSync(victim, path.join(dir, ".gitattributes"));
+  git("add", ".gitattributes");
+  git("commit", "-qm", "link");
+  const fake = fakeVscode();
+  load(fake);
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(dir), "gitattributes");
+  assert.match(fake.messages.at(-1), /\.gitattributes is a symbolic link, which q-lint does not write through/);
+  assert.strictEqual(fs.readFileSync(victim, "utf8"), "export SECRET=1\n");
+  assert.strictEqual(fake.details.length, 0);
+  // The clone's own file is still written.
+  fake.answers.push("Write");
+  await fake.commands["q-lint.setUpNotebookStripFilter"](fake.vscode.Uri.file(dir), "info");
+  assert.match(fs.readFileSync(path.join(dir, ".git", "info", "attributes"), "utf8"), /\*\.qnb filter=qnb-strip/);
+});
+
 test("Clear Notebook Outputs asks, then strips the files picked; one with unsaved edits is left alone", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qnbstrip-"));
   const file = (n, text) => (fs.writeFileSync(path.join(dir, n), text), path.join(dir, n));
