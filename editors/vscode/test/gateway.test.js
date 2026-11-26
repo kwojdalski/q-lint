@@ -75,6 +75,21 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(parseProcesses([{ label: "gw", host: "h", port: 1, gateway: ["rdb"] }]).processes[0].gateway, ["rdb"]);
 });
 
+test("a `/ @servertypes` line in a block comment, or after the script's end, names nothing (#2918)", () => {
+  // The live line under a commented-out one is the file's.
+  assert.deepStrictEqual(fileServerTypes("/\nold setup:\n/ @servertypes hdb\n\\\n/ @servertypes rdb\nselect from trade\n"), ["rdb"]);
+  assert.strictEqual(fileServerTypes("/\n/ @servertypes hdb\n\\\nselect from trade\n"), undefined);
+  // q reads nothing after a lone `\`.
+  assert.strictEqual(fileServerTypes("select from trade\n\\\n/ @servertypes hdb\n"), undefined);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb\nselect from trade\n\\\n/ @servertypes hdb\n"), ["rdb"]);
+  // A line comment anywhere q reads still names them, between a
+  // statement's lines too, and with Windows line ends.
+  assert.deepStrictEqual(fileServerTypes("f:{\n/ @servertypes hdb\n  x}\n"), ["hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/\r\nnote\r\n\\\r\n/ @servertypes rdb hdb\r\nselect from t\r\n"), ["rdb", "hdb"]);
+  // `/` and a no-break space is a line comment, which hides nothing.
+  assert.deepStrictEqual(fileServerTypes("/\u00a0\n/ @servertypes rdb\nselect from t"), ["rdb"]);
+});
+
 // `rdb hdb-eu` in the box, or `rdb 2hdb` on a file's line, was read as
 // `rdb` alone and nothing said: the HDB named was never queried (#3065).
 test("a server type that is no q name is named, not dropped (#3065)", () => {
