@@ -125,6 +125,37 @@ fn a_baseline_saved_with_a_bom_is_read() {
     );
 }
 
+/// A leading BOM is no part of the text a line-1 finding is matched on:
+/// removing it, which q needs and QE005's `--fix` does, once brought every
+/// baselined finding on line 1 back as new (#2759). A baseline written with
+/// the BOM in its text still matches.
+#[test]
+fn a_bom_is_no_part_of_a_baselined_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "\u{feff}f:{[count] count}\n").unwrap();
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "a.q"]);
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    assert!(!written.contains('\u{feff}'), "{written}");
+    assert!(
+        written.contains("\"line\":\"f:{[count] count}\""),
+        "{written}"
+    );
+    let old = written.replace("\"line\":\"f:", "\"line\":\"\u{feff}f:");
+    fs::write(d.join("old.json"), &old).unwrap();
+    let (status, _, err) = run(d, &["--isolated", "--select", "QE005", "--fix", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert_eq!(
+        fs::read_to_string(d.join("a.q")).unwrap(),
+        "f:{[count] count}\n"
+    );
+    for base in ["base.json", "old.json"] {
+        let (status, found, err) = run(d, &["--isolated", "--baseline", base, "a.q"]);
+        assert_eq!((status, found), (Some(0), vec![]), "{base}: {err}");
+    }
+}
+
 const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\nm:use`mymod\n";
 
 /// `--write-baseline` writes a file, and a file the run reads is never it:

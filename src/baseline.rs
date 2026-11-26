@@ -39,8 +39,17 @@ pub struct Baseline {
 pub(crate) struct SourceLines<'a>(Vec<&'a str>);
 
 impl<'a> SourceLines<'a> {
+    /// A leading BOM is no part of line 1's text, as it is no column of it
+    /// (#2097): QE005's own fix removes it, and a finding on line 1 is the
+    /// same finding after (#2759).
     pub(crate) fn new(source: &'a str) -> Self {
-        SourceLines(source.lines().collect())
+        SourceLines(
+            source
+                .strip_prefix('\u{feff}')
+                .unwrap_or(source)
+                .lines()
+                .collect(),
+        )
     }
 
     /// The text a finding is matched on: its line, blanks trimmed, and a
@@ -116,6 +125,10 @@ impl Baseline {
                 ));
             };
             let n = f["count"].as_u64().unwrap_or(1) as usize;
+            // A baseline written before #2759 kept a BOM in line 1's text.
+            let line = line
+                .strip_prefix('\u{feff}')
+                .map_or(line, |rest| rest.trim_start());
             *counts
                 .entry((path.to_string(), code.to_string(), line.to_string()))
                 .or_insert(0) += n;
