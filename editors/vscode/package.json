@@ -3,7 +3,7 @@
   "displayName": "q-lint",
   "description": "q/kdb+ for VS Code: linting, Quick Fixes, navigation and help from the source, and connections to q processes to run code on.",
   "icon": "icon.png",
-  "version": "0.39.1",
+  "version": "0.40.0",
   "publisher": "wojdalski",
   "license": "MIT",
   "engines": {
