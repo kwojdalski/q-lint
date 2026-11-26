@@ -741,6 +741,25 @@ test("Send to Report refuses a report open with unsaved edits, and writes nothin
   assert.match(fake.written["/r.md"], /^# mine\n/);
 });
 
+// A CRLF report was appended LF lines, leaving it mixed (#2455).
+test("Send to Report appends in the report's own line ending (#2455)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.context.workspaceState = { get: () => undefined, update: async () => {} };
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([10, 20]), live({ mode: "grid" }));
+  fake.vscode.window.showWarningMessage = async (_m, _o, go) => go;
+  for (const [before, gap] of [["# Daily report\r\n\r\nSome notes.\r\n", "\r\n"], ["# Daily\r\n\r\n", ""], ["# lf\nnotes", "\n\n"]]) {
+    fake.vscode.workspace.fs.readFile = async () => Buffer.from(before);
+    await fake.vscode.commands[RESULT_VIEW.toReport](new fake.vscode.Uri("/r.md"), false);
+    const report = fake.written["/r.md"];
+    assert.ok(report.startsWith(before + gap + "**Result**"), JSON.stringify(report.slice(0, 60)));
+    const crlf = before.includes("\r\n");
+    assert.strictEqual(/[^\r]\n/.test(report), !crlf, JSON.stringify(report));
+    assert.strictEqual(report.includes("\r\n"), crlf);
+  }
+});
+
 test("export, paging, pivot, charts and drill-down turned off: each command refuses, the page is offered none, and nothing is sent", async () => {
   const off = {
     "results.export.enable": false,

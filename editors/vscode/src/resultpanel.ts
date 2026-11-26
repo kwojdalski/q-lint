@@ -1645,7 +1645,10 @@ export class QueryModes {
     }
     const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, relative === undefined ? undefined : linkTarget(relative));
     const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
-    const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    // In the report's own line ending: its first break's (#2455).
+    const eol = /\r?\n/.exec(before)?.[0] ?? "\n";
+    const lf = before.replace(/\r\n/g, "\n");
+    const gap = (lf === "" || lf.endsWith("\n\n") ? "" : lf.endsWith("\n") ? "\n" : "\n\n").replace(/\n/g, eol);
     const name = to.path.replace(/^.*\//, "");
     const lines = text.text.split("\n");
     const preview = lines.slice(0, 14).join("\n") + (lines.length > 14 ? `\n... ${lines.length - 14} more line(s)` : "");
@@ -1667,7 +1670,7 @@ export class QueryModes {
         await workspace.fs.createDirectory(Uri.joinPath(image, ".."));
         await workspace.fs.writeFile(image, Buffer.from(svg, "utf8"));
       }
-      await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text, "utf8"));
+      await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text.replace(/\r?\n/g, eol), "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;
