@@ -433,10 +433,27 @@
 
   /// One CSV field of a copy, as grid.ts's csvField(csvText(t)) writes it:
   /// quoted where it must be, and text a spreadsheet would run as a formula
-  /// (=, +, -, @, tab or CR first, and no number) behind a '.
-  function csvCell(t) {
-    const text = /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
+  /// (=, +, -, @, tab or CR first, and no number) behind a '. `own` true:
+  /// the text is q's of a number or the page's, and written as it is.
+  function csvCell(t, own) {
+    const text = own !== true && /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
     return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  /// The pivot `p` of `grid` by `spec` as CSV, each line ending in \n. The
+  /// names and a symbol's or string's values go through csvCell; a numeric
+  /// or temporal column's values and the aggregates are q's text or the
+  /// page's own numbers, written as they are (#3075).
+  function pivotCsv(grid, spec, p) {
+    const field = function (c) {
+      const column = grid.columns[c];
+      return column && (column.numeric || column.temporal) ? function (t) { return csvCell(t, true); } : function (t) { return csvCell(t); };
+    };
+    const head = [csvCell(grid.columns[spec.row] ? grid.columns[spec.row].name : "")].concat(p.columns.map(spec.column >= 0 ? field(spec.column) : function (t) { return csvCell(t); }));
+    const lines = [head.join(",")].concat(p.rows.map(function (k, i) {
+      return [field(spec.row)(k)].concat(p.cells[i].map(function (t) { return csvCell(t, true); })).join(",");
+    }));
+    return lines.join("\n") + "\n";
   }
 
   /// `map[key]` when `map` has it of its own: a column named constructor
@@ -488,6 +505,7 @@
     PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
     csvCell: csvCell,
+    pivotCsv: pivotCsv,
     gridMove: gridMove,
     announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
@@ -1613,8 +1631,7 @@
     copy.title = "The pivot as CSV";
     const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
     copy.addEventListener("click", function () {
-      const lines = [head.map(csvCell).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csvCell).join(","); }));
-      vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
+      vscode.postMessage({ type: "copyText", id: result.id, text: pivotCsv(grid, spec, p) });
     });
     controls.append(copy);
     FOCUS.each(controls, "pivot");

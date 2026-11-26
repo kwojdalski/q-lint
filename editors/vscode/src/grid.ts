@@ -572,9 +572,11 @@ export function csvText(text: string): string {
 
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
 /// the order shown) as their cells show them. Lines end in `\n`. Names
-/// and every cell go through `csvText`: a symbol or a string can be
-/// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
-/// which are no number either.
+/// and a cell that is the user's text go through `csvText`: a symbol or a
+/// string can be anything. A numeric or temporal column's cell is q's own
+/// text or a name's format of it, and no formula: its `-0W`, `-0D01:00`
+/// and `-5.00%` are written as they are, as the rows above zero are
+/// (#3075, #3088).
 export function toCsv(grid: Grid, rows?: number[]): string {
   return csvLines(grid, rows).join("");
 }
@@ -584,8 +586,9 @@ export function toCsv(grid: Grid, rows?: number[]): string {
 export function csvLines(grid: Grid, rows?: number[]): string[] {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
   const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",") + "\n"];
+  const own = grid.columns.map((c) => c.numeric || c.temporal);
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(",") + "\n");
+    lines.push(grid.cells.map((column, i) => csvField(own[i] ? (column[r] ?? "") : csvText(column[r] ?? ""))).join(",") + "\n");
   }
   return lines;
 }

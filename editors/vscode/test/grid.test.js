@@ -221,9 +221,9 @@ test("CSV is the header and the rows given, as the cells show them", () => {
 test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   // A symbol, a string or a column name a spreadsheet opening the file
   // would read as a formula (=, +, -, @, a tab or a carriage return first)
-  // is written with a leading quote; a number is written as it is. So is a
-  // negative infinity or a negative timespan: `-0W` and `-0D01:00:00` are
-  // no number, and a spreadsheet showed #NAME? for them.
+  // is written with a leading quote; a number is written as it is. A
+  // numeric or temporal column's cell is q's text, not the user's: its
+  // `-0W` and `-0D01:00:00` are written as they are (#3075).
   const grid = toGrid(
     {
       count: 3,
@@ -244,13 +244,13 @@ test("CSV keeps text a spreadsheet would run as a formula as text", () => {
   assert.strictEqual(
     toCsv(grid),
     "'=s,j,str,n\n" +
-      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,'-0D01:00:00.000000000\n" +
+      "\"'=HYPERLINK(\"\"http://x\"\")\",-1,'-2+3,-0D01:00:00.000000000\n" +
       "'+1,2,-1.5,0D00:00:00.000000000\n" +
       "'@SUM(A1),3,'\tx,\n",
   );
-  // An infinity in a numeric column is text too; a negative number is not.
+  // An infinity in a numeric column is q's own text, as a negative number is.
   const inf = toGrid({ count: 2, keys: 0, names: ["j"], types: [7], cells: [["", "-5"]], raw: [[-Infinity, -5]], rank: [[0, 1]] }, -1);
-  assert.strictEqual(toCsv(inf), "j\n'-0W\n-5\n");
+  assert.strictEqual(toCsv(inf), "j\n-0W\n-5\n");
 });
 
 // --- media/result.js and media/chartspec.js
@@ -578,6 +578,32 @@ test("a key column's sticky header is opaque, though the key shade is translucen
   // its filter.
   const head = cssRule("thead th.key");
   assert.match(head, /background:[^;]*var\(--vscode-editor-inactiveSelectionBackground[^;]*,\s*var\(--vscode-editor(GroupHeader-tabs)?-background/);
+});
+
+test("CSV writes a numeric or temporal column's cells as they are: q's -0w and -0D00:00:01 are no formula, nor is a format's -5.00% (#3075, #3088)", () => {
+  const payload = {
+    count: 2,
+    keys: 0,
+    names: ["f", "j", "n", "u", "ret_PCT", "s", "c"],
+    types: [9, 7, 16, 17, 9, 11, 10],
+    cells: [["-0w", "0w"], ["-0W", "0W"], ["-0D00:00:01.000000000", "0D00:00:01.000000000"], ["-00:01", "00:01"], ["-0.05", "0.05"], ["-0w", "=1"], ["-", "@"]],
+    raw: [[-Infinity, Infinity], [-Infinity, Infinity], [-1e9, 1e9], [-1, 1], [-0.05, 0.05], [], [45, 64]],
+    rank: [[0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]],
+  };
+  const grid = toGrid(payload, -1);
+  // A symbol or a char is the user's text, and still kept as text.
+  assert.strictEqual(toCsv(grid), "f,j,n,u,ret_PCT,s,c\n-0w,-0W,-0D00:00:01.000000000,-00:01,-0.05,'-0w,'-\n0w,0W,0D00:00:01.000000000,00:01,0.05,'=1,'@\n");
+  const { shownGrid } = require("../out/resultexport.js");
+  assert.strictEqual(toCsv(shownGrid(grid)).split("\n")[1], "-0w,-0W,-0D00:00:01.000000000,-00:01,-5.00%,'-0w,'-");
+  const big = toGrid({ count: 2, keys: 0, names: ["pnl_NUM"], types: [7], cells: [["-1234567", "1234567"]], raw: [[-1234567, 1234567]], rank: [[0, 1]] }, -1);
+  assert.strictEqual(toCsv(shownGrid(big)), 'pnl_NUM\n"-1,234,567"\n"1,234,567"\n');
+  // Copy Pivot: a numeric column's values as row or column names, and the
+  // aggregates, as they are; a symbol's behind a '.
+  const sums = { rows: ["-0w", "1"], columns: ["sum"], cells: [["-0w"], ["-1e-7"]] };
+  assert.strictEqual(panel.pivotCsv(grid, { row: 0, column: -1, value: 1, agg: "sum" }, sums), "f,sum\n-0w,-0w\n1,-1e-7\n");
+  const cross = { rows: ["-0w", "=1"], columns: ["-00:01", "00:01"], cells: [["-0W", ""], ["", "0W"]] };
+  assert.strictEqual(panel.pivotCsv(grid, { row: 5, column: 3, value: 1, agg: "max" }, cross), "s,-00:01,00:01\n'-0w,-0W,\n'=1,,0W\n");
+  assert.strictEqual(panel.pivotCsv(grid, { row: 3, column: 5, value: 1, agg: "max" }, { rows: ["-00:01"], columns: ["-0w", "=1"], cells: [["-0W", ""]] }), "u,'-0w,'=1\n-00:01,-0W,\n");
 });
 
 test("Copy Pivot and Copy Matrix write each field as the grid's CSV does, a formula neutralised (#1389)", () => {
