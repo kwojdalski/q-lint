@@ -684,3 +684,9 @@ test("the process's \\P is asked with each run that shows a float, however it wa
   await runUnwrapped({ evaluate: async (text) => (sent.push(text), atom) }, ['.gw.syncexec["x";`rdb]'], options);
   assert.deepStrictEqual(sent, ['.gw.syncexec["x";`rdb]']);
 });
+
+test("an empty dictionary whose value is a table shows the table's header and rule after blank keys, as q does (#2714)", async () => {
+  // -8! of (`long$())!0#([]a:1 2;b:`x`y) and ()!([]a:()) on KDB-X; .Q.S writes each so.
+  assert.deepStrictEqual((await unwrapped("0x010000002e000000630700000000006200630b0002000000610062000000020000000700000000000b0000000000")).text, ["| a b", "| ---"]);
+  assert.deepStrictEqual((await unwrapped("0x0100000026000000630000000000006200630b00010000006100000001000000000000000000")).text, ["| a", "| -"]);
+});

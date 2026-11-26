@@ -684,7 +684,10 @@ function nested(q: QValue, precision = 7, cap = Infinity): Laid {
       return unpadded([...q.v].map((c) => String.fromCharCode(c)));
     case "dict": {
       const d = nested(q.v, precision, cap);
-      const k = lineUp(d.length, nested(q.k, precision, cap));
+      const keys = nested(q.k, precision, cap);
+      // No keys and a table for the values: its header and rule each after
+      // a blank key, as q writes `| a b` and `| ---` (#2714).
+      const k = keys.length === 0 && q.v.kind === "table" ? d.map(() => ({ text: "", pad: 0 })) : lineUp(d.length, keys);
       const v = lineUp(k.length, d);
       const width = k.reduce((w, line) => Math.max(w, line.text.length), 0);
       return k.map((line, i) => ({ text: `${line.text.padEnd(width)}| ${v[i]?.text ?? ""}`, pad: v[i]?.pad ?? 0 }));
