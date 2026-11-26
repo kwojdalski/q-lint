@@ -374,3 +374,19 @@ fn the_definition_goes_above_the_statement_under_its_own_context() {
         "f:{[a] a+1}\nextracted:{[a] a+1}\ng:{[a] extracted[a]}\n"
     );
 }
+
+/// The new definition ends its line as the file ends its own: a CRLF file
+/// is left with no bare LF (#2794).
+#[test]
+fn the_definition_ends_its_line_as_the_file_does() {
+    let got = apply("a:1\r\nf:{[a;b] 1+a*b}\r\n", "a*b").unwrap();
+    assert_eq!(
+        got,
+        "a:1\r\nextracted:{[a;b] a*b}\r\nf:{[a;b] 1+extracted[a;b]}\r\n"
+    );
+    let got = apply("a:1\nf:{[a;b] 1+a*b}\n", "a*b").unwrap();
+    assert_eq!(
+        got,
+        "a:1\nextracted:{[a;b] a*b}\nf:{[a;b] 1+extracted[a;b]}\n"
+    );
+}

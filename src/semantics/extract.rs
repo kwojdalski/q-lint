@@ -28,7 +28,8 @@ const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 /// them) and `body`, the new lambda's text after its signature, and
 /// `insert_at`, the start of the line the new definition goes above.
 /// `spaced` is whether the call needs a blank before it, to stay a token
-/// of its own after what stands before the selection.
+/// of its own after what stands before the selection, and `newline` the
+/// line break the source is written with.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Extraction {
     pub start: usize,
@@ -37,12 +38,14 @@ pub struct Extraction {
     pub body: String,
     pub insert_at: usize,
     pub spaced: bool,
+    pub newline: &'static str,
 }
 
 impl Extraction {
     /// The new lambda's definition, as `name`, and the line break after it.
     pub fn definition(&self, name: &str) -> String {
-        format!("{name}:{{[{}] {}}}\n", self.params.join(";"), self.body)
+        let (params, body) = (self.params.join(";"), &self.body);
+        format!("{name}:{{[{params}] {body}}}{}", self.newline)
     }
 
     /// The call that takes the selection's place.
@@ -302,6 +305,8 @@ pub fn extract(
         body: raw[start..end].to_string(),
         insert_at: line_of(statement.min(start)),
         spaced,
+        // A file written with CRLF gets CRLF (#2794).
+        newline: if raw.contains("\r\n") { "\r\n" } else { "\n" },
     })
 }
 
@@ -533,8 +538,7 @@ fn term_end(code: &str, raw: &str, comments: &str, start: usize, end: usize) -> 
 /// assign, and a call there is no target KDB-X takes: 'type (#2792).
 fn assigns(next: &str) -> bool {
     let b = next.as_bytes();
-    b.first() == Some(&b':')
-        || (b.get(1) == Some(&b':') && b"+-*%&|^=<>~!#_$?@.,".contains(&b[0]))
+    b.first() == Some(&b':') || (b.get(1) == Some(&b':') && b"+-*%&|^=<>~!#_$?@.,".contains(&b[0]))
 }
 
 /// Whether what follows `end` is `[...]:`, which assigns at an index of the
