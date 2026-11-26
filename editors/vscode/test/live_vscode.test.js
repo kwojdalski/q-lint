@@ -385,6 +385,32 @@ test("a discovered process listed at another host or port forgets its password, 
   void again;
 });
 
+// Deleting a server, or removing its processes, left the connection to one
+// of them open, and reconnected to it after a drop (#2565).
+test("deleting a discovery server, or removing its processes, disconnects from its process", async (t) => {
+  const http = require("node:http");
+  const q = await fakeQ(() => GATHERED);
+  t.after(() => q.close());
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify([{ label: "A", host: "127.0.0.1", port: q.port }]));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { live } = await setUp(t, []);
+  const url = `http://127.0.0.1:${server.address().port}/`;
+  await stub.commands.get("q-lint.addDiscoveryServer")({ label: "srv", url });
+  assert.strictEqual(await live.connectTo("srv/A"), true);
+  await stub.commands.get("q-lint.removeDiscoveredProcesses")("srv");
+  assert.strictEqual(live.activeLabel(), undefined);
+  await stub.commands.get("q-lint.reloadDiscoveryServer")("srv");
+  assert.strictEqual(await live.connectTo("srv/A"), true);
+  stub.picks.push("Delete");
+  await stub.commands.get("q-lint.deleteDiscoveryServer")("srv");
+  assert.deepStrictEqual(live.discovery.servers(), []);
+  assert.strictEqual(live.activeLabel(), undefined);
+});
+
 // Before 0.37 nothing was kept of where a discovered process's password was
 // given. The first listing after the upgrade was taken as that place, so a
 // process moved while VS Code was closed was sent the password (#1878).
