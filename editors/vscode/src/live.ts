@@ -632,8 +632,9 @@ export class Live {
   };
   /// The connections `openSeparate` handed out and still open: a stream's.
   private readonly separate = new Set<{ connection: QConnection; process: Process }>();
-  /// Connections apart still running their connect script, which Abort and
-  /// Disconnect close: nothing else reaches them (#2567).
+  /// Connections apart the user asked for - a stream's, a diff's - still
+  /// running their connect script, which Abort and Disconnect close:
+  /// nothing else reaches them (#2567).
   private readonly preparingApart = new Set<{ connection: QConnection; process: Process }>();
   /// Stops the connect under way: a reconnect after an abort that waits for
   /// the process to be free, or any connect Disconnect or a connect
@@ -2285,8 +2286,11 @@ export class Live {
       timedOut = true;
       connection.abort();
     });
+    // Not one run from a timer - a tile's refresh, a scheduled export -
+    // which nobody waits for: a Disconnect from the process the user works
+    // on is not one from every process a timer reads (#3026).
     const preparing = { connection, process };
-    if (throws) {
+    if (throws && !unattended) {
       this.preparingApart.add(preparing);
     }
     // Under `reval` where that is the guard's backstop, as any code the

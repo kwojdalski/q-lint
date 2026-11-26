@@ -1148,3 +1148,27 @@ test("Abort's reconnect leaves one login with a busy process, and is connected b
   t.mock.timers.reset();
   assert.deepStrictEqual([a.logins, live.activeLabel()], [["me:", "me:"], "a"]);
 });
+
+// Disconnect and Abort close the connections apart still in their connect
+// script (#2567) - and closed a tile's refresh and a scheduled export on
+// other processes with them, which failed with nothing said.
+test("Disconnect, and Abort with nothing running, leave a background run on another process in its connect script (#3026)", async (t) => {
+  const ok = { ok: true, type: -7, text: ["2"] };
+  const dev = await fakeQ(() => ok);
+  const hdb = await fakeQ((sent) => (JSON.stringify(sent).includes("prepare") ? sleep(200).then(() => ok) : ok));
+  t.after(() => (dev.close(), hdb.close()));
+  const { live } = await setUp(t, [proc("dev", dev.port), proc("hdb", hdb.port, { init: "prepare[]" })]);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  for (const [command, said] of [
+    ["q-lint.abortQuery", [["info", "q-lint: no query is running."]]],
+    ["q-lint.disconnectProcess", []],
+  ]) {
+    hdb.sent.length = 0;
+    stub.messages.length = 0;
+    const background = live.runApart(live.processes()[1], "til 3", undefined, { unattended: true });
+    await until(() => hdb.sent.length === 1);
+    await stub.commands.get(command)();
+    assert.deepStrictEqual((await background).text, ["2"], command);
+    assert.deepStrictEqual(stub.messages, said, command);
+  }
+});
