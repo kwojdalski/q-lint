@@ -1859,6 +1859,36 @@ fn a_function_a_comment_names_is_dead_all_the_same() {
     assert!(dead(&[("a.q", read)]).is_empty());
 }
 
+// #2957: tests were exempt and the fixtures qUnit runs around them were
+// not, so a suite's `setUp` was listed for deletion.
+#[test]
+fn a_fixture_qunit_calls_by_its_name_is_not_dead() {
+    let suite = ".utl.require\"qunit\"\n\
+                 .mytests.beforeNamespace:{[] .mytests.h:hopen 0}\n\
+                 .mytests.setUp:{[] .mytests.x:1}\n\
+                 .mytests.tearDownAll:{[] .mytests.x:0}\n\
+                 .mytests.afterNamespace:{[] hclose .mytests.h}\n\
+                 .mytests.parametersA:{[] 1 2 3}\n\
+                 .mytests.beforeParameters:{[] 1}\n\
+                 .mytests.afterParameters:{[] 1}\n\
+                 .mytests.testAddition:{[] .qunit.assertEquals[1+1;2;\"adds\"]}\n\
+                 .mytests.leftover:{[] 1}\n\
+                 setUp:{[] 1}\n\
+                 .qunit.runTests `.mytests\n";
+    // What qUnit does not call is dead there too: a function of the
+    // namespace that is no fixture, and a `setUp` in no namespace.
+    assert_eq!(dead(&[("suite.q", suite)]), [".mytests.leftover", "setUp"]);
+    // In a file that does not use qUnit a `setUp` is the file's own, and
+    // dead when nothing reads it.
+    let plain = ".app.setUp:{[] 1}\n.app.tearDown:{[] 0}\n.app.tearDown[]\n";
+    assert_eq!(dead(&[("plain.q", plain)]), [".app.setUp"]);
+    // And only the fixtures of the file that uses it are qUnit's.
+    assert_eq!(
+        dead(&[("suite.q", suite), ("plain.q", plain)]),
+        [".app.setUp", ".mytests.leftover", "setUp"]
+    );
+}
+
 #[test]
 fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     let dir = tempfile::tempdir().unwrap();

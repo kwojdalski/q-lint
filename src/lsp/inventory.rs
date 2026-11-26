@@ -9,7 +9,8 @@
 //!   as code, and - since q also reaches a function by a name it computes -
 //!   when its last part is spelled in any symbol or string literal
 //!   (`` `f ``, `value "f[]"`, `.z.ts:`f`), so a callback is not reported.
-//!   The `.z` handlers q calls itself, and tests, are never reported. Each
+//!   The `.z` handlers q calls itself, tests, and the fixtures qUnit calls
+//!   around a test are never reported. Each
 //!   answer says how many places in the workspace reach a name by a value
 //!   computed at run time, which no reading can follow.
 //!
@@ -20,7 +21,7 @@
 //!
 //! Like the rest of the server, none runs anything; the VS Code client
 //! asks them only while its view or command is on.
-use super::annotate::runnables;
+use super::annotate::{is_fixture, runnables, uses_qunit};
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
 use q_lint_rs::{Definition, Mention, mentions};
@@ -158,6 +159,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
     let mut read: HashSet<String> = HashSet::new();
     let mut words: HashSet<String> = HashSet::new();
     let mut tests: HashSet<String> = HashSet::new();
+    let mut fixtures: HashSet<String> = HashSet::new();
     let mut defined: Vec<(String, String, String, Value)> = vec![];
     let mut dynamic = 0;
     for key in sources.keys() {
@@ -166,11 +168,19 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
         };
         let lines = Lines::new(&text);
         let placement = sources.placement(key);
+        let qunit = uses_qunit(&text);
         for m in &mentions(&text) {
             // Each name as q has it where the file is loaded (#2046).
             let names = sources.names(&text, m, &placement);
             match &m.definition {
                 Some(d) if d.holds_function => {
+                    // `.qunit.runTests` calls a namespace's `setUp*`,
+                    // `tearDown*` and the rest for what they are named, as
+                    // the Run test lens does: deleted for being read
+                    // nowhere, the suite breaks (#2957).
+                    if qunit {
+                        fixtures.extend(names.iter().filter(|name| is_fixture(name)).cloned());
+                    }
                     defined.extend(names.into_iter().map(|name| {
                         (
                             key.to_string(),
@@ -212,6 +222,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             || words.contains(&name)
             || words.contains(leaf)
             || name.starts_with(".z.")
+            || fixtures.contains(&name)
             || tests.contains(&name)
             || tests.contains(leaf);
         if used {
