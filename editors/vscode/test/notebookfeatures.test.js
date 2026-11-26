@@ -660,6 +660,14 @@ test("the command line names a process by host:port or by a listed label, and re
   const listed = [{ label: "rdb", host: "h", port: 1, tags: ["prod"], user: "u" }];
   assert.strictEqual(cliProcess("rdb", listed), listed[0]);
   assert.deepStrictEqual(cliProcess("[::1]:5001", [], "me", true), { label: "[::1]:5001", host: "::1", port: 5001, tags: [], user: "me", tls: true });
+  // A listed process's "evaluation": "direct" holds by its address, as its tags do (#2491).
+  assert.deepStrictEqual(cliProcess("127.0.0.1:54120", [{ label: "pm", host: "localhost", port: 54120, tags: ["perm"], evaluation: "direct" }]), {
+    label: "127.0.0.1:54120",
+    host: "127.0.0.1",
+    port: 54120,
+    tags: ["perm"],
+    evaluation: "direct",
+  });
   // --direct makes a host:port evaluate plain strings only; a listed
   // process keeps its own evaluation (#2473).
   assert.strictEqual(cliProcess("h:5001", [], undefined, false, true).evaluation, "direct");
