@@ -327,6 +327,17 @@ test("two series of one name are told apart: a colour is one's own, and a preset
   assert.deepStrictEqual([own.state.columns, own.rendered().chart.note, own.rendered().chart.datasets.map((d) => d.label)], [[1], undefined, ["size"]]);
 });
 
+test("Save PNG and Save SVG are for a chart that is drawn: off beside a note alone (#3139)", () => {
+  FakeChart.made = [];
+  const page = loadPage(undefined, { Chart: FakeChart });
+  const saves = () => ["Save PNG", "Save SVG"].map((text) => Boolean(page.button(text).disabled));
+  page.send(result("s.1", [["t", 7, ["1", "2"]], ["a", 9, ["1", "2"]]], { view: "chart" }));
+  assert.deepStrictEqual(saves(), [false, false]);
+  page.send(result("s.2", [["sym", 11, ["a", "b"]], ["name", 11, ["x", "y"]]], { view: "chart" }));
+  assert.match(page.rendered().chart.note, /No numeric column/);
+  assert.deepStrictEqual(saves(), [true, true]);
+});
+
 test("linked panes read every series at the crosshair, zoom together on a drag and show all on a double-click (#1018)", () => {
   FakeChart.made = [];
   const page = loadPage(undefined, { Chart: FakeChart });

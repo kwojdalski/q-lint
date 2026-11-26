@@ -719,6 +719,31 @@ test("a command's request is not replayed to a later result, and a second page's
   assert.strictEqual(dialogs, 1);
 });
 
+test("the page's Save button on a result that draws no chart says so; a second page's empty answer does not say it twice (#3139)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  modes.show(result([1, 2]), live({ mode: "chart" }));
+  const page = fake.pages[0];
+  const info = [];
+  let dialogs = 0;
+  fake.vscode.window.showInformationMessage = async (m) => info.push(m);
+  fake.vscode.window.showSaveDialog = async () => (dialogs++, undefined);
+  for (const format of ["png", "svg"]) {
+    page.receive({ type: "image", id: page.posted.at(-1).id, format, data: "" });
+  }
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual([info.length, dialogs], [2, 0]);
+  assert.match(info[0], /draws no chart, so there is nothing to save/);
+  // The command's request, answered empty by two open pages: said once.
+  const saving = fake.vscode.commands[RESULT_VIEW.saveChart]("svg", new fake.vscode.Uri("/a.svg"));
+  const asked = page.posted.at(-1).control;
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "", key: asked.key });
+  page.receive({ type: "image", id: page.posted.at(-1).id, format: "svg", data: "", key: asked.key });
+  await saving;
+  assert.strictEqual(info.length, 3);
+});
+
 test("a result keeps its saved query's new name once the query is renamed, and none once it is deleted (#1413)", () => {
   const fake = fakeVscode();
   const modes = loadModes(fake);

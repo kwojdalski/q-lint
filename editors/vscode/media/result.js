@@ -1957,12 +1957,14 @@
       label.append(y2);
       controls.append(label);
     }
+    const saves = [];
     if (feature("charts")) {
       ["png", "svg"].forEach(function (format) {
         const b = el("button", "", "Save " + format.toUpperCase());
         b.title = "Save the chart as a " + format.toUpperCase() + " file";
         b.addEventListener("click", function () { sendImage(format); });
         controls.append(b);
+        saves.push(b);
       });
     }
     if (feature("chartPresets")) {
@@ -2024,6 +2026,11 @@
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
       summary.note = note;
+      // No chart: nothing to save, which the buttons did without a word (#3139).
+      saves.forEach(function (b) {
+        b.disabled = true;
+        b.title = "No chart is drawn, so there is nothing to save";
+      });
       rendered({ chart: summary, preset: preset });
       return;
     }

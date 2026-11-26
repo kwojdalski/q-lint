@@ -536,6 +536,9 @@ test("the chart offers area, step and candles, a right axis and image buttons on
   const options = () => page.body.all((e) => e.tagName === "SELECT")[0].children.map((o) => o.value);
   assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram", "area", "step", "candlestick", "linked"]);
   assert.ok(button(page, "Save PNG") && button(page, "Save SVG"));
+  // No chart is drawn here (no Chart.js), so there is none to save (#3139).
+  assert.deepStrictEqual([button(page, "Save PNG").disabled, button(page, "Save SVG").disabled], [true, true]);
+  assert.match(button(page, "Save PNG").title, /No chart is drawn/);
   assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 2);
   // A request for an image, with no chart drawn here (no Chart.js), answers empty.
   page.send({ ...twoSeries, control: { key: "k.1", action: "image", format: "svg" } });
