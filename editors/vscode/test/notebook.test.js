@@ -468,6 +468,43 @@ test("fields this extension does not know are kept on an output, an item and a r
   assert.strictEqual(serializeQnb(parseQnb(text)), text);
 });
 
+test("a metadata that is no object, and an item's base64 beside its text, are kept for the save (#2993)", () => {
+  // Neither is read, and neither is refused: each was dropped by a save of
+  // what was opened, being a field the format knows.
+  const file = {
+    qnb: 1,
+    cells: [
+      { kind: "code", source: ["a:1"], metadata: ["tag"] },
+      { kind: "markdown", source: ["# a"], metadata: "note", id: "c2" },
+      {
+        kind: "code",
+        source: ["1"],
+        outputs: [
+          { items: [{ mime: "text/plain", text: "1", base64: "/w==" }], metadata: [1] },
+          { items: [{ mime: "text/plain", base64: "MQ==", text: 5 }, { mime: "text/plain", text: "1", base64: null }], metadata: null },
+        ],
+      },
+    ],
+    metadata: "note",
+  };
+  const text = JSON.stringify(file, null, 1) + "\n";
+  const read = parseQnb(text);
+  assert.strictEqual(read.metadata, undefined);
+  assert.strictEqual(read.cells[0].metadata, undefined);
+  assert.deepStrictEqual(read.cells[2].outputs[0].items[0], { mime: "text/plain", text: "1", extra: { base64: "/w==" } });
+  assert.deepStrictEqual(read.cells[2].outputs[1].items[0], { mime: "text/plain", base64: "MQ==", extra: { text: 5 } });
+  assert.strictEqual(serializeQnb(read), text);
+  assert.strictEqual(serializeQnb(parseQnb(serializeQnb(read))), text);
+  // What the editor has since given the cell is what is written, once.
+  const edited = { cells: [{ ...read.cells[0], metadata: { tag: "x" } }, { ...read.cells[2], outputs: [{ items: [{ mime: "text/plain", base64: "MQ==", extra: { base64: "/w==", text: "1" } }] }] }] };
+  assert.deepStrictEqual(JSON.parse(serializeQnb(edited)).cells, [
+    { kind: "code", source: ["a:1"], metadata: { tag: "x" } },
+    { kind: "code", source: ["1"], outputs: [{ items: [{ mime: "text/plain", base64: "MQ==", text: "1" }] }] },
+  ]);
+  // A known field of any other kind is still never written from what was kept.
+  assert.deepStrictEqual(JSON.parse(serializeQnb({ cells: [{ kind: "code", source: "2", extra: { outputs: "x", execution: 1, language: 2 } }] })).cells, [{ kind: "code", source: ["2"] }]);
+});
+
 test("a cell that opens with a qDoc comment runs: @param and its kin are documentation, not directives", () => {
   const documented = "/ @param x long\n/ @return long\n/ @throws type\nf:{x+1}";
   assert.deepStrictEqual(cellDirective(documented), { mode: "console" });

@@ -19,8 +19,9 @@
 // `base64` otherwise. `execution`, `outputs` and `metadata` are written only
 // when there is something in them. A field this extension does not know,
 // on the file, a cell, an output, an item or a run, is kept and written
-// back after the ones it does. Saving what was opened gives the same file
-// back.
+// back after the ones it does; so is a `metadata` that is no object, and
+// the `base64` of an item that has a `text` too, which are not read
+// (#2993). Saving what was opened gives the same file back.
 //
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
@@ -109,16 +110,25 @@ const OUTPUT_FIELDS = ["items", "metadata"];
 const ITEM_FIELDS = ["mime", "text", "base64"];
 const EXECUTION_FIELDS = ["order", "success", "start", "end"];
 
-/// The fields of `json` not in `known`, as `{extra}`, or nothing when none.
-function unknown(json: Json, known: string[]): { extra?: Json } {
-  const extra = Object.fromEntries(Object.entries(json).filter(([key]) => !known.includes(key)));
+/// The known fields a file may hold in a shape that is not read, where one
+/// of any other is refused: a `metadata` that is no object, and an item's
+/// `text` or `base64` beside the one that is its bytes. Each is kept as it
+/// was for the save, which dropped it (#2993).
+const LOOSE = ["metadata", "text", "base64"];
+
+/// The fields of `json` not in `known`, and the loose ones `read` did not
+/// take, as `{extra}`, or nothing when none.
+function unknown(json: Json, known: string[], read: object = {}): { extra?: Json } {
+  const extra = Object.fromEntries(Object.entries(json).filter(([key]) => !known.includes(key) || (LOOSE.includes(key) && !(key in read))));
   return Object.keys(extra).length > 0 ? { extra } : {};
 }
 
-/// `extra`'s fields added to `out`, less any `out` has a field of its own for.
+/// `extra`'s fields added to `out`, less any `out` has a field of its own
+/// for: a known one is written from `extra` only when it is a loose one
+/// `out` does not have.
 function withExtra(out: Json, extra: Json | undefined, known: string[]): Json {
   for (const [key, value] of Object.entries(extra ?? {})) {
-    if (!known.includes(key)) {
+    if (!known.includes(key) || (LOOSE.includes(key) && !(key in out))) {
       out[key] = value;
     }
   }
@@ -163,7 +173,8 @@ export function parseQnb(raw: string, exact = true): Qnb {
     throw new QnbError("not a q notebook: \"cells\" is missing or not a list");
   }
   const cells = json.cells.map((cell, i) => readCell(cell, `cell ${i + 1}`));
-  return { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}), ...unknown(json, FILE_FIELDS) };
+  const notebook: Qnb = { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}) };
+  return { ...notebook, ...unknown(json, FILE_FIELDS, notebook) };
 }
 
 function readCell(raw: unknown, where: string): QnbCell {
@@ -225,7 +236,7 @@ function readCell(raw: unknown, where: string): QnbCell {
   if (isObject(raw.metadata)) {
     cell.metadata = raw.metadata;
   }
-  return { ...cell, ...unknown(raw, raw.kind === "code" ? CELL_FIELDS : MARKDOWN_FIELDS) };
+  return { ...cell, ...unknown(raw, raw.kind === "code" ? CELL_FIELDS : MARKDOWN_FIELDS, cell) };
 }
 
 function readOutput(raw: unknown, where: string): QnbOutput {
@@ -236,15 +247,18 @@ function readOutput(raw: unknown, where: string): QnbOutput {
     if (!isObject(item) || typeof item.mime !== "string") {
       throw new QnbError(`${where}, item ${k + 1} has no "mime"`);
     }
+    let read: QnbItem;
     if (typeof item.text === "string") {
-      return { mime: item.mime, text: item.text, ...unknown(item, ITEM_FIELDS) };
+      read = { mime: item.mime, text: item.text };
+    } else if (typeof item.base64 === "string") {
+      read = { mime: item.mime, base64: item.base64 };
+    } else {
+      throw new QnbError(`${where}, item ${k + 1} has neither "text" nor "base64"`);
     }
-    if (typeof item.base64 === "string") {
-      return { mime: item.mime, base64: item.base64, ...unknown(item, ITEM_FIELDS) };
-    }
-    throw new QnbError(`${where}, item ${k + 1} has neither "text" nor "base64"`);
+    return { ...read, ...unknown(item, ITEM_FIELDS, read) };
   });
-  return { items, ...(isObject(raw.metadata) ? { metadata: raw.metadata } : {}), ...unknown(raw, OUTPUT_FIELDS) };
+  const output: QnbOutput = { items, ...(isObject(raw.metadata) ? { metadata: raw.metadata } : {}) };
+  return { ...output, ...unknown(raw, OUTPUT_FIELDS, output) };
 }
 
 /// Write a `.qnb`: keys in a fixed order, one space of indent, a final newline.
