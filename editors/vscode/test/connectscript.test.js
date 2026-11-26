@@ -193,6 +193,18 @@ test("Import asks before taking away TLS, a tunnel or a guarded tag, and forgets
   assert.strictEqual(context.secrets.all.has("q-lint.password.a"), false);
 });
 
+test("Import of a list naming a process by its address only keeps what was saved on it (#3093)", async (t) => {
+  const held = { init: "x:1", launch: { script: "rdb.q" }, credentialCommand: "vault read rdb", timeout: 30, gateway: ["rdb", "hdb"] };
+  const { live } = await setUp(t, [proc("rdb", { user: "me", ...held })]);
+  const vscode = require("vscode");
+  const fs = vscode.workspace.fs;
+  vscode.workspace.fs = { readFile: async () => Buffer.from(JSON.stringify([{ label: "rdb", host: "h2", port: 2, user: "me", tags: ["dev"] }])) };
+  t.after(() => (vscode.workspace.fs = fs));
+  await stub.commands.get("q-lint.importProcesses")(vscode.Uri.file("/l.json"));
+  assert.deepStrictEqual(stub.messages.map((m) => m[1]), ["q-lint: imported 1 q process(es)."]);
+  assert.deepStrictEqual(live.processes(), [{ label: "rdb", host: "h2", port: 2, user: "me", tags: ["dev"], ...held }]);
+});
+
 test("with q-lint.connection.connectScript.enable off, Set Connect Script refuses and no script is sent", async (t) => {
   const net = require("node:net");
   const messages = [];

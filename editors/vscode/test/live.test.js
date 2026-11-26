@@ -254,6 +254,17 @@ test("an import replaces processes of the same label and adds the rest", () => {
   assert.deepStrictEqual(merge([a, b], [b2, c]), [a, b2, c]);
 });
 
+test("an import keeps what the process of its label holds and the list does not name (#3093)", () => {
+  const held = { init: "x:1", gateway: ["rdb"], launch: { script: "rdb.q" }, credentialCommand: "vault read rdb", timeout: 30, evaluation: "direct" };
+  const rdb = { label: "rdb", host: "h", port: 1, user: "me", tags: ["dev"], tls: true, ssh: "jump", ...held };
+  // Named by its address only: everything it held is still there.
+  assert.deepStrictEqual(merge([rdb], [{ label: "rdb", host: "other", port: 2, tags: [] }]), [{ label: "rdb", host: "other", port: 2, tags: [], ...held }]);
+  // What the list names is the list's, a connect script of either kind for one of the other.
+  const named = { label: "rdb", host: "h", port: 1, tags: [], initFile: "i.q", gateway: ["hdb"], launch: { command: "q" }, credentialCommand: "other", timeout: 5, evaluation: "wrapped" };
+  assert.deepStrictEqual(merge([rdb], [named]), [named]);
+  assert.deepStrictEqual(merge([{ ...rdb, init: undefined, initFile: "old.q" }], [{ label: "rdb", host: "h", port: 1, tags: [] }])[0].initFile, "old.q");
+});
+
 test("processes are grouped by tag, sorted, untagged last", () => {
   const p = (label, ...tags) => ({ label, host: "h", port: 1, tags });
   const groups = grouped([p("z", "prod"), p("a", "prod", "eu"), p("m"), p("b")]);

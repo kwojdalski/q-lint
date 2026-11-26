@@ -417,11 +417,35 @@ export function readProcessFile(text: string): { processes: Process[]; problems:
   return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")), true);
 }
 
-/// `processes` merged with `incoming`: an incoming process replaces the one
-/// of its label, and the rest are added after.
+/// `next` with what `old`, the process it takes the place of, holds and it
+/// does not name: a connect script, gateway server types, a launch
+/// definition, a credential command, a timeout, an evaluation.
+function withUnnamed(next: Process, old: Process): Process {
+  const scripted = next.init !== undefined || next.initFile !== undefined;
+  return {
+    ...next,
+    ...(!scripted && old.init !== undefined ? { init: old.init } : {}),
+    ...(!scripted && old.initFile !== undefined ? { initFile: old.initFile } : {}),
+    ...(next.gateway === undefined && old.gateway !== undefined ? { gateway: old.gateway } : {}),
+    ...(next.launch === undefined && old.launch !== undefined ? { launch: old.launch } : {}),
+    ...(next.credentialCommand === undefined && old.credentialCommand !== undefined ? { credentialCommand: old.credentialCommand } : {}),
+    ...(next.timeout === undefined && old.timeout !== undefined ? { timeout: old.timeout } : {}),
+    ...(next.evaluation === undefined && old.evaluation !== undefined ? { evaluation: old.evaluation } : {}),
+  };
+}
+
+/// `processes` merged with `incoming`: an incoming process takes the place
+/// of the one of its label, and the rest are added after. What the old one
+/// holds that the incoming one does not name it keeps, as Edit Process keeps
+/// it: a list naming a process by its address only took away its connect
+/// script, launch definition, credential command, timeout and gateway types,
+/// unasked (#3093). Its TLS, SSH tunnel and tags are the import's to ask of.
 export function merge(processes: Process[], incoming: Process[]): Process[] {
   const byLabel = new Map(incoming.map((p) => [p.label, p]));
-  const kept = processes.map((p) => byLabel.get(p.label) ?? p);
+  const kept = processes.map((p) => {
+    const next = byLabel.get(p.label);
+    return next === undefined ? p : withUnnamed(next, p);
+  });
   const known = new Set(processes.map((p) => p.label));
   return [...kept, ...incoming.filter((p) => !known.has(p.label))];
 }
