@@ -34,7 +34,8 @@ test("the clients answer: one handle is an atom, several are lists; described pl
   assert.deepStrictEqual(rows.map(clientDescription), ["tcp TLS · alice@10.0.0.1", "unix · 120 B queued · this connection"]);
   assert.deepStrictEqual(readClients({ handle: [], queued: [], self: [], kind: [], user: [], host: [], tracked: false }).rows, []);
   assert.throws(() => readClients(42), /handles/);
-  assert.strictEqual(closeCode(7.9), "hclose 7i");
+  // The handle is checked to be the client shown, and closed, in one call (#2561).
+  assert.match(closeCode({ handle: 7.9, kind: "tcp", user: "bob", host: "" }), /hclose`int\$h\}\[7f;\("tcp";"bob";""\)\]$/);
 });
 
 test("the timers answer, and the q a change sends", () => {
@@ -168,6 +169,16 @@ test("Connected Clients lists the handles; one is closed after asking; on a guar
   assert.match(self.description, /^tcp · this connection$|^this connection$/);
   // Its own handle is not closed from here.
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)(self), false);
+  // A row whose handle now belongs to another client, or to this
+  // connection, is refused, and nothing is closed (#2561).
+  stub.picks.push("Close Handle");
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)({ ...theirs, client: { ...theirs.client, kind: "unix" } }), false);
+  assert.match(stub.messages.at(-1)[1], /now belongs to another client/);
+  stub.picks.push("Close Handle");
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)({ ...theirs, contextValue: "client", handle: self.handle, client: { ...self.client, self: false } }), false);
+  assert.match(stub.messages.at(-1)[1], /this extension's own connection/);
+  assert.strictEqual(other.isOpen, true);
+  assert.strictEqual(live.activeLabel(), "a");
   // Asked, declined: nothing closed.
   stub.picks.push(undefined);
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.closeClient)(theirs), false);

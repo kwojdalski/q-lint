@@ -12,6 +12,8 @@
 // TorQ's (no `w`, `u` or `ipa`, a user held as a string) gives no address
 // or user, as none does (#1905); nothing is kept on the process.
 
+import { stringLiteral } from "./qliteral";
+
 export const CLIENTS = [
   "{[]",
   " h:key .z.W;",
@@ -63,7 +65,19 @@ export function clientDescription(row: ClientRow): string {
   return [row.kind, who, row.queued > 0 ? `${row.queued} B queued` : "", row.self ? "this connection" : ""].filter((s) => s !== "").join(" · ");
 }
 
-/// The q that closes `handle`.
-export function closeCode(handle: number): string {
-  return `hclose ${Math.trunc(handle)}i`;
+/// The q that closes `row`'s handle, and only while it is still the client
+/// shown: a client gone, and its number given to the next to connect, or a
+/// row left from before a reconnect naming this connection, is refused, not
+/// closed (#2561). The handle is read again as `CLIENTS` reads it, and
+/// closed in the same call. Without TorQ's `.clients` a handle has no user
+/// or address, so a new client of the same kind is not told apart.
+export function closeCode(row: Pick<ClientRow, "handle" | "kind" | "user" | "host">): string {
+  const shown = [row.kind, row.user, row.host].map(stringLiteral).join(";");
+  return [
+    `{[h;shown]r:${CLIENTS.split("\n").join("")}[];i:r[\`handle]?h;`,
+    `if[i=count r\`handle;'"handle ",string[\`int$h]," is closed already"];`,
+    `if[r[\`self]i;'"handle ",string[\`int$h]," is now this extension's own connection"];`,
+    `if[not((),/:shown)~(),/:(r[\`kind]i;r[\`user]i;r[\`host]i);'"handle ",string[\`int$h]," now belongs to another client"];`,
+    `hclose\`int$h}[${Math.trunc(row.handle)}f;(${shown})]`,
+  ].join("");
 }
