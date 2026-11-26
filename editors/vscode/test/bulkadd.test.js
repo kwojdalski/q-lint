@@ -87,6 +87,24 @@ test("CSV with a header row: columns in any order, quoted fields, tags, user and
   assert.ok(!JSON.stringify(rows).includes("secret"));
 });
 
+test("a tls cell is yes or no in a word known to be one, and any other is a row not added (#3099)", () => {
+  const cells = ["on", "TRUE", "t", "tls", "enabled", "yes", " Y ", "1", "0", "No", "off", "", "false", "disabled", "maybe", "2", "tls1.3"];
+  const rows = parseBulk(`label,host,port,tls\n${cells.map((c, i) => `p${i},h,${5000 + i},${c}`).join("\n")}`, []);
+  assert.deepStrictEqual(
+    rows.map((r) => (r.process === undefined ? r.problem : r.process.tls === true)),
+    [
+      ...[true, true, true, true, true, true, true, true],
+      ...[false, false, false, false, false, false],
+      'tls is "maybe", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+      'tls is "2", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+      'tls is "tls1.3", not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.',
+    ],
+  );
+  assert.strictEqual(toAdd(rows).length, 14);
+  // No tls column, and a line that is not CSV: no TLS, as before.
+  assert.deepStrictEqual(parseBulk("host,port\nh,1\n", [])[0].process, { label: "h:1", host: "h", port: 1, tags: [] });
+});
+
 test("the table escapes what was pasted, and the page runs only its own script", () => {
   const html = rowsHtml(parseBulk('h:5000:<img src=x onerror=alert(1)>:"t"\n<script>', []));
   assert.ok(!html.includes("<img") && !html.includes("<script>"));

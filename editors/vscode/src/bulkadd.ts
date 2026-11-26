@@ -101,6 +101,10 @@ function header(line: string): (Partial<Record<Column, number>> & { secret: numb
   return at;
 }
 
+/// What a `tls` cell says, in lower case: yes, and no (an empty one too).
+const TLS_YES = ["1", "true", "t", "yes", "y", "on", "tls", "enabled"];
+const TLS_NO = ["", "0", "false", "f", "no", "n", "off", "none", "disabled"];
+
 /// A process from its fields, or why there is none.
 function processOf(fields: { host: string; port: string; label?: string; tags?: string; user?: string; tls?: string }): Process | string {
   const host = plainHost(fields.host);
@@ -111,13 +115,20 @@ function processOf(fields: { host: string; port: string; label?: string; tags?: 
   const port = Number(fields.port.trim());
   const label = fields.label !== undefined && fields.label.trim() !== "" ? fields.label.trim() : `${host.includes(":") ? `[${host}]` : host}:${port}`;
   const user = fields.user?.trim() ?? "";
+  // A tls cell says yes or no, in a word known to: `on`, `t`, `tls` and
+  // `enabled` were none of the four read as yes, so they were no TLS, and
+  // the user and password went in the clear (#3099).
+  const tls = fields.tls?.trim().toLowerCase() ?? "";
+  if (!TLS_YES.includes(tls) && !TLS_NO.includes(tls)) {
+    return `tls is ${JSON.stringify(fields.tls?.trim())}, not yes or no (true, false, 1, 0, on, off), so it was not added rather than connected to without TLS.`;
+  }
   return {
     label,
     host,
     port,
     ...(user !== "" ? { user } : {}),
     tags: parseTags(fields.tags ?? ""),
-    ...(/^(1|true|yes|y)$/i.test(fields.tls?.trim() ?? "") ? { tls: true } : {}),
+    ...(TLS_YES.includes(tls) ? { tls: true } : {}),
   };
 }
 
