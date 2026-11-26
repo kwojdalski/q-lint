@@ -281,6 +281,35 @@ fn the_target_version_reports_what_does_not_run_there() {
 
 /// A QK rule that no target can see is one `--rules` lists as on and that
 /// never reports: QK004 was one, for `-30!`, which every target has (#2091).
+/// The flag takes every spelling the configuration key does: `KDB-X`,
+/// `kdb-x` and `5` were refused on the command line while
+/// `target-version = "KDB-X"` worked in a file (#2749).
+#[test]
+fn the_target_version_flag_takes_every_spelling_the_configuration_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), NEW_Q).unwrap();
+    for name in ["kdbx", "KDB-X", "kdb-x", "5"] {
+        let (status, found, err) = run(d, &["--isolated", "--target-version", name, "a.q"]);
+        assert_eq!(status, Some(1), "{name}: {err}");
+        assert_eq!(qk(&found), vec![("QK005".to_string(), 5)], "{name}");
+        fs::write(
+            d.join("qlinter.toml"),
+            format!("target-version = \"{name}\"\n"),
+        )
+        .unwrap();
+        let (_, in_file, err) = run(d, &["a.q"]);
+        assert_eq!(found, in_file, "{name}: {err}");
+        fs::remove_file(d.join("qlinter.toml")).unwrap();
+    }
+    let (status, _, err) = run(d, &["--isolated", "--target-version", "4.2", "a.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("it must be one of 3.6, 4.0, 4.1, kdbx"),
+        "{err}"
+    );
+}
+
 #[test]
 fn every_qk_rule_listed_is_reported_for_some_target() {
     let dir = tempfile::tempdir().unwrap();

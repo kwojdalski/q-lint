@@ -118,7 +118,7 @@ struct Args {
     /// Report what does not run on this q release: `3.6`, `4.0`, `4.1` or
     /// `kdbx` (the QK rules). Wins over `target-version` in a configuration
     /// file; without either, the QK rules report nothing.
-    #[arg(long, value_parser = ["3.6", "4.0", "4.1", "kdbx"])]
+    #[arg(long, value_parser = target_version)]
     target_version: Option<String>,
     /// Report only the findings not in this baseline file, which
     /// `--write-baseline` writes. Wins over `baseline` in a configuration.
@@ -302,6 +302,19 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         baseline: args.baseline.clone(),
         no_baseline: args.write_baseline.is_some(),
     })
+}
+
+/// `--target-version`'s value: any spelling `target-version` takes in a
+/// configuration - `KDB-X`, `kdb-x` and `5` as well as `kdbx` - so a value
+/// that works in the file is not refused on the command line (#2749).
+fn target_version(text: &str) -> Result<String, String> {
+    match q_lint_rs::Target::parse(text) {
+        Some(_) => Ok(text.to_string()),
+        None => Err(format!(
+            "it must be one of {}",
+            q_lint_rs::Target::NAMES.join(", ")
+        )),
+    }
 }
 
 /// Refuse a run whose `flag` would write `target` over a file it reads.
