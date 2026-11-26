@@ -220,3 +220,24 @@ test("on a process reval does not hold on, a gateway call still goes as a plain 
   assert.deepStrictEqual(q.queries(), []);
   assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, true);
 });
+
+test("a connect script the guard reads as read-only goes under reval on a guarded process (#2641)", async (t) => {
+  const { q, live } = await setUp(t, ["prod"], undefined, {}, { init: "count t" });
+  assert.strictEqual(await live.connectTo("rdb"), true);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "count t"]]);
+});
+
+test("a connect script reval refuses is asked about; declined it is not sent again, confirmed it is sent as it is (#2641)", async (t) => {
+  const { q, live } = await setUp(t, ["prod"], () => "restricted", {}, { init: "count t" });
+  stub.picks.push(undefined);
+  await live.connectTo("rdb");
+  assert.deepStrictEqual(warnings(), [refusalQuestion("rdb", "restricted")]);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "count t"]]);
+  await stub.commands.get("q-lint.disconnectProcess")?.();
+  stub.picks.push("Run Anyway");
+  await live.connectTo("rdb");
+  assert.deepStrictEqual(q.queries().slice(1), [
+    ["RUN_READ_ONLY", "count t"],
+    ["RUN", "count t"],
+  ]);
+});

@@ -2171,14 +2171,38 @@ export class Live {
     if (throws) {
       this.preparingApart.add(preparing);
     }
+    // Under `reval` where that is the guard's backstop, as any code the
+    // guard reads as read-only (#2641): a refusal fails the script when
+    // nobody is there to ask, and is asked about otherwise.
+    const backstopped = this.backstop(connection, process, code);
     try {
-      const answer = await window.withProgress(
-        { location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` },
-        () =>
-          connection.isDirect
-            ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false })
-            : connection.query(cut, consoleSize),
-      );
+      const send = () =>
+        window.withProgress({ location: { viewId: VIEWS.processes }, title: `Running the connect script of ${process.label}` }, () =>
+          connection.isDirect ? runUnwrapped(connection, cut, { size: consoleSize, limit: 0, unlimited: false, grid: false }) : connection.query(cut, consoleSize),
+        );
+      let answer: Awaited<ReturnType<typeof send>>;
+      try {
+        answer = await send();
+      } finally {
+        if (backstopped) {
+          connection.readOnly = false;
+        }
+      }
+      const refused = backstopped ? this.backstopped(connection, process) : undefined;
+      if (refused !== undefined) {
+        if (unattended) {
+          failed(refusalReason(process.label, refused));
+          return;
+        }
+        if (!(await this.refusedAnyway(process, refused))) {
+          this.show([`# ${process.label} - connect script not run: refused by its read-only evaluation, and not confirmed`], false);
+          return;
+        }
+        if (stopped()) {
+          return;
+        }
+        answer = await send();
+      }
       if (!answer.ok) {
         failed(`'${answer.error}`);
         return;
