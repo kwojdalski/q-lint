@@ -7394,13 +7394,18 @@ fn lint_rules(
             } else {
                 params.len()
             };
-            let rest = code[end..].trim_start();
+            // The each of this statement, on this line or the indented one
+            // that continues it: a column-0 `each[{x};1 2]` under
+            // `f:{[a;b] a+b}` is a statement of its own (#2947).
+            // Reported at the each itself: from the lambda's end, a comment
+            // after it on the line above would take the finding.
+            let each = past_blanks(&v.comments, end);
             // `@'` is each as well: q 5 `{[a;b] a+b}@'1 2` is two projections.
             if arity >= 2
-                && let Some(it) = re!(r"\A(?:(?:each|peach)\b|@')").find(rest)
+                && let Some(it) = re!(r"\A(?:(?:each|peach)\b|@')").find(&code[each..])
             {
                 add(
-                    end,
+                    each,
                     "QA005",
                     peach_detail(it.as_str(), arity).unwrap_or_else(|| {
                         format!(
@@ -8488,12 +8493,13 @@ fn lint_rules(
             continue;
         }
         let rank = lambda_rank(code, source, brace, end);
+        let each = past_blanks(&v.comments, end);
         let it = re!(r"\A(?:(?:each|peach)\b|@')")
-            .find(code[end..].trim_start())
+            .find(&code[each..])
             .map(|m| m.as_str());
         if rank >= 2 && (bracketed || it.is_some()) {
             add(
-                end,
+                if it.is_some() { each } else { end },
                 "QA005",
                 it.and_then(|it| peach_detail(it, rank)).unwrap_or_else(|| {
                     if named {

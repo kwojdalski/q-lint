@@ -596,6 +596,22 @@ h:{[f] @[f;1;{x}]}
 f:{x+1}
 a:f . 1
 
+=== clean | a column-0 statement under a lambda's definition is not that lambda's each (KDB-X: each line runs, and f and k stay the lambdas, #2947)
+f:{[a;b] a+b}
+each[count;(1 2;3 4)]
+g:{[a;b] a+b}
+peach[count;(1 2;3 4)]
+k:{x+y}
+@'[count;(1 2;3 4)]
+l:{x+y}
+"ab" each 1 2
+
+=== QA005 | while an indented line continues the statement (KDB-X: g is {[a;b] a+b}'[1 2], h two projections)
+g:{[a;b] a+b}
+  each 1 2
+h:{x+y}
+  @'1 2
+
 === QA012 profile: general | `.z.s` is the lambda it is written in, and takes what that takes (KDB-X: f 1, g 1, h 1 and k[1;2] are 'rank, #2945)
 f:{[a] $[a>0; .z.s[a-1;0]; a]}
 g:{$[x>0; .z.s[x-1;0]; x]}
