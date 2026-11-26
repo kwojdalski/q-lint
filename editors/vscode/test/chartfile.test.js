@@ -16,8 +16,10 @@ async function cli(name, content, options = []) {
     fs.writeFileSync(file, content);
     const said = [];
     const io = { out: (s) => said.push(s), err: (s) => said.push(s), stdin: () => "" };
-    const code = await main([file, "-o", path.join(dir, "out.svg"), ...options], io);
-    return { code, said: said.join("") };
+    const out = path.join(dir, "out.svg");
+    const code = await main([file, "-o", out, ...options], io);
+    // What it drew, where a test asks for options: the others compare the whole answer.
+    return { code, said: said.join(""), ...(options.length > 0 && fs.existsSync(out) ? { svg: fs.readFileSync(out, "utf8") } : {}) };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -108,12 +110,24 @@ test("an infinity or a null as q's csv writes one is a gap in a numeric column, 
   assert.deepStrictEqual(q.cells[1], ["1", "0w", "3", "-0w", ""], "the cells are the file's");
   assert.deepStrictEqual(gridFromCsv("a\n1\n0n\n0N\ninf\n-inf\nNaN\n").values[0], [1, null, null, null, null, null]);
   const said = await cli("c1.csv", "t,v\n0,1\n1,0w\n2,3\n3,-0w\n4,\n", ["--y", "v"]);
-  assert.deepStrictEqual(said, { code: 0, said: said.said });
-  assert.match(said.said, /^wrote /);
+  assert.strictEqual(said.code, 0, said.said);
+  assert.match(said.svg, />v<\/text>/);
   // A gap makes no column of words numeric, nor one of gaps alone.
   assert.strictEqual(gridFromCsv("a\n0w\nw\n").columns[0].numeric, false);
   assert.strictEqual(gridFromCsv("a\n0w\n0n\n").columns[0].numeric, false);
   assert.strictEqual(gridFromCsv("a\n1\n0wx\n").columns[0].numeric, false);
+});
+
+test("--y names a column whose name holds a comma, and still lists columns where no one column has that name (#3147)", async () => {
+  const csv = 'sym,a b,"x,y",x,y\nA,1,2,3,4\nB,2,3,4,5\n';
+  const whole = await cli("k4.csv", csv, ["--y", "x,y"]);
+  assert.deepStrictEqual([whole.code, whole.said.replace(/ .*/s, "")], [0, "wrote"]);
+  assert.match(whole.svg, />x,y<\/text>/);
+  assert.doesNotMatch(whole.svg, />[xy]<\/text>/);
+  const two = await cli("k5.csv", "sym,x,y\nA,3,4\nB,4,5\n", ["--y", "x,y"]);
+  assert.strictEqual(two.code, 0);
+  assert.match(two.svg, />x<\/text>[^]*>y<\/text>/);
+  assert.match((await cli("k6.csv", csv, ["--y", "x,z"])).said, /chart: no column z: /);
 });
 
 test("a candlestick draws the four columns --y names as its open, high, low and close, and refuses another count (#3126)", async () => {
