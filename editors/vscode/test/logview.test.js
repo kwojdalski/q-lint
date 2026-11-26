@@ -201,6 +201,16 @@ test("a log opens in a view, and filters by level, process, time and text read i
   await stub.commands.get(LOG_COMMANDS.processes)(["rdb1"]);
   await stub.commands.get(LOG_COMMANDS.time)({ from: "10:01", to: "nonsense" });
   assert.deepStrictEqual(viewer.state().filter, { levels: ["ERROR"], processes: ["rdb1"], from: "10:01", to: undefined });
+  assert.match(stub.messages.at(-1)[1], /to "nonsense" is not a time of day/);
+  // TorQ's own level names are levels (#2594), and a word that is none is said.
+  await stub.commands.get(LOG_COMMANDS.levels)(["ERR"]);
+  assert.deepStrictEqual(viewer.state().filter.levels, ["ERROR"]);
+  await stub.commands.get(LOG_COMMANDS.levels)(["INF", "WARN"]);
+  assert.deepStrictEqual(viewer.state().filter.levels, ["WARN", "INFO"]);
+  await stub.commands.get(LOG_COMMANDS.levels)(["nope"]);
+  assert.deepStrictEqual(viewer.state().filter.levels, ["WARN", "INFO"]);
+  assert.match(stub.messages.at(-1)[1], /not a log level: nope/);
+  await stub.commands.get(LOG_COMMANDS.levels)(["error"]);
   assert.strictEqual(text(), [torq("10:05:00", "rdb1", "ERROR", "boom"), "  [1] backtrace"].join("\n"));
   stub.inputs.push(undefined);
   await stub.commands.get(LOG_COMMANDS.time)(vscode.Uri.file(a));

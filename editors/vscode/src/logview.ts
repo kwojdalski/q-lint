@@ -30,6 +30,7 @@ import {
   LOG_VIEWER_OFF,
   NO_FILTER,
   filterText,
+  levelOf,
   matches,
   merge,
   readLogViewer,
@@ -516,7 +517,19 @@ export class LogViewer {
       return;
     }
     if (Array.isArray(given)) {
-      const levels = LEVELS.filter((l) => given.some((g) => typeof g === "string" && g.toUpperCase() === l));
+      // Each word as a line's level is read, so TorQ's `ERR` and `INF` are
+      // levels too; a word that is none is said, not dropped (#2594).
+      const read = given.map((g) => (typeof g === "string" ? levelOf(g.trim()) : undefined));
+      const unknown = given.filter((_g, i) => read[i] === undefined).map((g) => (typeof g === "string" ? g : JSON.stringify(g)));
+      const levels = LEVELS.filter((l) => read.includes(l));
+      if (unknown.length > 0) {
+        void window.showWarningMessage(
+          plainMessage(`q-lint: not a log level: ${unknown.join(", ")}. The levels are ${LEVELS.join(", ")}.${levels.length === 0 ? " The filter is unchanged." : ""}`),
+        );
+        if (levels.length === 0) {
+          return;
+        }
+      }
       await this.setFilter((f) => ({ ...f, levels }), view);
       return;
     }
@@ -569,6 +582,13 @@ export class LogViewer {
     // A menu hands in the editor's URI, which is no bound.
     if (typeof g === "object" && g !== null && ("from" in g || "to" in g)) {
       const bound = (v: unknown) => (typeof v === "string" && v.trim() !== "" && validBound(v) ? v.trim() : undefined);
+      // A bound given that cannot be read is said, not silently none (#2594).
+      const unread = (["from", "to"] as const).filter((k) => g[k] !== undefined && g[k] !== null && g[k] !== "" && bound(g[k]) === undefined);
+      if (unread.length > 0) {
+        void window.showWarningMessage(
+          plainMessage(`q-lint: ${unread.map((k) => `${k} ${JSON.stringify(g[k])}`).join(" and ")} is not a time of day or a date and time; the filter has no such bound.`),
+        );
+      }
       await this.setFilter((f) => ({ ...f, from: bound(g.from), to: bound(g.to) }), view);
       return;
     }
