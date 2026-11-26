@@ -916,7 +916,9 @@ a server of each type and joins what they answer. The server types are, in
 order: those **Query Gateway on Server Types...** (editor menu and palette)
 asks for, for the selection or the current line; those a line at column 0
 of the file names, `/ @servertypes hdb` (a comment after them is none);
-else the process's own. `/ @servertypes none` sends the file's queries to
+else the process's own. Server types are q names: one that is not, `hdb-eu`
+or `2hdb`, is named and refused - in the box, and on a file's line, whose
+queries are then not sent - rather than dropped. `/ @servertypes none` sends the file's queries to
 the gateway itself. The query is one string,
 `.gw.syncexec["select from trade";\`rdb\`hdb]`, which a server under TorQ's
 read-only mode reads as well: several statements are joined into it, each

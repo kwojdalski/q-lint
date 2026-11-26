@@ -34,6 +34,21 @@ export function readGateway(get: <T>(key: string, fallback: T) => T): { enabled:
   return { enabled: get<unknown>("connection.torqGateway.enable", true) !== false };
 }
 
+/// The words of server types as typed - a string, split as
+/// `processes.serverTypes` splits it, or a list - that are no q name, which
+/// that drops: `hdb-eu` of `rdb hdb-eu`, `2hdb` of `rdb 2hdb` (#3065).
+export function notServerTypes(value: string | readonly unknown[]): string[] {
+  const words = typeof value === "string" ? value.split(/[\s,`]+/) : value.map((t) => (typeof t === "string" ? t.trim().replace(/^`/, "") : String(t)));
+  return [...new Set(words.filter((t) => t !== "" && !/^[A-Za-z][A-Za-z0-9_.]*$/.test(t)))];
+}
+
+/// What to say of server types as typed when a word of them is no q name,
+/// naming each; undefined when all are.
+export function serverTypesProblem(value: string | readonly unknown[]): string | undefined {
+  const bad = notServerTypes(value);
+  return bad.length === 0 ? undefined : `Server types are q names: rdb hdb. ${bad.map((t) => `"${t}"`).join(", ")} ${bad.length === 1 ? "is not one" : "are not"}.`;
+}
+
 /// Server types as a q symbol list: one is enlisted.
 export function symbols(types: string[]): string {
   return `${types.length === 1 ? "enlist " : ""}${types.map((t) => `\`${t}`).join("")}`;
@@ -231,17 +246,20 @@ export function gatewayStatements(cut: string[], types: string[]): string[] {
 }
 
 /// The server types a file names for its queries: a line at column 0
-/// `/ @servertypes rdb hdb`, read to its first word that is no q name - a
-/// comment after them is none (#2587). `/ @servertypes none` names no
-/// server, `[]`: the file's queries run on the gateway itself (#2588).
-/// Undefined when it names none.
+/// `/ @servertypes rdb hdb`, read to its first word that does not start as
+/// a name or a number does - a comment after them is none (#2587). A word
+/// that does but is no q name, `2hdb` or `hdb-eu`, is a type mistyped: it
+/// is kept, for the query to be refused with its name, where the line cut
+/// at it sent the query to the types before it only (#3065).
+/// `/ @servertypes none` names no server, `[]`: the file's queries run on
+/// the gateway itself (#2588). Undefined when it names none.
 export function fileServerTypes(text: string): string[] | undefined {
   const m = /^\/[ \t]*@servertypes[ \t]+(.+)$/m.exec(text);
   if (m === null) {
     return undefined;
   }
   const words = m[1].split(/[\s,`]+/).filter((t) => t !== "");
-  const end = words.findIndex((t) => !/^[A-Za-z][A-Za-z0-9_.]*$/.test(t));
+  const end = words.findIndex((t) => !/^[A-Za-z0-9]/.test(t));
   const types = [...new Set(end < 0 ? words : words.slice(0, end))];
   if (types.length === 1 && types[0] === "none") {
     return [];

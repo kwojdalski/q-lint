@@ -74,7 +74,7 @@ import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
 import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
-import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, withServerTypes } from "./gateway";
+import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, serverTypesProblem, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
 import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
@@ -2932,11 +2932,17 @@ export class Live {
   /// (#909), to `serverTypes` or else the process's own; as written to any
   /// other process, or with q-lint.connection.torqGateway.enable off. The
   /// gateway's own statements stay as written, each for itself (#3059).
+  /// Thrown, `Not run: ...`, when a server type is no q name, as a file's
+  /// `/ @servertypes rdb 2hdb` names one (#3065).
   private throughGateway(code: string, process: Process, serverTypes?: string[]): string {
     const types = serverTypes ?? process.gateway;
     // `/ @servertypes none` names no server: the gateway itself (#2588).
     if (process.gateway === undefined || types === undefined || types.length === 0 || !this.setting(readGateway).enabled) {
       return code;
+    }
+    const wrong = serverTypesProblem(types);
+    if (wrong !== undefined) {
+      throw new Error(`Not run: ${wrong}`);
     }
     const cut = statements(code);
     const sent = gatewayStatements(cut, types);
@@ -3007,12 +3013,18 @@ export class Live {
         title: `TorQ gateway: server types of ${process.label}`,
         value: (process.gateway ?? []).join(" "),
         prompt: "The server types a query goes to through .gw.syncexec, unless the file or the query names others: rdb hdb. Empty: not a gateway.",
-        validateInput: (v) => (v.trim() === "" || serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+        // Every word a q name: one that is not was dropped unsaid (#3065).
+        validateInput: (v) => (v.trim() === "" ? undefined : (serverTypesProblem(v) ?? (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."))),
         ignoreFocusOut: true,
       });
       if (given === undefined) {
         return;
       }
+    }
+    const wrong = serverTypesProblem(given);
+    if (wrong !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${wrong} ${process.label} was not changed.`));
+      return;
     }
     const gateway = serverTypes(given);
     const now = this.processes();
@@ -3124,11 +3136,16 @@ export class Live {
         title: `Query ${process.label} on server types`,
         value: ((document !== undefined ? fileServerTypes(document.getText()) : undefined) ?? process.gateway).join(" "),
         prompt: "The server types this query goes to through .gw.syncexec: rdb hdb.",
-        validateInput: (v) => (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
+        validateInput: (v) => serverTypesProblem(v) ?? (serverTypes(v) !== undefined ? undefined : "Server types are q names: rdb hdb."),
       });
       if (given === undefined) {
         return;
       }
+    }
+    const wrong = serverTypesProblem(given);
+    if (wrong !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${wrong} Nothing was run.`));
+      return;
     }
     const chosen = serverTypes(given);
     if (chosen === undefined) {
@@ -3755,7 +3772,17 @@ export class Live {
       return;
     }
     const { connection, process } = ready;
-    const code = this.throughGateway(written, process, serverTypes);
+    let code: string;
+    try {
+      code = this.throughGateway(written, process, serverTypes);
+    } catch (error) {
+      // A server type that is no q name: said, and nothing is sent (#3065).
+      void window.showErrorMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
+      if (as !== undefined && this.watching !== undefined) {
+        this.stopWatching("it was not run");
+      }
+      return;
+    }
     const configuration = workspace.getConfiguration("q-lint");
     const settings = { ...readLive((key, fallback) => configuration.get(key, fallback)), ...(mode !== undefined ? { mode } : {}) };
     const controls = this.controls.settings();

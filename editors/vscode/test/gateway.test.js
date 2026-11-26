@@ -11,7 +11,7 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, gatewayStatements, isGatewayCall, isGatewayOwn, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, gatewayStatements, isGatewayCall, isGatewayOwn, joined, notServerTypes, readGateway, serverTypesProblem, symbols, withServerTypes } = require("../out/gateway.js");
 const { statements } = require("../out/statements.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
@@ -64,7 +64,6 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb\nselect from t"), ["rdb", "hdb"]);
   assert.deepStrictEqual(fileServerTypes("a:1\n/@servertypes `hdb,rdb\n"), ["hdb", "rdb"]);
   assert.strictEqual(fileServerTypes("  / @servertypes rdb\n"), undefined);
-  assert.strictEqual(fileServerTypes("/ @servertypes 1x\n"), undefined);
   // A comment after them is no more types (#2587).
   assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb / the live and history ones\nselect from t"), ["rdb", "hdb"]);
   assert.deepStrictEqual(fileServerTypes("/ @servertypes `rdb`hdb  - both\n"), ["rdb", "hdb"]);
@@ -74,6 +73,24 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.strictEqual(serverTypes(""), undefined);
   // Read from every source, a discovery server's too: it runs nothing new.
   assert.deepStrictEqual(parseProcesses([{ label: "gw", host: "h", port: 1, gateway: ["rdb"] }]).processes[0].gateway, ["rdb"]);
+});
+
+// `rdb hdb-eu` in the box, or `rdb 2hdb` on a file's line, was read as
+// `rdb` alone and nothing said: the HDB named was never queried (#3065).
+test("a server type that is no q name is named, not dropped (#3065)", () => {
+  assert.deepStrictEqual(notServerTypes("rdb hdb-eu, 2hdb `ok hdb-eu"), ["hdb-eu", "2hdb"]);
+  assert.deepStrictEqual(notServerTypes(["rdb", "`hdb", "a b", 7, ""]), ["a b", "7"]);
+  assert.strictEqual(serverTypesProblem("rdb `hdb, my_rdb"), undefined);
+  assert.strictEqual(serverTypesProblem(""), undefined);
+  assert.strictEqual(serverTypesProblem("rdb hdb-eu"), 'Server types are q names: rdb hdb. "hdb-eu" is not one.');
+  assert.strictEqual(serverTypesProblem("1x hdb-eu"), 'Server types are q names: rdb hdb. "1x", "hdb-eu" are not.');
+  // A file's line keeps a type mistyped, for its query to be refused; what
+  // does not start as a name or a number does still starts a comment.
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb 2hdb\n"), ["rdb", "2hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb-eu / both\n"), ["rdb", "hdb-eu"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes 1x\n"), ["1x"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb (the live one)\n"), ["rdb"]);
+  assert.strictEqual(fileServerTypes("/ @servertypes - none yet\n"), undefined);
 });
 
 // The editor context menu hands in the editor's Uri: taken as types, it
@@ -556,6 +573,56 @@ test("Copy Value as JSON goes to the server types its file names, as Run Query d
   assert.strictEqual(await stub.commands.get("q-lint.copyAsJson")("exec sym from trade"), '["a","b"]');
 });
 
+// A file's `/ @servertypes rdb 2hdb` was cut at the word that is no q name:
+// the query went to the rdb alone, as if the HDB had not been named (#3065).
+test("a query whose server types are not all q names is not sent, and the one that is not is named (#3065)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const plain = await startQ(t, "trade:([] sym:`x`y`z`w)\n");
+  const { live, lines } = await setUp(t, [
+    { label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] },
+    { label: "plain", host: "127.0.0.1", port: plain, tags: [] },
+  ]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  const text = "count trade\n/ @servertypes rdb 2hdb";
+  const document = { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: "count trade" }), getText: () => text };
+  vscode.window.activeTextEditor = { document, selection: { active: { line: 0 }, isEmpty: true } };
+  vscode.workspace.textDocuments = [document];
+  t.after(() => (vscode.workspace.textDocuments = []));
+  const refused = 'q-lint: Not run: Server types are q names: rdb hdb. "2hdb" is not one.';
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", refused]);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // A cell, and a query run apart, as Query a Tag runs the file's.
+  const { runText } = require("../out/consolerun.js");
+  assert.strictEqual(await runText(live, "count trade", document.uri), undefined);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", refused]);
+  await assert.rejects(live.runApart(live.processes()[0], "count trade", undefined, { serverTypes: ["rdb", "2hdb"] }), /"2hdb" is not one\./);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // Watched, it is not sent either, and the watch ends with its first run.
+  stub.config.user["query.watch.enable"] = true;
+  await stub.commands.get("q-lint.watchQuery")(undefined, 1);
+  assert.deepStrictEqual(stub.messages.slice(-2), [["error", refused], ["info", "q-lint: stopped watching the query: it was not run."]]);
+  assert.strictEqual(live.api().watching(), undefined);
+  // Query Gateway on Server Types, given them or asked.
+  await stub.commands.get(GATEWAY_COMMANDS.queryWith)("rdb hdb-eu");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: Server types are q names: rdb hdb. "hdb-eu" is not one. Nothing was run.']);
+  let box;
+  stub.inputs.push((o) => ((box = o), undefined));
+  await stub.commands.get(GATEWAY_COMMANDS.queryWith)();
+  // The file's line as written is offered, and refused until corrected.
+  assert.strictEqual(box.value, "rdb 2hdb");
+  assert.strictEqual(box.validateInput(box.value), 'Server types are q names: rdb hdb. "2hdb" is not one.');
+  assert.strictEqual(box.validateInput("rdb hdb"), undefined);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // To a process that is no gateway the line is a comment, as before.
+  assert.strictEqual(await live.connectTo("plain"), true);
+  lines.length = 0;
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["count trade", "ok"]);
+  assert.match(lines.join("\n"), /^4$/m);
+});
+
 // Run from Saved Queries, a query saved from a `/ @servertypes hdb` file
 // went to the process's own server types, and so did its scheduled exports
 // and dashboard tiles (#3064).
@@ -606,9 +673,21 @@ test("with q-lint.connection.torqGateway.enable off, a gateway's query goes as w
 
 test("Set Gateway Server Types marks and unmarks a saved process", async (t) => {
   const { live } = await setUp(t, [{ label: "gw", host: "h", port: 1, tags: [] }]);
-  stub.inputs.push((o) => (assert.strictEqual(o.validateInput("1x"), "Server types are q names: rdb hdb."), "rdb hdb"));
+  let box;
+  stub.inputs.push((o) => ((box = o), "rdb hdb"));
   await stub.commands.get(GATEWAY_COMMANDS.set)("gw");
+  // Each word that is no q name is named, one among names too (#3065).
+  assert.strictEqual(box.validateInput("1x"), 'Server types are q names: rdb hdb. "1x" is not one.');
+  assert.strictEqual(box.validateInput("rdb hdb-eu"), 'Server types are q names: rdb hdb. "hdb-eu" is not one.');
+  assert.strictEqual(box.validateInput(" , "), "Server types are q names: rdb hdb.");
+  assert.deepStrictEqual([box.validateInput("rdb, `hdb"), box.validateInput("")], [undefined, undefined]);
   assert.deepStrictEqual(live.processes()[0].gateway, ["rdb", "hdb"]);
+  // Given without the box, it is refused whole: nothing is changed.
+  for (const given of ["rdb hdb-eu", ["rdb", "hdb-eu"]]) {
+    await stub.commands.get(GATEWAY_COMMANDS.set)("gw", given);
+    assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: Server types are q names: rdb hdb. "hdb-eu" is not one. gw was not changed.']);
+    assert.deepStrictEqual(live.processes()[0].gateway, ["rdb", "hdb"]);
+  }
   await stub.commands.get(GATEWAY_COMMANDS.set)("gw", null);
   assert.strictEqual(live.processes()[0].gateway, undefined);
   // Querying with types needs a connected gateway.
