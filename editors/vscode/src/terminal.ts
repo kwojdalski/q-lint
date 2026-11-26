@@ -9,6 +9,7 @@
 // comment would swallow the rest, so it is cut, and a string that runs onto
 // the next line keeps the newline as `\n`.
 import * as path from "node:path";
+import { qString } from "./qliteral";
 import { statements } from "./statements";
 
 /// Where a q terminal starts: the workspace folder holding `file`, else the
@@ -266,8 +267,14 @@ function untab(code: string, inString: boolean): string {
 /// as any statement's are: a newline sent would run each line alone (#1674).
 /// A `k)` statement's lines are joined with `;`: in k a newline between
 /// them ends an expression, inside a lambda too, where in q it is a blank
-/// (#2285).
+/// (#2285). A statement in any other language (`p)` Python, `s)` SQL) is
+/// that language's text, which q hands over unread, as `\l` does: a ` /` in
+/// it is no comment, and its newlines and indentation are part of it, so
+/// one of several lines, or with a tab, goes as `value "p)..."` (#2914).
 export function replLine(statement: string): string {
+  if (/^[A-Za-z]\)/.test(statement) && !/^[kq]\)/.test(statement)) {
+    return /[\n\t]/.test(statement) ? `value ${qString(statement)}` : statement;
+  }
   const lines = statement.split("\n");
   const between = statement.startsWith("k)") ? ";" : " ";
   let out = "";
