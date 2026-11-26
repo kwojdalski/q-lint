@@ -804,6 +804,41 @@ fn a_file_under_a_linked_directory_is_governed_excluded_and_reported_there() {
     );
 }
 
+/// A walk lints a linked file and does not enter a linked directory, as the
+/// language server's index does not - and said nothing of it, so
+/// `qlinter .` passed with the code under the link unlinted, which naming
+/// the link lints (#2858). Each one passed by is named; not one an exclude
+/// names, nor one the walk reaches anyway by the directory's own name.
+#[cfg(unix)]
+#[test]
+fn a_walk_names_each_linked_directory_it_does_not_enter() {
+    let repo = Repo::new();
+    repo.write("shared/sub/r.q", SOURCE)
+        .write("proj/lib/in.q", SOURCE)
+        .write("skipped/s.q", SOURCE);
+    std::os::unix::fs::symlink("../shared", repo.path("proj/vendor")).unwrap();
+    std::os::unix::fs::symlink("lib", repo.path("proj/alias")).unwrap();
+    std::os::unix::fs::symlink("../skipped", repo.path("proj/node_modules")).unwrap();
+    let out = run(&repo.path("proj"), &["--isolated", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(
+        stderr.trim_end(),
+        "qlinter: ./vendor: a link to a directory, which a walk does not enter; \
+         name it to lint the files under it"
+    );
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "."]),
+        ["proj/lib/in.q"]
+    );
+    let out = run(&repo.path("proj"), &["--isolated", ".", "vendor"]);
+    assert!(out.stderr.is_empty(), "{:?}", out);
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", ".", "vendor"]),
+        ["proj/lib/in.q", "proj/vendor/sub/r.q"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {

@@ -336,6 +336,15 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Whether the directory `link` leads to is under `walked`, where the walk
+/// of `walked` comes to it by its own name.
+fn reached(walked: &Path, link: &Path) -> bool {
+    match (fs::canonicalize(walked), fs::canonicalize(link)) {
+        (Ok(walked), Ok(target)) => target.starts_with(walked),
+        _ => false,
+    }
+}
+
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -422,6 +431,19 @@ fn discover(
             }
             if p.is_file() && is_q_source(p) {
                 files.insert(config::absolute(p));
+            } else if entry.path_is_symlink()
+                && p.is_dir()
+                && !reached(path, p)
+                && !paths.iter().any(|named| same_file(named, p))
+            {
+                // A link to a file is linted and one to a directory is not
+                // entered, as the language server's index has it - but
+                // saying nothing left `qlinter .` passing with that code
+                // unlinted, which naming the link lints (#2858).
+                eprintln!(
+                    "qlinter: {}: a link to a directory, which a walk does not enter; name it to lint the files under it",
+                    p.display()
+                );
             }
         }
     }
