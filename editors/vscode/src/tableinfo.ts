@@ -24,7 +24,7 @@ export const TABLE_INFO = [
   "  $[part;`partitioned;disk;`splayed;99h=type t;`keyed;`table];",
   "  \"f\"$$[part;@[{sum .Q.cn x};t;0n];count t];",
   "  \"f\"$$[disk;0n;@[-22!;t;0n]];",
-  "  \"f\"$$[part;count .Q.pv;0n];\"f\"$$[part;count@[get;`.Q.PV;{.Q.pv}];0n];",
+  "  \"f\"$$[part;count .Q.pv;0n];\"f\"$$[part;count$[`PV in key`.Q;.Q.PV;.Q.pv];0n];",
   "  $[99h=type t;(),keys t;`$()];",
   "  \"f\"$count cols t;",
   "  (),m`c;{$[null x;\"\";enlist x]}each m`t;string m`f;string m`a)}",

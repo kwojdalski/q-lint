@@ -42,7 +42,7 @@ export const DOCUMENT = [
   " fs:m sublist(system\"f\"),raze{@[{` sv'x,/:system\"f \",string x};x;`$()]}each ns;",
   " `pf`parts`allparts`tables`fnames`fparams`ftexts!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
-  "  \"f\"$@[{count .Q.pv};::;0];\"f\"$@[{count@[get;`.Q.PV;{.Q.pv}]};::;0];",
+  "  \"f\"$@[{count .Q.pv};::;0];\"f\"$@[{count$[`PV in key`.Q;.Q.PV;.Q.pv]};::;0];",
   "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
   "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs;",
   `  {@[{f:get x;$[100h=type f;${SLOT_TEXT} f;""]};x;""]}each fs)}`,

@@ -35,7 +35,7 @@ export const HDB = [
   "  1b;string .Q.pf;system\"cd\";",
   "  @[{string distinct .Q.PD};::;()];",
   "  \"f\"$@[hcount;`:sym;0n];",
-  "  \"f\"$count pv;\"f\"$count@[get;`.Q.PV;{.Q.pv}];string(neg m)sublist pv;",
+  "  \"f\"$count pv;\"f\"$count$[`PV in key`.Q;.Q.PV;.Q.pv];string(neg m)sublist pv;",
   "  string pt;(neg m)sublist'c;{$[all null x;0n;sum x]}each c;",
   "  string o;\"f\"${@[{count get x};x;0n]}each o)}",
 ].join("\n");
