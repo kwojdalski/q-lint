@@ -114,6 +114,21 @@ test("the form's messages: a check is answered with the table, Add adds", async 
   assert.strictEqual(bulk.panel, undefined);
 });
 
+test("Add with lines skipped keeps the form open with only those lines in it (#2506)", async (t) => {
+  const { live, bulk } = await setUp(t);
+  const posted = [];
+  bulk.panel = { webview: { postMessage: async (m) => posted.push(m) }, dispose() { bulk.panel = undefined; } };
+  await bulk.handle({ type: "add", text: "tp1.example.com:5010:tp1:prod\nrdb1.example.com:50x2:rdb1:prod\n# c\nhdb1.example.com:5012:hdb1" });
+  assert.deepStrictEqual(live.processes().map((p) => p.label), ["rdb", "tp1", "hdb1"]);
+  assert.ok(bulk.panel !== undefined, "the form stays open");
+  assert.deepStrictEqual(posted.at(-1), { type: "text", text: "rdb1.example.com:50x2:rdb1:prod" });
+  // CSV: the header stays above the line left.
+  const { leftOver, parseBulk } = require("../out/bulkadd.js");
+  const csv = "host,port,label\na,1,x\nb,zz,y";
+  assert.strictEqual(leftOver(csv, parseBulk(csv, [])), "host,port,label\nb,zz,y");
+  assert.strictEqual(leftOver("a:1:x", parseBulk("a:1:x", [])), "");
+});
+
 // The panel does not keep its page while hidden, and the page kept what
 // was typed only in its text area: another tab looked at, the form came
 // back empty (#1990).
