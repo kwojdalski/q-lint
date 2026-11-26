@@ -28,6 +28,14 @@ macro_rules! blank {
         r"(?:[ \t\r]|\n[\r\n]*[ \t])"
     };
 }
+/// A numeric or temporal literal as arithmetic takes one: `1`, `2.5`, `.5`,
+/// `1e-3`, `0x0f`, `00:01`, `2024.01.01` - a sign in an exponent, a start
+/// with the point, and the `:` of a time (#2937).
+macro_rules! number {
+    () => {
+        r"-?(?:\d[\d.]*e[-+]\d+[ef]?|\.?\d[A-Za-z0-9.:]*)"
+    };
+}
 mod families;
 mod intrinsics;
 pub mod options;
@@ -2224,12 +2232,16 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
         // `each` returns a general `()` where the arithmetic keeps the type,
         // and `""*2` is 'type in q 5 where each returns `()`.
         "QR004" => {
-            let m = re!(
-                r"^\{\s*(?:x\s*([-+*%])\s*(-?\d[A-Za-z0-9.]*)|(-?\d[A-Za-z0-9.]*)\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
-            )
+            let m = re!(concat!(
+                r"^\{\s*(?:x\s*([-+*%])\s*(",
+                number!(),
+                r")|(",
+                number!(),
+                r")\s*([-+*%])\s*x)\s*\}[ \t]*(?:each\b|')[ \t]*"
+            ))
             .captures(source.get(start..)?)?;
             // `{x -1}` indexes x at -1: there is no arithmetic to lift.
-            if re!(r"^\{\s*x\s+-\d").is_match(m.get(0)?.as_str()) {
+            if re!(r"^\{\s*x\s+-\.?\d").is_match(m.get(0)?.as_str()) {
                 return None;
             }
             let tick = !m.get(0)?.as_str().contains("each");

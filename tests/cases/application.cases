@@ -40,7 +40,7 @@ c:each[{x+y};1 2]
 d:{x+y}@'1 2
 
 === clean | while a rank-1 lambda under them, or @ without each, is a call (#632)
-a:each[{x};1 2]
+a:each[{x,0};1 2]
 b:{[a] a}@'1 2
 c:{[a;b] a+b}@1 2
 

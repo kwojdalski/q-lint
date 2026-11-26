@@ -81,6 +81,25 @@ u:not'[b]
 f:{[x] neg each x}
 r:select n:null each p from t
 
+=== QV002 | each over apply, and each in brackets (KDB-X: abs@'x and each[abs;x] are abs x, #2927)
+r:abs@'x
+s:each[abs;x]
+u:each [neg;x]
+
+=== clean | each before a bracket is applied to it first: abs each[-1 2] and abs@'[-1 2] are 'type on KDB-X, and a fix gave abs[-1 2] (#2929)
+r:abs each[-1 2]
+s:abs each [-1 2]
+u:abs@'[-1 2]
+v:each[abs;]
+
+=== clean | an iterator on each is each's own: 'type on KDB-X, where the fix left abs':, null/ and not\ (#2930)
+a:abs each':[x]
+b:null each/[x]
+c:not each\[01b]
+d:neg each'[(1 2;3 4)]
+e:abs each/: x
+f:abs@':x
+
 === clean | each over what is not atomic
 r:count each x
 s:string each y

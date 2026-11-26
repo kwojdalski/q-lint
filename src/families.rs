@@ -426,6 +426,28 @@ fn iterated(code: &str, at: usize) -> bool {
         .is_match(rest)
 }
 
+/// Whether the `each` or `@'` that ends at `at` takes the function on its
+/// left and a list on its right. Not before a bracket: q reads `abs each[x]`
+/// as `abs` applied to `each[x]`, a projection of `each` - q 5 gives 'type
+/// for `abs each[-1 2]` and `abs@'[-1 2]`, and a projection for `{x}
+/// each[1 2]` (#2929). Nor under an iterator of its own: `abs each':[x]`,
+/// `null each/[x]` and `not each\[01b]` iterate `each`, 'type in q 5, and
+/// without the word they are `abs':`, `null/` and `not\` (#2930).
+fn each_of_left(code: &str, at: usize) -> bool {
+    !code[at..].starts_with(['\'', '/', '\\', ':'])
+        && !code[crate::past_blanks(code, at)..].starts_with('[')
+}
+
+/// Whether the bracket that opens at `open` is `each`'s two arguments, both
+/// given: `each[f;x]` is `f each x`, `each[f;]` a projection, and a third
+/// is 'rank.
+fn each_in_brackets(code: &str, open: usize) -> bool {
+    matching(code, open, b'[', b']').is_some_and(|close| {
+        let args = slots(&code[open + 1..close - 1]);
+        args.len() == 2 && !args[1].trim().is_empty()
+    })
+}
+
 /// Whether the word that ends at `at` is applied to the rest of its
 /// statement, so a rewrite of the word keeps its operand: something follows
 /// it, and an application in brackets is not continued by an infix - q 5
@@ -501,28 +523,36 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     }
     // QR002: an identity lambda under each gives back what it was given.
     // The `each` has to be in the same statement: `id:{x}` and then a
-    // column-0 `'[neg;abs]` is no each at all (#727).
-    for m in re!(concat!(
-        r"\{\s*x\s*\}",
-        blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
-    ))
-    .find_iter(code)
-    {
+    // column-0 `'[neg;abs]` is no each at all (#727). `{x}@'y` is each over
+    // apply, the same each (#2928).
+    for m in re!(concat!(r"\{\s*x\s*\}", blank!(), r"*(each\b|@?')")).captures_iter(code) {
         // And applied: `({x}';1)` holds the derived function itself, a
         // general list on KDB-X, not any argument (#1299).
-        let mut end = m.end();
-        if !m.as_str().ends_with("each") && !m.as_str().ends_with('\'') {
-            end -= code[..end].chars().next_back().map_or(0, char::len_utf8);
-        }
-        if crate::operand_ends(code, comments, end) || code[end..].trim_start().starts_with("::") {
+        let end = m.get(0).unwrap().end();
+        if (&m[1] == "'" && code[end..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, end))
+            || crate::operand_ends(code, comments, end)
+            || code[end..].trim_start().starts_with("::")
+        {
             continue;
         }
         add(
-            m.start(),
+            m.get(0).unwrap().start(),
             "QR002",
             "`{x} each` returns its argument unchanged".into(),
         );
+    }
+    // And `each[{x};y]`, the same call in brackets (#2928).
+    for m in re!(r"\beach[ \t]*\[\s*\{\s*x\s*\}\s*;").find_iter(code) {
+        if boundary(code, m.start())
+            && each_in_brackets(code, m.start() + m.as_str().find('[').unwrap())
+        {
+            add(
+                m.start(),
+                "QR002",
+                "`{x} each` returns its argument unchanged".into(),
+            );
+        }
     }
     // QR003: sorting the distinct items keeps them distinct.
     for m in re!(concat!(
@@ -551,23 +581,46 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     // numeric literal. `{x -1}` is not one: a `-` after a space and before a
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
+    // The number may be `1e-3`, `.5` or `00:01` (#2937), and the each `@'`
+    // or `each[...;y]` (#2928).
+    const ATOMIC: &str = "Arithmetic is atomic: this applies to the whole list without `each`, \
+                          and faster";
     for m in re!(concat!(
-        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}",
+        r"\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\}",
         blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
+        r"*(each\b|@?')"
     ))
-    .find_iter(code)
+    .captures_iter(code)
     {
-        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+        let whole = m.get(0).unwrap();
+        if re!(r"^\{\s*x\s+-\.?\d").is_match(whole.as_str())
+            || (&m[1] == "'" && code[whole.end()..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, whole.end()))
+        {
             continue;
         }
-        add(
-            m.start(),
-            "QR004",
-            "Arithmetic is atomic: this applies to the whole list without `each`, and \
-             faster"
-                .into(),
-        );
+        add(whole.start(), "QR004", ATOMIC.into());
+    }
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*(\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\})\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if boundary(code, whole.start())
+            && !re!(r"^\{\s*x\s+-\.?\d").is_match(&m[1])
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), "QR004", ATOMIC.into());
+        }
     }
 }
 
@@ -2002,29 +2055,47 @@ fn plain_comparison(c: &str) -> bool {
 /// see `ATOMIC_MONADS` for what was measured. `count each`, `string each`
 /// and the rest that are not atomic are not reported.
 fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut add = |at: usize, name: &str| {
+        debug_assert!(ATOMIC_MONADS.contains(&name));
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QV002",
+            format!(
+                "`{name}` is atomic: `{name} x` applies it to every item in one call, where \
+                 `each` makes one call per item"
+            ),
+        ));
+    };
+    // `abs each x`, `abs'[x]`, and each over apply, `abs@'x` (#2927).
     for m in re!(concat!(
         r"\b(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
         blank!(),
-        r"*(?:each\b|'\[)"
+        r"*(each\b|'\[|@')"
     ))
     .captures_iter(code)
     {
         let name = m.get(1).unwrap();
-        if !crate::boundary(code, name.start()) {
-            continue;
+        if crate::boundary(code, name.start())
+            && (&m[2] == "'[" || each_of_left(code, m.get(0).unwrap().end()))
+        {
+            add(name.start(), name.as_str());
         }
-        debug_assert!(ATOMIC_MONADS.contains(&name.as_str()));
-        out.push(Finding::at(
-            path,
-            source,
-            name.start(),
-            "QV002",
-            format!(
-                "`{0}` is atomic: `{0} x` applies it to every item in one call, where `each` \
-                 makes one call per item",
-                name.as_str()
-            ),
-        ));
+    }
+    // `each[abs;x]`, the same call in brackets.
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*",
+        r"(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if crate::boundary(code, whole.start())
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), &m[1]);
+        }
     }
 }
 
