@@ -1097,3 +1097,35 @@ fn use_is_an_edge_to_the_module_it_loads() {
     );
     assert!(deps(&g, "noexport.q").is_empty());
 }
+
+/// A script every loader loads under a context defines there and not at the
+/// root: after `\d .a` / `\l lib/b.q`, b.q's `ff:42` is `.a.ff`, and q 5 has
+/// no `ff` for a root reader, which the lint calls undefined. The graph kept
+/// the root name, and an edge from each such reader (#2876).
+#[test]
+fn a_script_loaded_only_under_a_context_defines_no_root_name() {
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("lib/b.q", "ff:42\n"),
+            ("d.q", "h:{ff}\n"),
+            ("e.q", "k:{.a.ff}\n"),
+            ("f.q", "\\d .a\nm:{ff}\n"),
+        ],
+        false,
+    );
+    assert!(deps(&g, "d.q").is_empty());
+    assert_eq!(deps(&g, "e.q"), ["b.q"]);
+    assert_eq!(deps(&g, "f.q"), ["b.q"]);
+    // Loaded at the root as well, it defines there too.
+    let g = graph(
+        &[
+            ("main.q", "\\d .a\n\\l lib/b.q\n"),
+            ("other.q", "\\l lib/b.q\n"),
+            ("lib/b.q", "ff:42\n"),
+            ("d.q", "h:{ff}\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "d.q"), ["b.q"]);
+}

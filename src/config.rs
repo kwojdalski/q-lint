@@ -262,6 +262,22 @@ impl Policy {
         }
     }
 
+    /// `project_root`, for `--force-exclude`. With no configuration and no
+    /// root, the top of the checkout the file is in comes before the current
+    /// directory: that is the same from wherever the run starts, so one file
+    /// gets one answer (#2875). Only a file in no checkout is left to the
+    /// current directory.
+    fn checkout_root(&self, settings: &Settings, full: &Path) -> Result<PathBuf, String> {
+        let dir = full.parent().unwrap_or(full);
+        if settings.root.is_none()
+            && !self.roots.borrow().iter().any(|root| dir.starts_with(root))
+            && let Some(top) = dir.ancestors().find(|top| top.join(".git").exists())
+        {
+            return Ok(top.to_path_buf());
+        }
+        self.project_root(settings, full)
+    }
+
     /// Where a file in `dir` is rooted when no configuration governs it:
     /// the deepest root holding it, or the current directory.
     fn base_dir(&self, dir: &Path) -> Result<PathBuf, String> {
@@ -274,9 +290,7 @@ impl Policy {
             .max_by_key(|root| root.components().count())
         {
             Some(root) => Ok(root.clone()),
-            None => Ok(absolute(
-                &std::env::current_dir().map_err(|e| e.to_string())?,
-            )),
+            None => Ok(absolute(&working_dir(Some(&dir))?)),
         }
     }
 
@@ -432,7 +446,7 @@ impl Policy {
             // Ruff resolves the patterns of a file named by `--config`
             // against the current directory, as it does a user-level one:
             // the file is chosen for this run, not found beside the source.
-            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+            let cwd = absolute(&working_dir(None)?);
             let settings = Rc::new(
                 load(&key.0, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
@@ -489,22 +503,28 @@ impl Policy {
     /// Whether `path` is excluded, by its configuration or by `--exclude`.
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
-        let full = absolute(path);
+        Ok(self.excluded_as(&settings, &absolute(path), true))
+    }
+
+    /// `excluded`, for the file `full` under `settings`; `named` is whether
+    /// the default list is asked about its own name.
+    fn excluded_as(&self, settings: &Settings, full: &Path, named: bool) -> bool {
         // The defaults match the path's own name only, not a directory above
         // it: `qlinter ~/dist/proj` lints proj, and a walk is what skips a
         // `dist` below it.
-        let default = settings.exclude.is_none()
+        let default = named
+            && settings.exclude.is_none()
             && full
                 .file_name()
                 .is_some_and(|n| DEFAULT_EXCLUDE.iter().any(|d| n == *d));
-        Ok(default
+        default
             || settings
                 .exclude
                 .iter()
                 .flatten()
                 .chain(&settings.extend_exclude)
                 .chain(&self.overrides.exclude)
-                .any(|glob| matches(&full, glob)))
+                .any(|glob| matches(full, glob))
     }
 
     /// `excluded`, for a path named on the command line with
@@ -514,12 +534,15 @@ impl Policy {
     /// skips it, as the walk would (#415), from whatever directory it runs
     /// in (#801).
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
-        if self.excluded(path)? {
-            return Ok(true);
-        }
         let settings = self.settings(path)?;
         let full = absolute(path);
-        let root = self.project_root(&settings, &full)?;
+        let root = self.checkout_root(&settings, &full)?;
+        // The project's top is not a directory of the project, whatever it
+        // is called: `qlinter --force-exclude .` in a checkout named
+        // `target` linted nothing, and passed (#2874).
+        if self.excluded_as(&settings, &full, full != root) {
+            return Ok(true);
+        }
         // A name pattern names a directory at any depth, and the walk asks
         // about each directory before entering it - so `gen` skips
         // `../other/gen/f.q` in a walk of `../other`. `matches` sees a
@@ -1351,6 +1374,29 @@ pub fn parse_profile(name: &str) -> Profile {
     }
 }
 
+/// The current directory. One removed from under the run - a worktree or a
+/// build directory an editor or an agent was started in - is said to be so,
+/// where the system's "No such file or directory" named nothing; and where
+/// `within` is an absolute path, its directory stands in, so a file named in
+/// full is still linted (#2873).
+pub fn working_dir(within: Option<&Path>) -> Result<PathBuf, String> {
+    match std::env::current_dir() {
+        Ok(cwd) => Ok(cwd),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => within
+            .filter(|path| path.is_absolute())
+            .map(|path| match path.is_dir() {
+                true => path.to_path_buf(),
+                false => path.parent().unwrap_or(path).to_path_buf(),
+            })
+            .ok_or_else(|| {
+                "the current directory no longer exists; name each file by its absolute path, \
+                 or run from a directory that does"
+                    .to_string()
+            }),
+        Err(e) => Err(format!("the current directory: {e}")),
+    }
+}
+
 /// `path` made absolute and resolved through symlinks. A path that does not
 /// exist - an editor buffer never saved - is resolved through its nearest
 /// existing ancestor, so `/var/...` on macOS still matches patterns rooted at
@@ -1359,28 +1405,61 @@ pub fn parse_profile(name: &str) -> Profile {
 /// A symlink itself is not resolved, only the directories it sits in: a link
 /// is governed, excluded and reported where it is and by its own name, as
 /// Ruff matches a path as walked, not by wherever its target happens to be.
+/// Nor is a directory it sits in that is a link out of the directory holding
+/// it - a shared tree linked into a project: what is under that link is in
+/// the project, where it was resolved out to the target, which the
+/// project's configuration does not govern and its excludes cannot name
+/// (#2857). A link to somewhere under the directory holding it is resolved
+/// as before: `/var` on macOS, or a second name for a directory the walk
+/// reaches anyway, which stays the one path.
 pub fn absolute(path: &Path) -> PathBuf {
-    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    if is_link(path)
         && let Some(name) = path.file_name()
     {
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        return absolute(parent).join(name);
+        return absolute(holder(path)).join(name);
+    }
+    if let Some(kept) = under_link(path) {
+        return kept;
     }
     if let Ok(p) = fs::canonicalize(path) {
         return p;
     }
     let lexical = lexical(path);
     for ancestor in lexical.ancestors().skip(1) {
-        if let Ok(real) = fs::canonicalize(ancestor)
+        if ancestor.exists()
             && let Ok(rest) = lexical.strip_prefix(ancestor)
         {
-            return real.join(rest);
+            return absolute(ancestor).join(rest);
         }
     }
     lexical
+}
+
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// The directory `path` is in, `.` for a bare name.
+fn holder(path: &Path) -> &Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// `path` under the nearest directory above it that is a link out of the
+/// directory holding it, with that link kept and only the rest resolved.
+/// None when there is no such link, or `path` leaves it again by a `..`.
+fn under_link(path: &Path) -> Option<PathBuf> {
+    let (link, target) = path.ancestors().skip(1).find_map(|dir| {
+        if !is_link(dir) {
+            return None;
+        }
+        let target = fs::canonicalize(dir).ok()?;
+        let outside = !target.starts_with(fs::canonicalize(holder(dir)).ok()?);
+        outside.then_some((dir, target))
+    })?;
+    let real = fs::canonicalize(path).ok()?;
+    Some(absolute(link).join(real.strip_prefix(target).ok()?))
 }
 
 fn lexical(path: &Path) -> PathBuf {

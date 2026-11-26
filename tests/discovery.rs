@@ -746,6 +746,99 @@ fn a_symlink_is_governed_excluded_and_reported_where_it_is() {
     }
 }
 
+/// And so is what is under a linked directory: a shared tree linked into
+/// the project was resolved out to its target, which the project's
+/// configuration does not govern, no exclude of the link can name, and a
+/// report places outside the repository (#2857). A link to a directory
+/// under the one holding it is still the one path its target is.
+#[cfg(unix)]
+#[test]
+fn a_file_under_a_linked_directory_is_governed_excluded_and_reported_there() {
+    let repo = Repo::new();
+    repo.write("shared/sub/r.q", SOURCE)
+        .write(
+            "proj/qlinter.toml",
+            "profile = \"style\"\n[lint.per-file-ignores]\n\"vendor/*\" = [\"QF016\"]\n",
+        )
+        .write("proj/lib/in.q", SOURCE);
+    std::os::unix::fs::symlink("../shared", repo.path("proj/vendor")).unwrap();
+    std::os::unix::fs::symlink("lib", repo.path("proj/alias")).unwrap();
+    assert_eq!(
+        repo.codes("proj", &["vendor/sub/r.q"]),
+        Vec::<String>::new()
+    );
+    let root = repo.path(".").canonicalize().unwrap();
+    for named in [
+        "vendor/sub/r.q".to_string(),
+        "vendor/sub/../sub/r.q".to_string(),
+        repo.path("proj/vendor/sub/r.q").display().to_string(),
+        root.join("proj/vendor/sub/r.q").display().to_string(),
+    ] {
+        assert_eq!(
+            linted_from(&repo, "proj", &["--isolated", &named]),
+            ["proj/vendor/sub/r.q"],
+            "{named}"
+        );
+    }
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "vendor"]),
+        ["proj/vendor/sub/r.q"]
+    );
+    for exclude in ["vendor", "vendor/sub"] {
+        let args = ["--isolated", "--force-exclude", "--exclude", exclude];
+        assert_eq!(
+            linted_from(&repo, "proj", &[&args[..], &["vendor/sub/r.q"]].concat()),
+            Vec::<String>::new(),
+            "{exclude}"
+        );
+    }
+    // Out of the link again by `..`, it is the file beside the target.
+    repo.write("top.q", SOURCE);
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "vendor/../top.q"]),
+        ["top.q"]
+    );
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "alias/in.q"]),
+        ["proj/lib/in.q"]
+    );
+}
+
+/// A walk lints a linked file and does not enter a linked directory, as the
+/// language server's index does not - and said nothing of it, so
+/// `qlinter .` passed with the code under the link unlinted, which naming
+/// the link lints (#2858). Each one passed by is named; not one an exclude
+/// names, nor one the walk reaches anyway by the directory's own name.
+#[cfg(unix)]
+#[test]
+fn a_walk_names_each_linked_directory_it_does_not_enter() {
+    let repo = Repo::new();
+    repo.write("shared/sub/r.q", SOURCE)
+        .write("proj/lib/in.q", SOURCE)
+        .write("skipped/s.q", SOURCE);
+    std::os::unix::fs::symlink("../shared", repo.path("proj/vendor")).unwrap();
+    std::os::unix::fs::symlink("lib", repo.path("proj/alias")).unwrap();
+    std::os::unix::fs::symlink("../skipped", repo.path("proj/node_modules")).unwrap();
+    let out = run(&repo.path("proj"), &["--isolated", "."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(
+        stderr.trim_end(),
+        "qlinter: ./vendor: a link to a directory, which a walk does not enter; \
+         name it to lint the files under it"
+    );
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", "."]),
+        ["proj/lib/in.q"]
+    );
+    let out = run(&repo.path("proj"), &["--isolated", ".", "vendor"]);
+    assert!(out.stderr.is_empty(), "{:?}", out);
+    assert_eq!(
+        linted_from(&repo, "proj", &["--isolated", ".", "vendor"]),
+        ["proj/lib/in.q", "proj/vendor/sub/r.q"]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn one_file_under_two_names_is_fixed_once_with_both_names_fixes() {
@@ -806,6 +899,64 @@ fn one_file_under_two_names_does_not_define_its_names_for_itself() {
         .unwrap();
     let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(found, serde_json::json!({"real.q": [], "twin.q": []}));
+}
+
+/// A hard link is one file under two names as a symlink is, but with a
+/// canonical path of its own, which is what told files apart: the file was
+/// indexed twice, so its own `a` was "defined elsewhere" and QT022 went
+/// unsaid; the graph had each name depend on the other; and `--diff` printed
+/// the one fix as a patch per name, the second of which cannot apply (#2859).
+#[cfg(unix)]
+#[test]
+fn a_hard_link_is_one_file_under_two_names() {
+    let repo = Repo::new();
+    repo.write("real.q", "a:1\nf:{a 0}\n");
+    fs::hard_link(repo.path("real.q"), repo.path("twin.q")).unwrap();
+    let general = ["--isolated", "--profile", "general"];
+    assert_eq!(
+        repo.codes(".", &[&general[..], &["."]].concat()),
+        ["QT022", "QT022"]
+    );
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["analyze", "graph", "."])
+        .output()
+        .unwrap();
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found, serde_json::json!({"real.q": [], "twin.q": []}));
+
+    let repo = Repo::new();
+    repo.write("a.q", "f:{[x;y] x==y}\n");
+    fs::hard_link(repo.path("a.q"), repo.path("b.q")).unwrap();
+    let select = ["--isolated", "--select", "QE004"];
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(select)
+        .args(["--diff", "."])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert_eq!(stdout.matches("\n+f:{[x;y] x=y}").count(), 1, "{stdout}");
+    assert!(
+        stderr.contains("1 fix(es) available in 1 file(s)"),
+        "{stderr}"
+    );
+    let out = run(
+        &repo.path("."),
+        &[&select[..], &["--add-noqa", "."]].concat(),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("added 1 noqa directive(s) in 1 file(s)"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path("b.q")).unwrap(),
+        "f:{[x;y] x==y} / noqa: QE004\n"
+    );
 }
 
 #[test]
@@ -1329,6 +1480,75 @@ fn force_exclude_reads_default_directories_from_the_project_root_not_the_cwd() {
     );
 }
 
+/// The project's top is not one of its directories, whatever it is called:
+/// in a checkout named `target`, `--force-exclude .` took the directory's
+/// own name for a default exclusion, linted nothing and passed, while the
+/// same file named there was linted (#2874).
+#[test]
+fn force_exclude_does_not_read_the_project_roots_own_name_as_a_default_directory() {
+    let repo = Repo::new();
+    repo.write("fe/target/a.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    for path in ["a.q", "."] {
+        assert_eq!(
+            repo.codes(
+                "fe/target",
+                &[&style[..], &["--force-exclude", path]].concat()
+            ),
+            ["QF016"],
+            "{path}"
+        );
+    }
+    // From above it, `target` is a directory of the project, as in a walk.
+    assert_eq!(
+        repo.codes("fe", &[&style[..], &["--force-exclude", "target"]].concat()),
+        Vec::<String>::new()
+    );
+    // And so is one below a configuration's root.
+    repo.write("fe/qlinter.toml", "profile = \"style\"\n");
+    assert_eq!(
+        repo.codes("fe/target", &["--force-exclude", "."]),
+        Vec::<String>::new()
+    );
+}
+
+/// A file no configuration governs gets one answer from `--force-exclude`
+/// wherever the run starts: its default directories are read from the top
+/// of the checkout it is in, not from the current directory, which linted
+/// `target/a.q` from inside `target` and skipped it from above (#2875).
+#[test]
+fn force_exclude_reads_default_directories_from_the_checkout_without_a_configuration() {
+    let repo = Repo::new();
+    repo.write(".git/HEAD", "ref: refs/heads/master\n")
+        .write("target/a.q", SOURCE)
+        .write("src/b.q", SOURCE);
+    let style = ["--isolated", "--profile", "style"];
+    let file = repo.path("target/a.q");
+    let file = file.to_str().unwrap();
+    for cwd in [".", "target", "src"] {
+        assert_eq!(
+            repo.codes(cwd, &[&style[..], &["--force-exclude", file]].concat()),
+            Vec::<String>::new(),
+            "from {cwd}"
+        );
+    }
+    assert_eq!(
+        repo.codes(
+            "target",
+            &[&style[..], &["--force-exclude", "a.q"]].concat()
+        ),
+        Vec::<String>::new()
+    );
+    // A file outside `target` is linted from inside it.
+    assert_eq!(
+        repo.codes(
+            "target",
+            &[&style[..], &["--force-exclude", "../src/b.q"]].concat()
+        ),
+        ["QF016"]
+    );
+}
+
 #[test]
 fn force_exclude_applies_a_name_pattern_to_a_file_outside_its_root() {
     // `--exclude gen` is rooted at the cwd, here/; a walk of ../other skips
@@ -1428,4 +1648,149 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
         assert!(stderr.contains("--show-settings"), "{flag}: {stderr}");
     }
     assert_eq!(fs::read_to_string(repo.path("a.q")).unwrap(), "g:{c==d}\n");
+}
+
+/// Run from a directory that has since been removed - a worktree or a build
+/// directory an editor or an agent was started in - a file named by its
+/// absolute path is still linted, and what does need the current directory
+/// says that it is gone: every run failed with a bare "No such file or
+/// directory (os error 2)" (#2873).
+#[cfg(unix)]
+#[test]
+fn a_removed_current_directory_is_named_and_an_absolute_path_is_still_linted() {
+    let repo = Repo::new();
+    repo.write("a.q", SOURCE);
+    let file = repo.path("a.q");
+    let from_removed = |args: &[&str]| {
+        let gone = repo.path("gone");
+        fs::create_dir(&gone).unwrap();
+        Command::new("sh")
+            .current_dir(&gone)
+            .args(["-c", "rmdir \"$PWD\" && exec \"$0\" \"$@\""])
+            .arg(env!("CARGO_BIN_EXE_qlinter"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let style = ["--isolated", "--profile", "style", "--format"];
+    for format in ["text", "json", "github", "sarif"] {
+        let out = from_removed(&[&style[..], &[format, file.to_str().unwrap()]].concat());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{format}: {stderr}");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("QF016"),
+            "{format}: {stderr}"
+        );
+    }
+    // Without `--isolated` too: the file's directory stands in.
+    let out = from_removed(&["--profile", "style", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    // An `--exclude` pattern is read from the current directory.
+    let out = from_removed(&["--isolated", "--exclude", "x", file.to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("the current directory no longer exists"),
+        "{stderr}"
+    );
+}
+
+/// q reads bytes, so a Latin-1 `"é"` is one of them: a char atom, where the
+/// replacement character it was read as is three bytes, and QB015 called
+/// `c="é"` a three-character string, QA011 `$["é";...]` 'type, and QB004 a
+/// hundred-byte message three hundred (q 5 runs all three, #2862).
+#[test]
+fn a_byte_that_is_not_utf8_is_one_byte_of_a_string() {
+    let repo = Repo::new();
+    let mut source =
+        b"t:([] c:\"ab\xe9\")\nr:select from t where c=\"\xe9\"\nf:{$[\"\xe9\";1;2]}\ng:{[x] '\""
+            .to_vec();
+    source.extend([0xe9; 100]);
+    source.extend(b"\"}\n");
+    fs::write(repo.path("a.q"), &source).unwrap();
+    assert!(repo.codes("", &["--select", "Q", "a.q"]).is_empty());
+    // And two of them are two, as they were not one: a string, not an atom.
+    fs::write(repo.path("b.q"), b"f:{$[\"\xe9\xe9\";1;2]}\n").unwrap();
+    let out = run(&repo.path(""), &["--select", "Q", "b.q"]).stdout;
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("QA011"), "{out}");
+    // Shown as the replacement character, which is all a report can show.
+    assert!(out.contains("`$[\\\"\u{fffd}\u{fffd}\\\";...]`"), "{out}");
+}
+
+/// QE012 names the byte the file holds, not a U+FFFD it does not; and a
+/// file saved as UTF-16 is QE005's, which says so, where it was one QE012
+/// at 1:1 that named U+FFFD (q 5: 'char for each, #2861).
+#[test]
+fn an_invalid_byte_is_named_and_a_utf16_file_is_reported_as_one() {
+    let repo = Repo::new();
+    fs::write(repo.path("a.q"), b"f:{[x;y] x\xe9+y}\n").unwrap();
+    let out = run(&repo.path(""), &["--select", "Q", "a.q"]).stdout;
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("Byte 0xE9 (not UTF-8) is no q"), "{out}");
+    assert!(!out.contains("U+FFFD"), "{out}");
+    let utf16 = |order: [u8; 2], low: usize| {
+        let mut bytes = order.to_vec();
+        for b in b"f:{[x;y] x==y}\n" {
+            let mut unit = [0, 0];
+            unit[low] = *b;
+            bytes.extend(unit);
+        }
+        bytes
+    };
+    for (bytes, order) in [
+        (utf16([0xff, 0xfe], 0), "little-endian"),
+        (utf16([0xfe, 0xff], 1), "big-endian"),
+    ] {
+        fs::write(repo.path("u.q"), bytes).unwrap();
+        assert_eq!(repo.codes("", &["--select", "Q", "u.q"]), ["QE005"]);
+        let out = run(&repo.path(""), &["--select", "Q", "u.q"]).stdout;
+        let out = String::from_utf8_lossy(&out);
+        assert!(
+            out.contains(&format!("UTF-16 byte-order mark ({order})")),
+            "{out}"
+        );
+    }
+}
+
+/// A file whose name is not UTF-8 is linted when a walk finds it (#1194),
+/// and named on the command line - as pre-commit and `qlinter *` name it -
+/// clap refused every argument, so nothing was linted (#2872). It is one
+/// path among the others: read where the disk can hold such a name, and
+/// reported as missing where it cannot, with the rest still linted.
+#[cfg(unix)]
+#[test]
+fn a_path_argument_that_is_not_utf8_does_not_stop_the_others() {
+    use std::os::unix::ffi::OsStrExt;
+    let repo = Repo::new();
+    repo.write("ok.q", "f:{[x;y] x==y}\n");
+    let odd = std::ffi::OsStr::from_bytes(b"caf\xe9.q");
+    // APFS will not store the name; ext4 does.
+    let stored = fs::write(repo.path("").join(odd), "g:{[x;y] x==y}\n").is_ok();
+    let lint = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path(""))
+            .args(["--isolated", "--format", "json", "--select", "QE004"])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = lint(&["ok.q".as_ref(), odd]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("invalid UTF-8"), "{stderr}");
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found.as_array().unwrap().len(), 1 + usize::from(stored));
+    assert_eq!(out.status.code(), Some(if stored { 1 } else { 2 }));
+    assert_eq!(stderr.contains("caf\u{fffd}.q: "), !stored, "{stderr}");
+    // And the name a buffer is linted as, or a graph is asked about.
+    let out = lint(&["--stdin-filename".as_ref(), odd]);
+    assert_eq!(out.status.code(), Some(0), "{:?}", out);
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path(""))
+        .args(["analyze", "graph", "ok.q"])
+        .arg(odd)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"ok.q\""), "{:?}", out);
 }

@@ -113,6 +113,20 @@ fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
     }
 }
 #[test]
+fn a_no_break_space_before_a_tables_colon_does_not_panic() {
+    // `only_end + 1` was the middle of the two-byte space, where
+    // `past_blanks` sliced: exit 101 and every other file's findings lost
+    // (#2864). The second is the fuzz case it was minimised from.
+    for source in [
+        "t\u{a0}:([] a:1 2 3)\nr:select from t where a>1\n",
+        "t\u{a0}:([])select from t where",
+        "t\u{3000}:([] c:\"ab\")\nr:select from t where c=\"a\"\n",
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(found.iter().any(|f| f.code == "QE012"), "{source:?}");
+    }
+}
+#[test]
 fn a_typed_slot_that_swallows_the_closing_brace_does_not_panic() {
     // A brace auto-closed after `{[a:` is typed: q 5 refuses it with '} (#732).
     let f = lint("f:{[a:}]", "t.q", Profile::General);
@@ -2021,4 +2035,131 @@ fn navigation_over_many_implicit_lambdas_is_linear() {
         large < small * 16,
         "4000 lambdas took {small:?} and 32000 {large:?}"
     );
+}
+/// QS007 asked, for each `@param`, whether its run documents some other
+/// lambda, and read every lambda in the file to answer: a file documented a
+/// function at a time was quadratic in its length (#2865).
+#[test]
+fn many_documented_functions_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n)
+            .map(|i| format!("/ @param a x\nf{i}:{{[a] a}}\n"))
+            .collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("1000 documented functions took {small:?} and 8000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "1000 documented functions took {small:?} and 8000 {large:?}"
+    );
+}
+/// QB004 read on from each top-level signal to the next `;` or closer,
+/// which in a file of them is the end of the file (#2866).
+#[test]
+fn many_top_level_signals_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("a{i}:'\"x\"\n")).collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 signals took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 signals took {small:?} and 16000 {large:?}"
+    );
+}
+/// A file of statements left open - a bad paste or merge. The line each
+/// unclosed bracket is reported before was counted from the start of the
+/// file; and with QE001 deselected, so that the other rules run, each line
+/// read on to the end of its statement, the file's (#2867).
+#[test]
+fn many_unclosed_statements_lint_in_linear_time() {
+    for structure in [true, false] {
+        let time = |n: usize| {
+            let source: String = (0..n).map(|i| format!("a{i}:(1\n")).collect();
+            best_of_three(|| {
+                q_lint_rs::lint_every_rule(&source, "t.q", &Workspace::default(), structure)
+            })
+        };
+        time(2500); // warm the allocator and the regex caches
+        let (small, large) = (time(2500), time(20000));
+        eprintln!("2500 unclosed statements took {small:?} and 20000 {large:?}");
+        // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk
+        // by four times.
+        assert!(
+            large < small * 16,
+            "2500 unclosed statements took {small:?} and 20000 {large:?}"
+        );
+    }
+}
+/// `statement_view` validated the whole scope as UTF-8 again for each
+/// query in it, so one lambda of many queries was quadratic (#2868).
+#[test]
+fn many_queries_in_one_lambda_lint_in_linear_time() {
+    let time = |n: usize| {
+        let body: String = (0..n)
+            .map(|i| format!(" r{i}:select a from t where b>0;\n"))
+            .collect();
+        let source = format!("f:{{[t]\n{body} }}\n");
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(4000); // warm the allocator and the regex caches
+    let (small, large) = (time(4000), time(32000));
+    eprintln!("4000 queries took {small:?} and 32000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "4000 queries took {small:?} and 32000 {large:?}"
+    );
+}
+/// A global assigned and read over and over, as a generated or a long
+/// imperative script does: each read gathered every assignment of the name
+/// to find the one in force (#2869).
+#[test]
+fn a_global_reassigned_and_read_many_times_lints_in_linear_time() {
+    let time = |n: usize| {
+        let source = "a:1\nr:a 0\n".repeat(n);
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 reassignments took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 reassignments took {small:?} and 16000 {large:?}"
+    );
+}
+
+/// A control character where q reads code is 'char in q 5, as a character
+/// past ASCII is: a NUL from a binary merge, an ESC from pasted terminal
+/// output. A tab, a form feed and a carriage return are blank, and load
+/// (#2860).
+#[test]
+fn a_control_character_in_code_is_reported_as_q_refuses_it() {
+    for ch in [
+        '\0', '\x01', '\x07', '\x08', '\x0b', '\x0e', '\x1b', '\x1f', '\x7f',
+    ] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        let of: Vec<_> = found.iter().filter(|f| f.code == "QE012").collect();
+        assert_eq!(of.len(), 1, "{ch:?}: {found:?}");
+        assert_eq!((of[0].line, of[0].column), (1, Some(5)), "{ch:?}");
+        let named = format!("U+{:04X} ", u32::from(ch));
+        assert!(of[0].detail.starts_with(&named), "{}", of[0].detail);
+    }
+    for ch in ['\t', '\x0c', '\r'] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        assert!(found.iter().all(|f| f.code != "QE012"), "{ch:?}: {found:?}");
+    }
 }

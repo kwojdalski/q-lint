@@ -80,7 +80,7 @@
     "code": "QE012",
     "name": "non-ascii-character",
     "category": "syntax",
-    "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char",
+    "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - or an ASCII control character there, which q refuses with 'char",
     "scope": "builtin"
   },
   {
