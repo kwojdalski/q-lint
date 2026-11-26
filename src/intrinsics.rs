@@ -590,12 +590,16 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
     {
         let whole = m.get(0).unwrap();
         let name = m.get(1).unwrap().as_str();
-        let Some(arity) = most_arguments(name) else {
+        // `.q.ssr` is `ssr` itself, and `.q.count` `count`, which the loop
+        // below reads only by its bare name: q 5 `.q.ssr[a;b;c;d]` and
+        // `.q.count[1;2]` are 'rank (#2942).
+        let bare = name.strip_prefix(".q.").unwrap_or(name);
+        let Some(arity) = most_arguments(bare) else {
             continue;
         };
-        if BUILTINS.split('|').any(|b| b == name)
+        if (bare == name && BUILTINS.split('|').any(|b| b == name))
             || !boundary(code, whole.start())
-            || redefined(name, whole.start())
+            || redefined(bare, whole.start())
             || (name.starts_with('.')
                 && *assigns.entry(name).or_insert_with(|| assigned(code, name)))
         {
@@ -611,7 +615,7 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
         // is 'rank, while `bin[a;b;]` is a projection that fails when run.
         let projection = slots.iter().any(|slot| slot.trim().is_empty());
-        if given > arity && (!projection || LAMBDAS.contains(&name)) {
+        if given > arity && (!projection || LAMBDAS.contains(&bare)) {
             out.push(Finding::at(
                 path,
                 source,

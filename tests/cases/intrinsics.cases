@@ -995,6 +995,21 @@ a:.j.j[1;2]
 === QA010 profile: general | an elided slot too many for a function q defines as a lambda (q 5: 'rank where it is made, #2246)
 a:xasc[`a;1;]
 
+=== QA010 profile: general | a keyword by its name in .q is the same function (KDB-X: 'rank for each, #2942)
+a:.q.ssr["a";"a";"b";"c"]
+b:.q.sublist[1;2;3]
+c:.q.count[1;2]
+d:.q.til[1;]
+e:.q.xbar[1;1;1]
+
+=== clean profile: general | what each takes there, a projection of a primitive, and one the file defines itself (KDB-X: .q.count[1;] is #:[1;])
+a:.q.ssr["a";"a";"b"]
+b:.q.count[1;]
+.q.pad:{[a;b;c] a}
+c:.q.pad[1;2;3]
+.q.sublist:{[a;b;c] a}
+d:.q.sublist[1;2;3]
+
 === clean profile: general | what each takes, and an elided slot too many for a primitive, a projection q makes (#2246)
 a:.Q.dd[`a;`b]
 b:sublist[1;1 2 3]
