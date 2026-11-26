@@ -354,6 +354,23 @@ test("a table's hover: in the explorer when first shown, and on its name in a q 
   assert.strictEqual(calls(q, TABLE_INFO).length, 2);
 });
 
+test("a table's name in a comment or a string gets no hover, and the process is not asked (#2922)", async (t) => {
+  const { q } = await setUp(t, [], { "processExplorer.editorTableHover.enable": true });
+  const at = (text, line, character) => providers.hover.provideHover(documentOf(uriOf("file", "/a.q"), text), new Position(line, character));
+  assert.strictEqual(await at("/ trade is rebuilt nightly", 0, 4), undefined);
+  assert.strictEqual(await at("n:count t / trade", 0, 14), undefined);
+  assert.strictEqual(await at('s:"select from trade"', 0, 16), undefined);
+  // A block comment's line and a string open from the line above, which
+  // only the lines above tell.
+  assert.strictEqual(await at("/\ntrade\n\\\nx:1", 1, 2), undefined);
+  assert.strictEqual(await at('s:"select\n  from trade"', 1, 9), undefined);
+  assert.strictEqual(calls(q, TABLE_INFO).length, 0);
+  // As code, and as a symbol, it still does.
+  assert.ok(await at('s:"select from t";count trade', 0, 26));
+  assert.ok(await at("/ note\nmeta `trade", 1, 8));
+  assert.strictEqual(calls(q, TABLE_INFO).length, 1);
+});
+
 test("the Process Monitor and HDB browser read the process on Refresh, and empty on disconnect", async (t) => {
   const { views } = await setUp(t);
   await stub.commands.get("q-lint.refreshProcessMonitor")();
