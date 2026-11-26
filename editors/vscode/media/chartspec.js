@@ -56,20 +56,30 @@
   /// after the one before it otherwise. With no column there the note says
   /// which is missing: the first four columns would draw a size as the open
   /// (#3125).
+  ///
+  /// The first column is one of the four only where the names are all
+  /// found and one is its own - `select open, high, low, close from bars`:
+  /// there is no x axis then, and the candles are drawn against their row
+  /// numbers (#3150).
   function candleColumns(grid) {
     const can = chartable(grid, "candlestick");
     const called = function (c, names) { return names.indexOf(grid.columns[c].name.toLowerCase()) >= 0; };
-    const find = function (letters) {
+    const find = function (letters, among) {
       return OHLC.map(function (alias) {
-        const at = can.filter(function (c) { return called(c, letters ? alias : alias.slice(0, 1)); });
+        const at = among.filter(function (c) { return called(c, letters ? alias : alias.slice(0, 1)); });
         return at.length ? at[0] : -1;
       });
     };
-    const found = find(true);
-    if (found.every(function (c) { return c >= 0; })) {
+    const all = function (found) { return found.every(function (c) { return c >= 0; }); };
+    const found = find(true, can);
+    if (all(found)) {
       return { columns: found };
     }
-    const named = find(false);
+    const withFirst = grid.columns.length > 0 && grid.columns[0].numeric ? find(true, can.concat(can.indexOf(0) < 0 ? [0] : [])) : found;
+    if (all(withFirst)) {
+      return { columns: withFirst };
+    }
+    const named = find(false, can);
     const first = named.findIndex(function (c) { return c >= 0; });
     if (first < 0) {
       return can.length >= 4 ? { columns: can.slice(0, 4) } : { note: NO_CANDLES };
@@ -264,14 +274,17 @@
         return { type: "bar", datasets: [], note: candles.note };
       }
       const ohlc = candles.columns;
+      // No x axis where the first column is one of the four (#3150).
+      const rowAxis = byRow(grid) || ohlc.indexOf(0) >= 0;
       const v = function (c, r) { return grid.values[c][r]; };
       // A row missing any of the four draws no candle.
       const whole = function (r) { return ohlc.every(function (c) { return v(c, r) !== null; }); };
       const name = function (c) { return grid.columns[c].name; };
       return {
         type: "bar",
-        labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
+        labels: rows.map(function (r) { return rowAxis ? String(r) : grid.cells[0][r]; }),
         ohlc: ohlc,
+        rowAxis: rowAxis,
         datasets: [
           { label: name(ohlc[2]) + " - " + name(ohlc[1]), column: ohlc[1], wick: true, data: rows.map(function (r) { return whole(r) ? [v(ohlc[2], r), v(ohlc[1], r)] : null; }) },
           { label: name(ohlc[0]) + " - " + name(ohlc[3]), column: ohlc[3], data: rows.map(function (r) { return whole(r) ? [v(ohlc[0], r), v(ohlc[3], r)] : null; }) },
@@ -435,7 +448,7 @@
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { title: { display: true, text: byRow(grid) ? "row" : grid.columns[0].name }, ticks: { autoSkip: true, maxRotation: 0 } },
+          x: { title: { display: true, text: data.rowAxis ? "row" : grid.columns[0].name }, ticks: { autoSkip: true, maxRotation: 0 } },
           // Prices: the axis spans the candles, not down to zero as bars'.
           y: { beginAtZero: false, title: { display: false } },
         },
@@ -681,7 +694,7 @@
       });
     }
     // The x axis's title and the legend, under it.
-    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) ? "row" : grid.columns[0].name;
+    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) || (kind === "candlestick" && data.rowAxis) ? "row" : grid.columns[0].name;
     if (xTitle) {
       out.push('<text x="' + (left + pw / 2) + '" y="' + (top + ph + 34) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(xTitle) + "</text>");
     }

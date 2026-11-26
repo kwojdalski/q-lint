@@ -176,3 +176,21 @@ test("candles keep the columns named open, high, low or close when not all four 
   assert.strictEqual(names(g("time", "a", "b", "c", "d", "e")), "a,b,c,d");
   assert.match(C.chartData(g("time", "a", "b"), [0], "candlestick", [], 20).note, /four numeric columns after the first\.$/);
 });
+
+test("a table of exactly open, high, low and close draws candles against its row numbers (#3150)", () => {
+  const cols = (...names) => ({ columns: names.map((name) => ({ name, numeric: true, type: 9 })), cells: names.map((_, i) => [String(10 + i), String(20 + i)]), values: names.map((_, i) => [10 + i, 20 + i]) });
+  const g = cols("open", "high", "low", "close");
+  assert.deepStrictEqual(C.ohlcColumns(g), [0, 1, 2, 3]);
+  const data = C.chartData(g, [0, 1], "candlestick", [], 20);
+  assert.strictEqual(data.note, undefined);
+  assert.deepStrictEqual(data.labels, ["0", "1"]);
+  assert.deepStrictEqual(data.datasets.map((d) => d.data[1]), [[22, 21], [20, 23]]);
+  const look = { colours: ["#f00"] };
+  assert.strictEqual(C.chartConfig(g, [0, 1], "candlestick", data, look).options.scales.x.title.text, "row");
+  assert.match(C.chartSvg(g, [0, 1], "candlestick", data, look, {}), />row<\/text>/);
+  // A first column that is none of the four is still the x axis.
+  const timed = cols("n", "close", "open", "low", "high");
+  assert.deepStrictEqual(C.ohlcColumns(timed), [2, 4, 3, 1]);
+  assert.deepStrictEqual(C.chartData(timed, [0, 1], "candlestick", [], 20).labels, ["10", "20"]);
+  assert.strictEqual(C.ohlcColumns(cols("open", "a", "b", "c2")), null, "three columns after the first, and no four names");
+});
