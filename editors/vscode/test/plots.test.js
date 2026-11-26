@@ -60,6 +60,20 @@ test("a handler with space before its =, a scheme in character references and a 
   assert.strictEqual(plainSvg(svg("<text>a &#38; b = c</text>")), true);
 });
 
+test("a namespace-prefixed script or foreignObject, or a second namespace, is refused (#2652)", () => {
+  for (const bad of [
+    '<h:script xmlns:h="http://www.w3.org/1999/xhtml">document.documentElement.setAttribute("data-pwned","yes")</h:script>',
+    '<s:script xmlns:s="http://www.w3.org/2000/svg">alert(1)</s:script>',
+    '<h:iframe xmlns:h="http://www.w3.org/1999/xhtml" src="data:text/html,x"/>',
+    '<iframe xmlns="http://www.w3.org/1999/xhtml" src="data:text/html,x"/>',
+    '<s:foreignObject xmlns:s="http://www.w3.org/2000/svg"><div/></s:foreignObject>',
+  ]) {
+    assert.strictEqual(plainSvg(svg(bad)), false, bad);
+  }
+  assert.strictEqual(plainSvg('<svg xmlns="http://www.w3.org/2000/svg" a=">" onload="x()"></svg>'), false);
+  assert.strictEqual(plainSvg(svg('<text x="1">xmlns:h a:b</text>')), true);
+});
+
 test("a label that reads like a handler or link is text, and the plot is kept (#1475)", () => {
   for (const label of ["status online=1", "see href=x", "javascript: tips"]) {
     assert.strictEqual(plainSvg(svg(`<text x="1">${label}</text>`)), true, label);
