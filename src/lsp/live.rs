@@ -168,7 +168,9 @@ fn global_at(params: &Value, sources: &Sources) -> Value {
 /// for a client to ask a process about. Not a word of q's, not a name in a
 /// one-letter namespace (`.z.pc`, `.Q.dd`), which are q's own - but for
 /// `.m`, where KDB-X runs a module's own names - not one in a
-/// qSQL phrase but the table's, and not one in a system command.
+/// qSQL phrase but the table's, and not one in a system command. A name is
+/// defined when a file assigns it or a name it is read through: `.cfg.port`
+/// by the dictionary `.cfg`, `t.c` by the table `t`.
 fn unresolved(params: &Value, sources: &Sources) -> Value {
     let Some((uri, text)) = sources.document(params) else {
         return json!([]);
@@ -194,11 +196,18 @@ fn unresolved(params: &Value, sources: &Sources) -> Value {
             let mut parts = name.split('.');
             name.starts_with('.') && parts.nth(1).is_some_and(|ns| ns.len() == 1 && ns != "m")
         };
-        if names.is_empty()
-            || names
-                .iter()
-                .any(|name| qs(name) || sources.idx.ws.defines(name))
-        {
+        // As QF018 and the graph read it, a name no file assigns is tried
+        // without its last part (#2807).
+        let defined = |name: &str| {
+            std::iter::once(name)
+                .chain(
+                    name.match_indices('.')
+                        .filter(|&(i, _)| i > 0)
+                        .map(|(i, _)| &name[..i]),
+                )
+                .any(|n| sources.idx.ws.defines(n))
+        };
+        if names.is_empty() || names.iter().any(|name| qs(name) || defined(name)) {
             continue;
         }
         out.push(json!({

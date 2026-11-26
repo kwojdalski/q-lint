@@ -1067,6 +1067,21 @@ fn a_module_reading_a_root_name_it_cannot_see_is_listed() {
     assert_eq!(unresolved(&mut server, &uri), [("util".to_string(), 2, 3)]);
 }
 
+#[test]
+fn a_name_read_through_one_the_workspace_defines_is_not_listed() {
+    // QF018 and the graph try a name without its last part; so does this
+    // (#2807). `.nope.x` is read through nothing a file assigns.
+    let dir = tempfile::tempdir().unwrap();
+    let lib = ".cfg:`port`host!(1;2)\nt:([]c:1 2)\n.ns.d:`a`b!1 2\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", lib)]);
+    let text = "r2:.cfg.port\nr3:t.c\nr8:.ns.d.a\nr9:.nope.x\n";
+    let uri = server.open(dir.path(), "doc.q", text);
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [(".nope.x".to_string(), 3, 3)]
+    );
+}
+
 /// The one qSQL layout action among `actions`: its title and new text.
 fn qsql(actions: &[Value], uri: &str) -> Option<(String, String)> {
     let action = actions
