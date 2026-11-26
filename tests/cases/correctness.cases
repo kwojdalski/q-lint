@@ -617,6 +617,13 @@ delete a from t where b>3
 === QB016 | the table may be a literal
 delete a from ([]a:1 2;b:3 4) where b>3
 
+=== QB016 | or any expression before the where (q 5: delete a from t lj kt where b=1 and delete a from t,t where b=1 are 'nyi, #2700)
+delete a from t lj kt where b=1
+delete a from t,t where b=1
+
+=== clean | a query after from takes the where for itself (q 5 runs it, #2700)
+delete a from select from t where b=1
+
 === QB016 QB015 profile: general | a query continued onto the next line inside a lambda (q 5: f t is 'nyi, g t is 'length)
 t:([]a:1 2;b:3 4;s:`x`y)
 f:{[t] delete a from t

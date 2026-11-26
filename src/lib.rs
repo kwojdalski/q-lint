@@ -10038,22 +10038,36 @@ fn lint_rules(
             );
         }
         // `delete` takes columns or a where phrase, never both; q says 'nyi.
-        // The table is a name or a parenthesised expression - a `select`
-        // after `from` would take the `where` for itself, and so is neither.
+        // The table is any expression up to a `where` at its own depth -
+        // `delete a from t lj kt where b=1` is 'nyi too (#2700) - but a
+        // query keyword after `from` would take the `where` for itself.
         for m in re!(r"\bdelete\s+[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s+from\s+").find_iter(query)
         {
             if m.start() >= line.len() {
                 break;
             }
             let rest = &query[m.end()..];
-            let after = if rest.starts_with('(') {
-                matching(query, m.end(), b'(', b')').map(|close| &query[close..])
-            } else {
-                re!(r"^`?[A-Za-z_][\w.]*")
-                    .find(rest)
-                    .map(|t| &rest[t.end()..])
-            };
-            if after.is_some_and(|a| re!(r"^\s+where\b").is_match(a)) {
+            let b = rest.as_bytes();
+            let (mut depth, mut i, mut filtered) = (0i32, 0, false);
+            while i < b.len() {
+                match b[i] {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' if depth == 0 => break,
+                    b')' | b']' | b'}' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    _ if depth == 0 && boundary(rest, i) => {
+                        if let Some(w) =
+                            re!(r"^(?:where|select|exec|update|delete)\b").find(&rest[i..])
+                        {
+                            filtered = w.as_str() == "where";
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if filtered {
                 add(
                     offset + m.start(),
                     "QB016",
