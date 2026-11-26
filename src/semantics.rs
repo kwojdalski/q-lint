@@ -603,6 +603,11 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 }
                 _ => false,
             };
+        // `mod["a";2]` and `xexp[2.5;"a"]` are 'type as the infix is (#2884).
+        let word_refused = match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
+            (Some(a), Some(b)) => word_refuses_char(g, a, b, raw_l),
+            _ => false,
+        };
         let (code, detail) = match (shape(l), shape(r)) {
             (Some(k), Some(v)) if g == "!" && k >= 2 && k != v => (
                 "QT001",
@@ -629,6 +634,10 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
             _ if char_refused => (
                 "QT023",
                 format!("`{text}` is 'type: q 5 does no integer arithmetic on a char"),
+            ),
+            _ if word_refused => (
+                "QT023",
+                format!("`{text}` is 'type: q 5 takes no char under `{g}` here"),
             ),
             _ => continue,
         };
@@ -4860,14 +4869,15 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
+    // A float before them too, which `xexp` refuses a char beside (#2884).
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?(?:\d+\.\d*|\.\d+)|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
     let infix = re_built!(&format!(
         concat!(
             r"(?P<l>{operand})",
             blank!(),
-            r"*(?P<op>[-+*])",
+            r"*(?P<op>[-+*]|mod\b|xexp\b)",
             blank!(),
             r"*(?P<r>{operand})"
         ),
@@ -4918,9 +4928,14 @@ fn named_values(
             && comments[..l.start()].ends_with(':')
             && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit())
             && !named(l.start() - 1);
+        // A word operator is a word of its own: the `mod` of `amod 2` and
+        // of `2 mod2` is part of a name.
+        let word = op.as_str().starts_with(char::is_alphabetic);
+        let joined = |x: &str| x.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c));
         if code.get(op.range()) != Some(op.as_str())
             || negative
             || temporal
+            || (word && joined(&comments[..op.start()]))
             || !boundary(comments, l.start())
             || !operand_ends(code, comments, r.end())
         {
@@ -4932,6 +4947,26 @@ fn named_values(
         ) else {
             continue;
         };
+        // The word operators: q 5 `"a" mod 2` and `"a" xexp 2` are 'type,
+        // `"a" div 2` is 48i and `"a" xlog 2` a float (#2884).
+        if word {
+            if word_refuses_char(op.as_str(), a, b, l.as_str()) {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    l.start(),
+                    "QT023",
+                    format!(
+                        "`{} {} {}` is 'type: q 5 takes no char under `{}` here",
+                        l.as_str(),
+                        op.as_str(),
+                        r.as_str(),
+                        op.as_str()
+                    ),
+                ));
+            }
+            continue;
+        }
         let refused = match op.as_str() {
             "-" => a == Arithmetic::Char,
             _ => a == Arithmetic::Char || b == Arithmetic::Char,
@@ -5753,6 +5788,27 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
         Some(Arithmetic::Float)
     } else {
         None
+    }
+}
+
+/// Whether q 5 refuses the word operator `op` over operands of kinds `a`
+/// and `b`, one of them a char, where `left` is the left operand's text.
+/// `xexp` takes no char at all, beside a float either: `"a" xexp 2`,
+/// `2.5 xexp "a"`. `mod` refuses one on its left beside anything integral
+/// (`"a" mod 2`, where `"a" mod 2.5` is 17f) and one on its right under an
+/// integer, but not under a real: `2 mod "a"` is 'type, `1e mod "a"` 1f -
+/// so there the left operand has to be a literal, which says which (#2884).
+fn word_refuses_char(op: &str, a: Arithmetic, b: Arithmetic, left: &str) -> bool {
+    let left = left.trim();
+    match op {
+        "xexp" => a == Arithmetic::Char || b == Arithmetic::Char,
+        "mod" if a == Arithmetic::Char => b != Arithmetic::Float,
+        "mod" if b == Arithmetic::Char => {
+            a == Arithmetic::Integral
+                && left.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+                && (left.starts_with("0x") || !left.ends_with('e'))
+        }
+        _ => false,
     }
 }
 

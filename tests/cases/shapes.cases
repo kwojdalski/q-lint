@@ -1399,6 +1399,36 @@ b:"a"*0W
 c:"a"+0Ni
 d:"a"-0Wh
 
+=== QT023 profile: general | mod and xexp refuse a char as + does, the first beside anything integral and the second beside anything (#2884; q 5: each is 'type)
+r:"a" mod 2
+r2:2 mod "a"
+r3:"a" xexp 2
+r4:2.5 xexp "a"
+r5:"a" xexp 2.5
+c:"a"
+r6:c mod 2
+r7:c xexp 2
+r8:"a" mod "b"
+r9:"a" mod 1e
+r10:"a"mod 0x02
+r11:mod["a";2]
+r12:xexp[2.5;"a"]
+
+=== clean profile: general | while mod takes a char beside a float, or on the right of a real, and div and xlog take one anyway (#2884; q 5: 17f, 1f, 2.5, 48i, 0.1515172, 17f, 97f)
+a:"a" mod 2.5
+b:1e mod "a"
+c:2.5 mod "a"
+d:"a" div 2
+e:"a" xlog 2
+f:mod["a";2.5]
+g:"a" mod 1e3
+
+=== clean profile: general | and a name that ends in mod is no operator (#2884)
+amod:{x}
+c:"a"
+r:amod 2
+r2:amod c
+
 === clean profile: general | a float null or infinity takes a char (q 5: 0n, 0w)
 a:"a"+0n
 b:"a"*0w
