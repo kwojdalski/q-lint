@@ -1389,6 +1389,29 @@ fn highlights_mark_a_write_apart_from_a_read() {
             ((6, 3, 5), 2)
         ]
     );
+    // A symbol that may be the name is marked as text, kind 1, wherever
+    // Find References lists it: `` `hb in tables `. `` and the `` `hb ``
+    // returned, beside the write by name and the read (#2679).
+    let text = "init:{[] if[not `hb in tables `.; `hb set ([] w:`symbol$())];\n  `hb}\n\
+                r:select from hb\n";
+    let uri = server.open(dir.path(), "d.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "from hb",
+        5,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 17, 19), 1),
+            ((0, 35, 37), 3),
+            ((1, 3, 5), 1),
+            ((2, 14, 16), 2)
+        ]
+    );
 }
 
 #[test]

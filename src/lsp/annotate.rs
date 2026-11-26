@@ -11,9 +11,9 @@
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
 use q_lint_rs::graph::Placement;
-use q_lint_rs::{Mention, argument_slots, load_paths, mentions, typed_locals};
+use q_lint_rs::{Mention, argument_slots, load_paths, mentions, symbol_mentions, typed_locals};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// LSP's `InlayHintKind`s: a type, and a parameter.
 const TYPE: u8 = 1;
@@ -536,8 +536,8 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
 
 /// `textDocument/codeLens`, the reference counts: above each function a
 /// statement at column 0 defines, how many places the indexed files read it
-/// (what Find All References lists without the assignments), which opens
-/// those references when clicked.
+/// (what Find All References lists without the assignments, a symbol that
+/// may be the name among them), which opens those references when clicked.
 ///
 /// One pass over the workspace answers every function of the document: a
 /// file is read only when it spells one of their names.
@@ -593,12 +593,51 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
             continue;
         }
         let placement = sources.placement(file);
-        for m in mentions(&other).iter().filter(|m| m.definition.is_none()) {
+        let all = mentions(&other);
+        for m in all.iter().filter(|m| m.definition.is_none()) {
             let mut names: Vec<&str> = sources
                 .names(&other, m, &placement)
                 .iter()
                 .filter_map(|name| by_name.get_key_value(name.as_str()).map(|(k, _)| *k))
                 .collect();
+            if names.is_empty() {
+                continue;
+            }
+            names.sort_unstable();
+            names.dedup();
+            *by_names.entry(names).or_insert(0) += 1;
+        }
+        // And each symbol that may be one of the names, as the references
+        // the lens opens list it (#2679): by where it is, since one symbol
+        // may be the name in its context or at the root.
+        // The file is read once for the symbols it spells, not once for
+        // each name wanted.
+        let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+        let spelled: HashSet<&str> = other
+            .match_indices('`')
+            .filter_map(|(tick, _)| {
+                let rest = &other[tick + 1..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+                    .unwrap_or(rest.len());
+                leaves.get(&rest[..end]).copied()
+            })
+            .collect();
+        let mut symbols: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+        for leaf in spelled {
+            for m in symbol_mentions(&other, leaf) {
+                if known.contains(&m.at) {
+                    continue;
+                }
+                symbols.entry(m.at).or_default().extend(
+                    sources
+                        .names(&other, &m, &placement)
+                        .iter()
+                        .filter_map(|name| by_name.get_key_value(name.as_str()).map(|(k, _)| *k)),
+                );
+            }
+        }
+        for (_, mut names) in symbols {
             if names.is_empty() {
                 continue;
             }

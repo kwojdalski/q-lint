@@ -4271,6 +4271,11 @@ fn another_read_of_a_name_asks_for_the_reference_counts_again() {
         ["workspace/codeLens/refresh"]
     );
     assert!(refreshes_after(&mut server, &b, 5, "f 3\n").is_empty());
+    // A symbol that may be the name is counted too (#2679).
+    assert_eq!(
+        refreshes_after(&mut server, &b, 6, "f 3\n`f\n"),
+        ["workspace/codeLens/refresh"]
+    );
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 

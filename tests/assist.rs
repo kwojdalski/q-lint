@@ -483,6 +483,31 @@ fn a_function_has_a_lens_counting_the_places_that_read_it() {
     assert_eq!(reply["result"].as_array().unwrap().len(), 3);
 }
 
+/// A symbol that may be the name is a reference Find References lists, so
+/// the lens that opens that list counts it: `` w:`f `` here and in another
+/// file, and one of `` `f`g `` (#2679).
+#[test]
+fn a_reference_lens_counts_the_symbols_its_references_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "f:{x}\na:f 1\nw:`f\nz:`f`g\ns:`fg`.f\n";
+    let (mut server, _) = Server::over(
+        dir.path(),
+        &[("other.q", "q:`f\nk:f 3\n")],
+        client(),
+        json!({"referenceLens": {"enable": true}}),
+    );
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    let found = reference_lenses(&reply);
+    assert_eq!(found[0].1, "5 references", "{reply}");
+    let listed = server.request(
+        "textDocument/references",
+        json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0},
+               "context": {"includeDeclaration": false}}),
+    );
+    assert_eq!(listed["result"].as_array().unwrap().len(), 5, "{listed}");
+}
+
 #[test]
 fn reference_lenses_are_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();

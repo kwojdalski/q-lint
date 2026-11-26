@@ -664,7 +664,9 @@ running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
 from a read - an assignment, an amend, and a table changed in place by its
-name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]`), and `textDocument/prepareRename`/`textDocument/rename`.
+name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]` - and a symbol
+that may be the name, which the references list too, marked as text), and
+`textDocument/prepareRename`/`textDocument/rename`.
 
 The nested outline puts each name under the namespace it is in, the whole of
 the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
@@ -833,7 +835,7 @@ extension, which sends the code to the connected q process - can run it.
 
 With `referenceLens.enable`, the same functions get a lens counting the
 places the indexed files read them - what Find All References lists without
-the assignments: `1 reference`, `3 references`, `0 references`. It runs the
+the assignments, a symbol that may be the name included: `1 reference`, `3 references`, `0 references`. It runs the
 command `q-lint.showReferences` with the document's URI and the name's
 position, which the VS Code extension opens as the references list. It is
 off by default for the same reason as Run. One request reads each workspace

@@ -2379,13 +2379,23 @@ fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
 /// `-32603 Internal error`, rather than no reply, which a client cannot tell
 /// from a hung server.
-/// Every read of a global in `text`, as `Indexed::tally` keeps them.
+/// Every read of a global in `text`, as `Indexed::tally` keeps them - and
+/// every symbol, tick and all, since a count takes one that may be a name
+/// for a read of it (#2679).
 fn tally(text: &str) -> Vec<(String, bool)> {
     guarded(|| {
+        let symbols = text.match_indices('`').map(|(tick, _)| {
+            let rest = &text[tick + 1..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+                .unwrap_or(rest.len());
+            (text[tick..tick + 1 + end].to_string(), false)
+        });
         q_lint_rs::mentions(text)
             .into_iter()
             .filter(|m| m.definition.is_none())
             .map(|m| (m.name, m.implicit))
+            .chain(symbols)
             .collect()
     })
     .unwrap_or_default()

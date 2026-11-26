@@ -42,6 +42,7 @@ const NAMESPACE: u8 = 3;
 pub(super) const FUNCTION: u8 = 12;
 pub(super) const VARIABLE: u8 = 13;
 /// LSP's `DocumentHighlightKind`s.
+const TEXT: u8 = 1;
 const READ: u8 = 2;
 const WRITE: u8 = 3;
 /// How many symbols one `workspace/symbol` reply carries. A client filters
@@ -566,7 +567,8 @@ fn references(params: &Value, sources: &Sources) -> Value {
 }
 
 /// `textDocument/documentHighlight`: the same name elsewhere in this
-/// document, marked as read or written.
+/// document, marked as read or written - and, as text, a symbol that may be
+/// the name, which Find References lists too (#2679).
 fn highlights(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return json!([]);
@@ -585,7 +587,8 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
             let placement = sources.placement(&cursor.key);
             let code = q_lint_rs::code_view(cursor.text);
             let changed = q_lint_rs::changed_by_name(cursor.text);
-            mentions(cursor.text)
+            let all = mentions(cursor.text);
+            let mut found: Vec<(usize, Value)> = all
                 .iter()
                 .filter_map(|m| {
                     let part = sources
@@ -594,9 +597,30 @@ fn highlights(params: &Value, sources: &Sources) -> Value {
                     let write = m.definition.is_some()
                         || q_lint_rs::amended_at(&code, m.at + m.len)
                         || changed.contains(&m.at);
-                    Some(highlight(m.at, part, write))
+                    Some((m.at, highlight(m.at, part, write)))
                 })
-                .collect()
+                .collect();
+            let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+            let leaves: HashSet<&str> = targets
+                .iter()
+                .filter_map(|name| name.rsplit('.').next())
+                .collect();
+            for leaf in leaves {
+                for m in symbol_mentions(cursor.text, leaf) {
+                    if !known.contains(&m.at)
+                        && sources
+                            .names(cursor.text, &m, &placement)
+                            .iter()
+                            .any(|name| targets.contains(name))
+                    {
+                        let text = json!({"range": range(&lines, m.at, m.len), "kind": TEXT});
+                        found.push((m.at, text));
+                    }
+                }
+            }
+            found.sort_by_key(|(at, _)| *at);
+            found.dedup_by_key(|(at, _)| *at);
+            found.into_iter().map(|(_, place)| place).collect()
         }
     }
 }
