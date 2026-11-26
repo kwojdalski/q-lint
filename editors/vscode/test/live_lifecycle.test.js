@@ -1172,3 +1172,19 @@ test("Disconnect, and Abort with nothing running, leave a background run on anot
     assert.deepStrictEqual(stub.messages, said, command);
   }
 });
+
+// A result cut at the grid limit is held for the connection it came on. On
+// one opened again - an automatic reconnect, a restart - Load more said the
+// lambda's own marker: "could not fetch more rows from a: held".
+test("Load more on a connection opened again says the result is held no more, not the lambda's marker (#3037)", async (t) => {
+  const { PAGE } = require("../out/grid.js");
+  const a = await fakeQ((sent) => (Array.isArray(sent) && sent[0] === PAGE ? "held" : { ok: true, type: -7, text: ["2"] }));
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  assert.strictEqual(
+    await live.pageHeld("a", 100, 100, "token"),
+    "it no longer holds this result: it restarted, the connection to it was opened again, or a later result replaced it. Run the query again to see the rest",
+  );
+  assert.deepStrictEqual(a.sent.at(-1).slice(1), ["token", 100, 100]);
+});

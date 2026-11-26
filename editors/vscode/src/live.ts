@@ -4218,7 +4218,10 @@ export class Live {
     if (page === undefined) {
       return { later: "a query is running on it; scroll again once it ends" };
     }
-    return readPage(await page);
+    // `held` is the lambda's own word for a result this connection does not
+    // hold: one opened again holds none of the last one's (#3037).
+    const read = readPage(await page);
+    return read === "held" ? "it no longer holds this result: it restarted, the connection to it was opened again, or a later result replaced it. Run the query again to see the rest" : read;
   }
 
   /// The saved query `from` was renamed `to`, or deleted: the results it
