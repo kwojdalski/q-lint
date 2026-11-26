@@ -21,7 +21,7 @@
 // - A lambda arrives with its text, which an unwrapped query shows. Any
 //   other function arrives as the word "func".
 // - An empty table arrives with no columns, so they cannot be shown.
-import { TREE_NODES, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
+import { TREE_NODES, bytesText, codePointOrder, realValue, type GridPayload, type TreeNode } from "./grid";
 import type { Item, QValue } from "./qdecode";
 
 /// q's generic null, `(::)`.
@@ -940,6 +940,43 @@ interface TypedColumn {
 /// The q type a decoded column has: a simple list's, 0 for any other.
 function columnTypeOf(q: QValue): number {
   return q.kind === "vector" ? q.t : q.kind === "chars" ? 10 : q.kind === "table" ? 98 : q.kind === "dict" ? 99 : 0;
+}
+
+/// A table or a keyed table as `celldata.ts`'s `DATA` answers for it, for
+/// a notebook cell on a direct process (#2478): at most `limit` rows, the
+/// last ones when `last`; a column cut to them a simple list where its items
+/// are atoms of one type, as `sublist` makes it; each column's q type; and
+/// a general column's string items as their text, unquoted, as DATA's `str`
+/// sends them. Undefined for anything else.
+export function cellTableOf(q: QValue, limit: number, precision = 7, last = false): { columns: string[]; types: number[]; keys: number; data: string[][]; total: number } | undefined {
+  const parts = q.kind === "table" ? [q] : q.kind === "dict" && q.k.kind === "table" && q.v.kind === "table" ? [q.k, q.v] : undefined;
+  if (parts === undefined) {
+    return undefined;
+  }
+  const total = countOf(parts[0]);
+  const cut = (c: QValue): QValue => {
+    if (!(limit < total)) {
+      return c;
+    }
+    const some = firstOf(c, limit, last);
+    return some.kind === "list" ? collapsed(some.v) : some;
+  };
+  const columns = parts.flatMap((p) => p.cols);
+  const data = parts.flatMap((p) => p.data.map(cut));
+  const grid = gridOfQ({ kind: "table", attr: 0, cols: columns, data }, Infinity, precision);
+  if (grid === undefined) {
+    return undefined;
+  }
+  return {
+    columns,
+    types: data.map(columnTypeOf),
+    keys: parts.length === 2 ? parts[0].cols.length : 0,
+    data: grid.cells.map((cells, i) => {
+      const c = data[i];
+      return c.kind === "list" ? cells.map((text, r) => (c.v[r]?.kind === "chars" ? (bytesText((c.v[r] as QValue & { kind: "chars" }).v) ?? text) : text)) : cells;
+    }),
+    total,
+  };
 }
 
 /// The first `n` items of a decoded list; the last `n` when `last`.

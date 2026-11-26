@@ -375,3 +375,28 @@ test("the command-line chart queries a process that refuses lambdas with --direc
   assert.match(fs.readFileSync(out, "utf8"), /^<svg/);
   assert.strictEqual(await ask(pm, "1=lambdas"), true);
 });
+
+test("a notebook @grid cell on a direct process shows what the same cell wrapped does: strings unquoted, a mixed column cut to numbers aligned (#2478)", { skip }, async (t) => {
+  const { cellAnswer } = require("../out/qnbrun.js");
+  const { cellDirective } = require("../out/celldirectives.js");
+  const taken = new Set();
+  const port = await startQ(t, "c2:([] a:2026.01.01+til 5; s:(\"ab\";\"c\";\"d\";\"e\";\"f\"); b:(1 2;3;4 5 6;7;8))\nk:([k:`x`y`z] s:(\"ab\";\"cd\";\"e\"))\n", taken);
+  const outputs = async (direct, code, rows) => {
+    const c = await QConnection.open({ host: "127.0.0.1", port });
+    if (direct) c.direct = () => ({ label: "q", from: "process" });
+    try {
+      const [ok, parts] = await cellAnswer(c, cellDirective(`/ @grid\n${code}`), [code], { ...SETTINGS, rows });
+      assert.strictEqual(ok, true, JSON.stringify(parts));
+      return JSON.stringify(parts);
+    } finally {
+      c.abort();
+    }
+  };
+  for (const [code, rows] of [["c2", -2], ["c2", 1000], ["c2", 2], ["k", 1000]]) {
+    const wrapped = await outputs(false, code, rows);
+    assert.strictEqual(await outputs(true, code, rows), wrapped, `${code} ${rows}`);
+  }
+  const last = await outputs(true, "c2", -2);
+  assert.match(last, /<td>e<\/td>/);
+  assert.match(last, /<td class=\\"n\\">7<\/td>/);
+});

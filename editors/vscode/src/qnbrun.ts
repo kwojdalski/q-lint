@@ -22,7 +22,7 @@ import { cellDirective, type CellMode } from "./celldirectives";
 import { valued, type GuardCode } from "./guard";
 import { LIVE, LIVE_KEY, LIVE_READ_ONLY, VALUE_LIMIT, liveQueries, markdownAfter, readLiveValues, type LiveValue } from "./livemarkdown";
 import type { GridAnswer, GridPayload } from "./grid";
-import { formatValue, gridOfQ, headOf, oneLine } from "./qformat";
+import { cellTableOf, formatValue, gridOfQ, headOf, oneLine } from "./qformat";
 import type { Gatewayed } from "./gateway";
 import type { QValue } from "./qdecode";
 import { answerOf, directMode, evaluateAll } from "./querycontrols";
@@ -94,7 +94,10 @@ async function directCellAnswer(connection: QConnection, mode: CellMode, cut: st
     void _g;
     return [true, cellOutputs(mode, text, settings.rowLimitFrom)];
   }
-  return [true, cellOutputs(mode, { ok: true, table: { columns: grid.names, types: grid.types, keys: grid.keys, data: grid.cells, total: grid.count } }, settings.rowLimitFrom)];
+  // The typed value's own cells, as DATA sends them - a string unquoted, a
+  // column's type as q's cut makes it - not the grid's text (#2478).
+  const table = typed !== undefined ? cellTableOf(typed, Math.abs(settings.rows), precision, settings.rows < 0) : undefined;
+  return [true, cellOutputs(mode, { ok: true, table: table ?? { columns: grid.names, types: grid.types, keys: grid.keys, data: grid.cells, total: grid.count } }, settings.rowLimitFrom)];
 }
 
 /// `grid` cut to `rows` rows: the first, or the last when it is negative;
