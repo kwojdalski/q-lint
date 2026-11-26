@@ -780,3 +780,35 @@ test("a cell of a function q writes as it does not read back is counted, and Cop
   // The other formats write the cell's text, which is all they say it is.
   assert.deepStrictEqual(exportResult("json", p, -1).notes, []);
 });
+
+test("a drill-down literal that is no single token is one operand, in parentheses (#3072)", () => {
+  const g = "409031f3-b19c-6770-ee84-6e9369c98697";
+  const p = {
+    count: 1,
+    keys: 0,
+    names: ["g", "u", "x", "d", "s", "n", "l", "v", "w"],
+    types: [2, 17, 0, 0, 11, 7, 0, 0, 0],
+    cells: [[g], ["**:00"], [',"x"'], ["`a`b!1 2"], ["a"], ["-1"], ["(1;`a)"], ["1 2 3"], ["(1;2)!(3;4)"]],
+    raw: [[], [6000], [false], [false], [], [-1], [false], [false], [false]],
+    rank: [[]],
+  };
+  const left = (column) => fillDrilldown("{{value}}~/:c", p, column, 0).code;
+  // q reads `"G"$"..."~/:c` as `"G"$("..."~/:c)`.
+  assert.strictEqual(left(0), `("G"$"${g}")~/:c`);
+  assert.strictEqual(left(1), '("u"$6000)~/:c');
+  assert.strictEqual(left(2), '(enlist "x")~/:c');
+  assert.strictEqual(left(3), "(`a`b!1 2)~/:c");
+  assert.strictEqual(left(7), "(1 2 3)~/:c");
+  assert.strictEqual(left(8), "((1;2)!(3;4))~/:c");
+  // One token, or one in parentheses already, is as it was.
+  assert.strictEqual(left(4), "`a~/:c");
+  assert.strictEqual(left(5), "-1~/:c");
+  assert.strictEqual(left(6), "(1;`a)~/:c");
+  const t = typed();
+  assert.deepStrictEqual(
+    [0, 1, 2, 3, 4, 5].map((c) => fillDrilldown("{{value}}", t, c, 0).code),
+    ["`a", "1b", "9007199254740993", fillDrilldown("{{value}}", t, 3, 0).code, "2024.01.31", "2024.01.02D03:04:05.123456789"],
+  );
+  assert.strictEqual(fillDrilldown("{{value}}", t, 6, 0).code, '"abc"');
+  assert.strictEqual(fillDrilldown("{{value}}", t, 6, 1).code, "`x`y");
+});

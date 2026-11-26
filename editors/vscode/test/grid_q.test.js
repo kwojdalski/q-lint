@@ -235,6 +235,23 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
   });
 
+  await t.test("a drill-down's value is one operand on the left of an operator too, whatever its literal (#3072)", async () => {
+    const { fillDrilldown } = require("../out/drilldown.js");
+    const columns = ['"G"$("409031f3-b19c-6770-ee84-6e9369c98697";"00000000-0000-0000-0000-000000000001")', '"u"$6000 6001', '("";enlist "x")', "(`a`b!1 2;1)", "(enlist 1;2)", "(([] a:1 2);1)", "(1 2 3;`a)", "((1;2)!(3;4);1)"];
+    for (const column of columns) {
+      await connection.query(statements(`orig:([] c:${column});`), SIZE);
+      const grid = (await connection.queryGrid(statements("orig"), SIZE, 100)).grid;
+      for (let row = 0; row < 2; row++) {
+        for (const template of ["exec i from orig where {{value}}~/:c", "exec i from orig where c~\\:{{value}}"]) {
+          const filled = fillDrilldown(template, grid, 0, row);
+          const answer = await connection.query(statements(filled.code), SIZE);
+          assert.deepStrictEqual(answer.text, [`,${row}`], `${column} row ${row}: ${filled.code} ${answer.error ?? ""}`);
+        }
+      }
+    }
+    await connection.query(statements("delete orig from `.;"), SIZE);
+  });
+
   await t.test("an exported q literal rebuilds a minute, second or time of 100 hours or more, which q writes as ** (#1967)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
     const { fillDrilldown } = require("../out/drilldown.js");
