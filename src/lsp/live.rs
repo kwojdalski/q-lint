@@ -207,7 +207,10 @@ fn unresolved(params: &Value, sources: &Sources) -> Value {
                 )
                 .any(|n| sources.idx.ws.defines(n))
         };
-        if names.is_empty() || names.iter().any(|name| qs(name) || defined(name)) {
+        // One of q's own by the name the file gives it, and not by the
+        // context a loader put the file in: a bare `helper` in a file loaded
+        // under `\d .a` is `.a.helper`, and no name of q's (#2818).
+        if names.is_empty() || qs(&m.name) || names.iter().any(|name| defined(name)) {
             continue;
         }
         out.push(json!({

@@ -1230,6 +1230,31 @@ fn a_script_loaded_only_under_a_context_defines_nothing_at_the_root() {
 }
 
 #[test]
+fn a_bare_read_in_a_script_loaded_only_under_a_context_is_not_the_root_name() {
+    // KDB-X: `\l main.q` is 'helper at b.q's first line, and `.a.g 1` after
+    // a b.q without that line is 'helper too: under `\d .a` the name is
+    // `.a.helper`, and q falls back to no root (#2818).
+    let repo = Repo::new();
+    repo.write("util.q", "helper:{x}\n")
+        .write("main.q", "\\l util.q\n\\d .a\n\\l b.q\n")
+        .write("b.q", "r:helper\ng:{helper}\n");
+    let style = ["--isolated", "--profile", "style", "--select", "QF018"];
+    let all = [&style[..], &["."]].concat();
+    assert_eq!(repo.codes(".", &all), ["QF018", "QF018"]);
+    // A name another script loaded there defines is `.a`'s, and found.
+    repo.write("main.q", "\\d .a\n\\l util.q\n\\l b.q\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
+    // Loaded at the root as well, the read is the root's there; and after
+    // the script's own `\d .` it is the root's wherever it is loaded.
+    repo.write("main.q", "\\l util.q\n\\d .a\n\\l b.q\n")
+        .write("e.q", "\\l b.q\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
+    repo.write("e.q", "e:1\n")
+        .write("b.q", "\\d .\nr:helper\ng:{helper}\n");
+    assert_eq!(repo.codes(".", &all), Vec::<String>::new());
+}
+
+#[test]
 fn a_load_placed_without_a_literal_backslash_l_is_placed_as_the_server_places_it() {
     // KDB-X 5: `system "d\t.a"` then `system "l\tb.q"` defines `.a.ff` and
     // no root `ff`. The CLI only built placements when the text spelled

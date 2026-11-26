@@ -1209,6 +1209,24 @@ fn a_name_read_through_one_the_workspace_defines_is_not_listed() {
 }
 
 #[test]
+fn a_bare_read_in_a_script_loaded_only_under_a_context_is_listed() {
+    // KDB-X: `\l main.q` is 'helper at b.q's first line, for under `\d .a`
+    // the name is `.a.helper` and q falls back to no root (#2818).
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("util.q", "helper:{x}\n"),
+        ("main.q", "\\l util.q\n\\d .a\n\\l b.q\n"),
+        ("b.q", "r:helper\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let uri = server.open(dir.path(), "b.q", "r:helper\n");
+    assert_eq!(
+        unresolved(&mut server, &uri),
+        [("helper".to_string(), 0, 2)]
+    );
+}
+
+#[test]
 fn a_column_in_parentheses_or_brackets_of_a_query_is_not_listed() {
     // KDB-X runs each of these over the columns `a` and `b` (#2822). The
     // list on the last line is in no query, and a lambda's names are its own.

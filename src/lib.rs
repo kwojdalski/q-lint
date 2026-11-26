@@ -152,13 +152,20 @@ impl Workspace {
     /// root read after a `\d .` is asked about those too, which can only
     /// keep a finding back, never make one. The file's own root names are
     /// its own in those contexts as well.
+    ///
+    /// `implicit` for a read before the file's first `\d`, which is the
+    /// root's only where the file is loaded at the root: KDB-X, after
+    /// `helper:{x}`, runs a `\d .a` / `\l b.q` to 'helper at b.q's
+    /// `r:helper`, for it falls back to no root (#2818).
     pub(crate) fn defined_elsewhere_as_loaded(
         &self,
         name: &str,
         own: &std::collections::HashSet<String>,
         placement: Option<&graph::Placement>,
+        implicit: bool,
     ) -> bool {
-        if self.defined_elsewhere(name, own) {
+        let rootless = implicit && placement.is_some_and(|p| !p.root);
+        if !rootless && self.defined_elsewhere(name, own) {
             return true;
         }
         let Some(placement) = placement.filter(|_| !name.starts_with('.')) else {
@@ -8345,7 +8352,7 @@ fn lint_rules(
     let own = semantics::index(code, source).defined;
     let placement = ws.placement(path);
     let foreign = |at: usize, key: &str| {
-        ws.defined_elsewhere_as_loaded(key, &own, placement) && in_lambda(at)
+        ws.defined_elsewhere_as_loaded(key, &own, placement, false) && in_lambda(at)
     };
     // Between the name and its bracket, the statement's blanks and nothing
     // else: a column-0 `[1;2;3]` under `r:f` is a statement of its own
@@ -9183,7 +9190,8 @@ fn lint_rules(
     // `\d .ns` the name is `.ns.true`, which a root `true` does not define
     // and lib.q's own `\d .ns` does (q 5, #520).
     let placement = ws.placement(path);
-    let elsewhere = |key: &str| ws.defined_elsewhere_as_loaded(key, &Default::default(), placement);
+    let elsewhere =
+        |key: &str| ws.defined_elsewhere_as_loaded(key, &Default::default(), placement, false);
     // Nor can a file that writes globals it does not name say the name is
     // undefined: q 5 runs `\l lib.q` (`true:0b`) then `$[true;`yes;`no]` to
     // `no, which the fix to 1b would turn to `yes (#750).

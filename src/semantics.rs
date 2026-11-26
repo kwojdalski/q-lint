@@ -2878,7 +2878,8 @@ pub fn check(
     // Asked where the file is loaded, as well as where it switches to: a
     // bare name a file loaded under `\d .ns` reads is `.ns.`'s (#2178).
     let placement = ws.placement(path);
-    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement);
+    let elsewhere = |name: &str| ws.defined_elsewhere_as_loaded(name, &own, placement, false);
+    let first_switch = first_switch(code, raw);
     // Scopes by the offset they start at. Looking one up by scanning is linear
     // per global and quadratic over a file whose globals are mostly lambdas,
     // which is what a q library is.
@@ -4055,8 +4056,14 @@ pub fn check(
                     || elsewhere(&format!(".q.{name}"))
                     // Exactly too: another file's `.cfg` is not a root
                     // `cfg`, and q 5 does not fall back from `\d .ns` to
-                    // the root (#359).
-                    || elsewhere(&resolved(name, namespace))
+                    // the root (#359) - nor from the context a loader put
+                    // the file in, for a read before its first `\d` (#2818).
+                    || ws.defined_elsewhere_as_loaded(
+                        &resolved(name, namespace),
+                        &own,
+                        placement,
+                        start + value.start() < first_switch,
+                    )
                     // QF010 and QF005 already explain these more precisely.
                     || (scope.is_some() && matches!(name, "x" | "y" | "z"))
                     || std::iter::successors(scope.and_then(|s| s.parent), |&p| scopes[p].parent)
