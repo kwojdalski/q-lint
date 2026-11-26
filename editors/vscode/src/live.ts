@@ -3340,11 +3340,11 @@ export class Live {
   /// the console, under `label`: Query a Tag's merged table.
   /// `mode`: shown as that, whatever the query mode: `.qlint.plot`'s chart
   /// (#960).
-  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart"): void {
+  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart", merged?: boolean): void {
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     this.modes.show(
-      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
+      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload }, ...(merged ? { merged } : {}) },
       { ...settings, mode: mode ?? (settings.mode === "console" ? "grid" : settings.mode) },
     );
   }
@@ -3674,7 +3674,7 @@ export class Live {
   }
 
   /// The result the panel shows, with the process and code it came from.
-  resultOnShow(): { process: string; code: string; payload: GridPayload; run: number } | undefined {
+  resultOnShow(): { process: string; code: string; payload: GridPayload; run: number; merged?: boolean } | undefined {
     return this.modes.current();
   }
 

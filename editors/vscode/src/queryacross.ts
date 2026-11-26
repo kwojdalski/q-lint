@@ -235,7 +235,7 @@ export class QueryAcross {
     );
     const payload = mergeOutcomes(outcomes);
     this.lastTag = { tag, payload };
-    this.live.showGrid(`tag ${tag}`, code, payload, millis);
+    this.live.showGrid(`tag ${tag}`, code, payload, millis, undefined, true);
     const failed = outcomes.filter((o) => "error" in o || !o.answer.ok).length;
     window.setStatusBarMessage(
       `q-lint: ${processes.length - failed} of ${processes.length} process${processes.length === 1 ? "" : "es"} tagged ${tag} answered`,
