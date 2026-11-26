@@ -33,8 +33,10 @@ export function functionAt(text: string, line: number): Target | undefined {
   if (def === undefined) {
     return undefined;
   }
+  // A test, by the conventions' names - `test_x`, qUnit's `testX` - and not
+  // a function whose name merely starts so: testable, tester (#2411).
   const short = def.name.split(".").pop() ?? def.name;
-  if (/^test/.test(short)) {
+  if (/^test(?:_|[A-Z]|$)/.test(short)) {
     return undefined;
   }
   const mask = codeMask(def.text);
