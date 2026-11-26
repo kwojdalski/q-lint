@@ -141,6 +141,35 @@ def test_lsp_server_modes(tmp_path, mode, exit_code):
         assert not result.stdout
 
 
+@pytest.mark.parametrize("mode", ["normal", "utf-8", "utf-16", "utf-32"])
+def test_qls_positions_are_read_in_the_encoding_the_server_counts_in(tmp_path, mode):
+    """A qls column was passed through as the server counted it (#2870).
+
+    qls names no encoding and counts bytes, so every column after a
+    character past ASCII was off, and by a BOM's three bytes on line 1. A
+    finding's column counts UTF-16 units, whatever the server counts.
+    """
+    server = tmp_path / "fake qls"
+    server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+    server.chmod(0o755)
+    qls = ("--backend", "qls", "--qls-executable", server, "--qls-timeout", "5", "--format", "json")
+    for source, column in [
+        ("a:1;WIDE", 5),
+        # `a:"` 3, the emoji 2 UTF-16 units, `é` 1, `";` 2.
+        ('a:"\U0001f600\u00e9";WIDE', 9),
+        # A BOM is no column to an editor, nor here.
+        ("\ufeffa:1;WIDE", 5),
+    ]:
+        result = run("-", *qls, source=source)
+        assert result.returncode == 1, result.stderr
+        finding = json.loads(result.stdout)[0]
+        assert (finding["line"], finding["column"], finding["end_column"]) == (
+            1,
+            column,
+            column + 4,
+        ), (mode, source)
+
+
 @pytest.mark.parametrize("mode", ["missing", "crash", "silent"])
 def test_backend_all_reports_the_builtin_findings_when_qls_fails(tmp_path, mode):
     """A qls that is missing, crashing or slow ended the run with nothing shown.

@@ -65,26 +65,84 @@ fn uri(path: &Path) -> String {
     }
     result
 }
-fn findings(path: &str, values: &Value) -> Result<Vec<Finding>, String> {
+/// What a server counts a position's `character` in. One that names none
+/// is read as qls is: it names none, whatever it is offered, and counts
+/// bytes, as the tree-sitter grammar it parses with does - measured on
+/// `a:"éé";f:{[x;y] x==y}`, whose end it puts at 23 (#2870).
+#[derive(Clone, Copy)]
+enum Encoding {
+    Bytes,
+    Utf16,
+    Characters,
+}
+
+impl Encoding {
+    fn named(capabilities: &Value) -> Self {
+        match capabilities["positionEncoding"].as_str() {
+            Some("utf-16") => Encoding::Utf16,
+            Some("utf-32") => Encoding::Characters,
+            _ => Encoding::Bytes,
+        }
+    }
+
+    /// `character` of `line` in UTF-16 units, which a finding's column
+    /// counts. One past the end of the line stays as far past it.
+    fn units(self, line: &str, character: usize) -> usize {
+        let (mut counted, mut units) = (0, 0usize);
+        for ch in line.chars() {
+            if counted >= character {
+                return units;
+            }
+            counted += match self {
+                Encoding::Bytes => ch.len_utf8(),
+                Encoding::Utf16 => ch.len_utf16(),
+                Encoding::Characters => 1,
+            };
+            units += ch.len_utf16();
+        }
+        units.saturating_add(character.saturating_sub(counted))
+    }
+}
+
+fn findings(
+    path: &str,
+    source: &str,
+    encoding: Encoding,
+    values: &Value,
+) -> Result<Vec<Finding>, String> {
     let mut out = vec![];
     for d in values
         .as_array()
         .ok_or("qls diagnostics must be an array")?
     {
-        let pos = |which: &str, key: &str| -> Result<usize, String> {
-            d["range"][which][key]
-                .as_u64()
-                .and_then(|v| usize::try_from(v).ok())
-                .and_then(|v| v.checked_add(1))
+        // A line and a column from 1, the column in a finding's own units:
+        // passed through as the server counted it, it was off after any
+        // character past ASCII, and by the BOM's three bytes on line 1.
+        let pos = |which: &str| -> Result<(usize, usize), String> {
+            let of = |key: &str| {
+                d["range"][which][key]
+                    .as_u64()
+                    .and_then(|v| usize::try_from(v).ok())
+            };
+            of("line")
+                .zip(of("character"))
+                .and_then(|(line, character)| {
+                    let text = source.split('\n').nth(line).unwrap_or("");
+                    Some((
+                        line.checked_add(1)?,
+                        encoding.units(text, character).checked_add(1)?,
+                    ))
+                })
                 .ok_or("Malformed qls diagnostic range".into())
         };
         let message = d["message"]
             .as_str()
             .ok_or("Malformed qls diagnostic message")?;
-        let mut f = Finding::new(path, pos("start", "line")?, "QLS001", message.into());
-        f.column = Some(pos("start", "character")?);
-        f.end_line = Some(pos("end", "line")?);
-        f.end_column = Some(pos("end", "character")?);
+        let (start, end) = (pos("start")?, pos("end")?);
+        let mut f = Finding::new(path, start.0, "QLS001", message.into());
+        f.column = Some(start.1);
+        f.end_line = Some(end.0);
+        f.end_column = Some(end.1);
         let code = d
             .get("code")
             .map(|c| {
@@ -115,24 +173,24 @@ fn analyze(
 ) -> Result<Vec<Finding>, String> {
     send(
         writer,
-        json!({"id":1,"method":"initialize","params":{"processId":null,"rootUri":root,"workspaceFolders":[{"uri":root,"name":"q-lint"}],"capabilities":{"workspace":{"configuration":true}}}}),
+        json!({"id":1,"method":"initialize","params":{"processId":null,"rootUri":root,"workspaceFolders":[{"uri":root,"name":"q-lint"}],"capabilities":{"general":{"positionEncodings":["utf-8","utf-16","utf-32"]},"workspace":{"configuration":true}}}}),
     )?;
-    loop {
+    let encoding = loop {
         let m = next(reader, writer)?;
         if m["id"] == 1 {
             if m.get("error").is_some() || m.get("result").is_none() {
                 return Err(format!("qls initialization failed: {m}"));
             }
-            break;
+            break Encoding::named(&m["result"]["capabilities"]);
         }
-    }
+    };
     send(writer, json!({"method":"initialized","params":{}}))?;
     let mut opened = HashMap::new();
     let mut diagnostics = HashMap::new();
     for version in 1..=if sources.len() > 1 { 2 } else { 1 } {
         for (index, (path, source)) in sources.iter().enumerate() {
             let uri = format!("{root}/document_{index}.q");
-            opened.insert(uri.clone(), path);
+            opened.insert(uri.clone(), (path, source));
             let message = if version == 1 {
                 json!({"method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"languageId":"q","version":version,"text":source}}})
             } else {
@@ -145,10 +203,10 @@ fn analyze(
                     let target = m["params"]["uri"]
                         .as_str()
                         .ok_or("Malformed diagnostics URI")?;
-                    if let Some(path) = opened.get(target) {
+                    if let Some((path, source)) = opened.get(target) {
                         diagnostics.insert(
                             target.to_string(),
-                            findings(path, &m["params"]["diagnostics"])?,
+                            findings(path, source, encoding, &m["params"]["diagnostics"])?,
                         );
                     }
                     if target == uri {
