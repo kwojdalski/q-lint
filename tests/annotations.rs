@@ -1847,6 +1847,69 @@ fn a_load_spelled_in_another_case_is_rewritten_on_a_disk_that_ignores_case() {
     );
 }
 
+/// KDB-X 5 finds `` use`a.b `` at `a/b.q` or `a/b/init.q`, so a module's
+/// name is its path as much as a load's is (#2669).
+#[test]
+fn renaming_a_modules_file_or_folder_rewrites_the_uses_that_name_it() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("mymod")).unwrap();
+    std::fs::create_dir_all(dir.path().join("pkg")).unwrap();
+    let files = [
+        ("mymod/init.q", "f:{x}\nexport:([f])\n"),
+        ("flat.q", "g:{x}\nexport:([g])\n"),
+        ("pkg/sub.q", "h:{x}\nexport:([h])\n"),
+        (
+            "main.q",
+            "m:use`mymod\n\\l mymod/init.q\nk:use`flat\np:use`pkg.sub\n",
+        ),
+    ];
+    let options = json!({"renameLoads": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let mut edits = |moves: &[(&str, &str)]| {
+        let reply = server.request(
+            "workspace/willRenameFiles",
+            rename_params(dir.path(), moves),
+        );
+        let mut edits = renamed(&reply, dir.path());
+        edits.sort();
+        edits
+    };
+    assert_eq!(
+        edits(&[("mymod", "mod2")]),
+        [
+            ("main.q".to_string(), 0, 6, 11, "mod2".to_string()),
+            ("main.q".into(), 1, 3, 15, "mod2/init.q".into()),
+        ]
+    );
+    assert_eq!(
+        edits(&[("flat.q", "flat2.q")]),
+        [("main.q".to_string(), 2, 6, 10, "flat2".to_string())]
+    );
+    // A directory is a dot of the name.
+    assert_eq!(
+        edits(&[("flat.q", "lib/flat.q")]),
+        [("main.q".to_string(), 2, 6, 10, "lib.flat".to_string())]
+    );
+    assert_eq!(
+        edits(&[("pkg", "pk2")]),
+        [("main.q".to_string(), 3, 6, 13, "pk2.sub".to_string())]
+    );
+    // pkg/sub/init.q is `pkg.sub` still, and no module name spells
+    // my-flat.q: the user is told which `use` the rename leaves behind.
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("pkg/sub.q", "pkg/sub/init.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    let (reply, shown) = server.told(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("flat.q", "my-flat.q")]),
+    );
+    assert_eq!(reply["result"], Value::Null, "{reply}");
+    assert_eq!(shown.len(), 1, "{shown:?}");
+    assert!(shown[0].contains("main.q:3 (`my-flat.q`)"), "{}", shown[0]);
+}
+
 /// An absolute load written through a symlink (`/tmp` for `/private/tmp`)
 /// is followed to the file renamed, and keeps its spelling (#1219).
 #[cfg(unix)]

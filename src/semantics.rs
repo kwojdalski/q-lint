@@ -1765,6 +1765,17 @@ pub(crate) fn is_module(code: &str, raw: &str) -> bool {
 /// The module each literal `` use`name `` loads, outside a lambda that binds
 /// `use` itself. `view` is the code view with system commands blanked.
 fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
+    let mut out: Vec<String> = use_names(view, scopes)
+        .into_iter()
+        .map(|name| view[name].to_string())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Where each name `uses` reads is written, in order.
+fn use_names(view: &str, scopes: &[Scope]) -> Vec<Range<usize>> {
     let mut out = vec![];
     for m in
         re!(r"\buse\s*(?:\[\s*|\(\s*)?`(\.*[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)")
@@ -1776,11 +1787,15 @@ fn uses(view: &str, scopes: &[Scope]) -> Vec<String> {
         {
             continue;
         }
-        out.push(m[1].to_string());
+        out.push(m.get(1).unwrap().range());
     }
-    out.sort();
-    out.dedup();
     out
+}
+
+/// The module name of each literal `` use`name `` in a file, as `uses`
+/// reads them, for a rename of the module's file to rewrite (#2669).
+pub fn use_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
+    use_names(&commands_blanked(code, raw), &scopes(code, raw).0)
 }
 
 /// `value` of a symbol the source does not spell out: `value nm` reads the

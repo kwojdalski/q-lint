@@ -10,7 +10,7 @@
 //! workspace folder - then the loading file's directory and each above it.
 use super::navigate::{Cursor, Sources};
 use super::{Lines, file_key};
-use q_lint_rs::load_paths;
+use q_lint_rs::{load_paths, use_paths};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -162,8 +162,10 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
     }
     let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut left: Vec<String> = vec![];
+    let mut unnamed: Vec<String> = vec![];
     for key in sources.keys() {
-        if sources.idx.files[key].loads.is_empty() {
+        let file = &sources.idx.files[key];
+        if file.loads.is_empty() && file.read.uses.is_empty() {
             continue;
         }
         let Some((uri, text)) = sources.text(key) else {
@@ -192,7 +194,49 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
                 "newText": edit,
             }));
         }
+        // `` use`mymod `` names mymod.q or mymod/init.q by its path too,
+        // from the same directories a load is tried against (#2669).
+        for (at, len) in use_paths(&text) {
+            let name = &text[at..at + len];
+            let edit = match renamed_module(name, root.as_deref(), dir, new_dir, &renames) {
+                Some(Ok(edit)) => edit,
+                Some(Err(path)) => {
+                    let file = root.as_deref().and_then(|r| from.strip_prefix(r).ok());
+                    let file = file.unwrap_or(from).to_string_lossy().replace('\\', "/");
+                    let line = text[..at].matches('\n').count() + 1;
+                    unnamed.push(format!("{file}:{line} (`{path}`)"));
+                    continue;
+                }
+                None => continue,
+            };
+            changes.entry(uri.clone()).or_default().push(json!({
+                "range": super::navigate::range(&lines, at, len),
+                "newText": edit,
+            }));
+        }
     }
+    let listed = |mut places: Vec<String>| {
+        places.sort();
+        let more = places.len().saturating_sub(MAX_TOLD);
+        places.truncate(MAX_TOLD);
+        let mut places = places.join(", ");
+        if more > 0 {
+            places.push_str(&format!(" and {more} more"));
+        }
+        places
+    };
+    let told_uses = (!unnamed.is_empty()).then(|| {
+        let count = match unnamed.len() {
+            1 => "1 `use` is".to_string(),
+            n => format!("{n} `use`s are"),
+        };
+        format!(
+            "q-lint: {count} left naming the old module, whose new path no module name \
+             spells: {}. A module name is letters, digits and `_`, with a `.` for each \
+             directory, and names `name.q` or `name/init.q`.",
+            listed(unnamed)
+        )
+    });
     let told = (!left.is_empty()).then(|| {
         left.sort();
         let count = match left.len() {
@@ -211,10 +255,72 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
              `_`, `.` and `/`."
         )
     });
+    let told = match (told, told_uses) {
+        (Some(loads), Some(uses)) => Some(format!("{loads} {uses}")),
+        (loads, uses) => loads.or(uses),
+    };
     if changes.is_empty() {
         return (Value::Null, told);
     }
     (json!({"changes": changes}), told)
+}
+
+/// The new spelling of the module `name` of a `` use`name ``, written in a
+/// file whose directory is `dir` and will be `new_dir`, when the renames
+/// move the file it reaches: `mod2` for `mymod` once mymod/ is mod2/, as
+/// KDB-X 5 finds `a.b` at `a/b.q` or `a/b/init.q`. `Err` with the new path
+/// when no module name spells it. A name relative to its module
+/// (`` use`.b ``) moves with it and is left as written.
+fn renamed_module(
+    name: &str,
+    root: Option<&Path>,
+    dir: &Path,
+    new_dir: &Path,
+    renames: &[(PathBuf, PathBuf)],
+) -> Option<Result<String, String>> {
+    if name.starts_with('.') {
+        return None;
+    }
+    let mut bases: Vec<(PathBuf, PathBuf)> = vec![];
+    if let Some(root) = root {
+        bases.push((root.to_path_buf(), root.to_path_buf()));
+    }
+    let mut new_ancestors = new_dir.ancestors();
+    for base in dir.ancestors() {
+        let new_base = new_ancestors.next().unwrap_or(base);
+        bases.push((base.to_path_buf(), new_base.to_path_buf()));
+    }
+    let (base, target) = bases.iter().find_map(|(base, new_base)| {
+        let stem = name.split('.').fold(base.clone(), |p, part| p.join(part));
+        ["q", "k"]
+            .iter()
+            .map(|ext| stem.with_extension(ext))
+            .chain(["init.q", "init.k"].iter().map(|f| stem.join(f)))
+            .find(|p| p.exists())
+            .map(|target| ((base, new_base), target))
+    })?;
+    let new_target = moved_as_written(&target, renames).unwrap_or_else(|| target.clone());
+    let (old_base, new_base) = base;
+    if new_target == target && new_base == old_base {
+        return None;
+    }
+    let spelled = relative(&new_target, new_base);
+    let module = spelled
+        .strip_suffix("/init.q")
+        .or_else(|| spelled.strip_suffix("/init.k"))
+        .or_else(|| spelled.strip_suffix(".q"))
+        .or_else(|| spelled.strip_suffix(".k"));
+    let part = |p: &str| {
+        p.starts_with(|c: char| c.is_ascii_alphabetic())
+            && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    };
+    match module {
+        Some(module) if module.split('/').all(part) => {
+            let module = module.replace('/', ".");
+            (module != name).then_some(Ok(module))
+        }
+        _ => Some(Err(spelled)),
+    }
 }
 
 /// How many loads left as written one message lists.

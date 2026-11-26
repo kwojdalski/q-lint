@@ -548,6 +548,16 @@ pub fn load_paths(source: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
+/// The module names of the `` use`name `` loads in `source` - `mymod` of
+/// `` m:use`mymod `` - as start and length, in order.
+pub fn use_paths(source: &str) -> Vec<(usize, usize)> {
+    let v = views(source);
+    semantics::use_paths(&v.code, source)
+        .into_iter()
+        .map(|name| (name.start, name.len()))
+        .collect()
+}
+
 /// `source` with its strings and comments blanked, byte for byte, as the
 /// rules read it: an offset in one is the same offset in the other.
 pub fn code_view(source: &str) -> String {
