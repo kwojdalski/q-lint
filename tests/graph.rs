@@ -308,6 +308,53 @@ u:{value \"1\"}
 }
 
 #[test]
+fn a_write_into_a_computed_name_by_amend_insert_or_delete_is_dynamic() {
+    // KDB-X, after `` nm:`$"dyn1" ``: `` @[`.;nm;:;1 2] `` and
+    // `.[nm;();:;1 2]` make a `dyn1`, `nm upsert ([]a:1 2)` a table of that
+    // name, `nm insert` adds to it, and `` ![`.;();0b;enlist nm] `` removes
+    // it (#2826).
+    let source = "\
+nm:`$\"dyn\",string 1
+@[`.;nm;:;1 2]
+.[nm;();:;1 2]
+nm insert ([]a:1 2)
+nm upsert ([]a:1 2)
+@[`.;nm;,;3]
+![`.;();0b;enlist nm]
+f:{[t;x] t insert x}
+g:{insert[x;y]}
+(`$\"dyn2\") upsert ([]a:1 2)
+upsert[nm;([]a:1 2)]
+";
+    let g = graph(&[("dyn.q", source)], false);
+    let lines: Vec<_> = (2..=11).map(|line| (line, "set")).collect();
+    assert_eq!(kinds(&g, "dyn.q"), lines);
+    // The same with the name written is a definition, and an upsert into a
+    // table held, not named, writes nothing: KDB-X's `t upsert x` returns
+    // a table and leaves `t` as it was.
+    let source = "\
+@[`.;`a;:;1 2]
+.[`b;();:;1 2]
+`c insert ([]a:1 2)
+`d upsert ([]a:1 2)
+@[`.;enlist`e;,;3]
+![`.;();0b;enlist`a]
+![`.;();0b;`a`b]
+t:([]a:1 2)
+r:t upsert ([]a:3 4)
+h:{[t;x] t upsert x}
+.[`:data/t;();,;t]
+k:x!y
+";
+    let g = graph(&[("named.q", source)], false);
+    assert!(
+        kinds(&g, "named.q").is_empty(),
+        "{:?}",
+        kinds(&g, "named.q")
+    );
+}
+
+#[test]
 fn a_path_joined_from_a_list_written_out_is_not_dynamic() {
     // KDB-X: `` ` sv (`:dir;`file) `` is `` `:dir/file ``, a path as
     // `` ` sv `:dir,`file `` is (#2816). A name joined so is still one.

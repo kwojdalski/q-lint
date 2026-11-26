@@ -1879,6 +1879,24 @@ fn value_of_symbols<'n>(
             .or_default()
             .push((scope, ns_at(whole.start()), symbol(after)));
     }
+    // Whether `name`, read at `at`, is assigned in its scope, and nothing but
+    // a symbol atom. Not a parameter, which could hold anything.
+    let holds_symbol = |name: &str, at: usize| {
+        let scope = scope_at(scopes, at);
+        let local = scope.filter(|&s| scopes[s].locals.contains(name));
+        if local.is_some_and(|s| scopes[s].params.contains(name)) {
+            return false;
+        }
+        let namespace = ns_at(at);
+        let writes: Vec<bool> = assigned
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|(s, ns, _)| *s == local && (local.is_some() || *ns == namespace))
+            .map(|&(_, _, sym)| sym)
+            .collect();
+        !writes.is_empty() && writes.iter().all(|&sym| sym)
+    };
     let mut found = vec![];
     for m in re!(r"\bvalue\b").find_iter(view) {
         if !boundary(view, m.start()) {
@@ -1905,22 +1923,34 @@ fn value_of_symbols<'n>(
         if !ends {
             continue;
         }
-        let name = arg.as_str();
-        let scope = scope_at(scopes, m.start());
-        let local = scope.filter(|&s| scopes[s].locals.contains(name));
-        if local.is_some_and(|s| scopes[s].params.contains(name)) {
+        if holds_symbol(arg.as_str(), m.start()) {
+            found.push((m.start(), "value"));
+        }
+    }
+    // `nm upsert x` is a write on the same evidence, into the table `nm`
+    // names: KDB-X, after `` nm:`$"dyn3" ``, has a `dyn3` for
+    // `nm upsert ([]a:1 2)`, where `t upsert x` of a table writes nothing
+    // and returns one (#2826).
+    for m in re!(r"\bupsert\b").find_iter(view) {
+        if !boundary(view, m.start()) {
             continue;
         }
-        let namespace = ns_at(m.start());
-        let writes: Vec<bool> = assigned
-            .get(name)
-            .into_iter()
-            .flatten()
-            .filter(|(s, ns, _)| *s == local && (local.is_some() || *ns == namespace))
-            .map(|&(_, _, sym)| sym)
-            .collect();
-        if !writes.is_empty() && writes.iter().all(|&sym| sym) {
-            found.push((m.start(), "value"));
+        let after = view[m.end()..].trim_start_matches([' ', '\t']);
+        let target = match after.strip_prefix('[') {
+            Some(args) => args.split([';', ']']).next().unwrap_or(""),
+            None => {
+                let before = view[..m.start()].trim_end_matches([' ', '\t']);
+                re!(r"(?:\(\s*)?[`$A-Za-z0-9_.]+\s*\)?$")
+                    .find(before)
+                    .map_or("", |t| t.as_str())
+            }
+        };
+        let target = target.trim_matches(['(', ')', ' ', '\t']);
+        if target.starts_with("`$")
+            || re!(r"^\.Q\.dd\b").is_match(target)
+            || re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(target) && holds_symbol(target, m.start())
+        {
+            found.push((m.start(), "set"));
         }
     }
     found
@@ -2196,7 +2226,10 @@ fn dynamic(
     }
     // A literal target is a definition `index` already holds, and `hsym`
     // or `` `: `` a file; anything else is a name computed at run time.
-    for m in re!(r"\bset\b").find_iter(view) {
+    // So is the target of an `insert`, which takes a table by its name and
+    // nothing else: KDB-X refuses `t insert x` of a table itself with 'type
+    // (#2826).
+    for m in re!(r"\b(?:set|insert)\b").find_iter(view) {
         if !boundary(view, m.start()) || next(m.end()).starts_with(':') {
             continue;
         }
@@ -2221,6 +2254,41 @@ fn dynamic(
         // literal definitions (#364).
         let literal = re!(r"^\(?\s*(?:`[A-Za-z0-9_.:/]*)+\s*\)?$").is_match(target);
         if !literal && !target.contains("hsym") && !target.contains("`:") {
+            push(m.start(), "set");
+        }
+    }
+    // A write by amend, or a delete, of a name computed at run time, where
+    // the same with a literal name is a definition `index` holds: KDB-X,
+    // after `` nm:`$"dyn1" ``, has a `dyn1` for `` @[`.;nm;:;1 2] `` and for
+    // `.[nm;();:;1 2]`, and none after `` ![`.;();0b;enlist nm] `` (#2826).
+    let named = |target: &str| {
+        let target = target.trim();
+        target.is_empty()
+            || target.contains("hsym")
+            || re!(r"^(?:enlist\b\s*|\(\s*)*(?:`[A-Za-z0-9_.:/]*\s*)+\)?$").is_match(target)
+    };
+    // Applied, and not the verb after a noun: `x![...]` makes a dictionary.
+    let applied = |at: usize| {
+        !view[..at].ends_with(|c: char| c.is_ascii_alphanumeric() || "_.)]}".contains(c))
+    };
+    for m in re!(r"@\s*\[\s*`\.\s*;").find_iter(view) {
+        if !named(view[m.end()..].split([';', ']']).next().unwrap_or("")) {
+            push(m.start(), "set");
+        }
+    }
+    for m in re!(r"\.\s*\[([^;\[\]]*);\s*\(\s*\)\s*;").captures_iter(view) {
+        let at = m.get(0).unwrap().start();
+        if applied(at) && !named(&m[1]) {
+            push(at, "set");
+        }
+    }
+    for m in re!(r"!\s*\[\s*`\.\s*;").find_iter(view) {
+        let open = m.start() + view[m.start()..].find('[').unwrap_or(0);
+        let Some(close) = matching(view, open, b'[', b']') else {
+            continue;
+        };
+        let slots = crate::slots(&view[open + 1..close - 1]);
+        if applied(m.start()) && slots.len() == 4 && !named(slots[3]) {
             push(m.start(), "set");
         }
     }
