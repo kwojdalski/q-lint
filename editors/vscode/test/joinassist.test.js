@@ -114,6 +114,21 @@ test("wj on a keyed left table unkeys it, and says so (#3046)", () => {
   assert.doesNotMatch(suggestJoins(trade, quote).find((x) => x.join === "wj").why, /unkeyed/);
 });
 
+// uj goes by name alone: `qty` long in one and int in the other came out
+// mixed, and the why said only "the rows of both".
+test("uj says which shared columns differ in type, and so come out mixed (#3049)", () => {
+  const t1 = shape("t1", ["sym", "qty", "px"], "sjf");
+  const why = (r) => suggestJoins(t1, r).find((x) => x.join === "uj").why;
+  assert.match(why(shape("t2", ["sym", "qty", "px"], "sif")), / qty is j in t1 and i in t2: uj makes it a mixed column, not one of either type; cast one side to the other's first\.$/);
+  assert.match(why(shape("t2", ["sym", "qty", "px"], "sie")), / qty is j in t1 and i in t2, px is f in t1 and e in t2: uj makes each a mixed column/);
+  assert.doesNotMatch(why(shape("t2", ["sym", "qty", "px"], "sjf")), /mixed/);
+  // A column already mixed in one of them is no news.
+  assert.doesNotMatch(why(shape("t2", ["sym", "qty", "px"], "s f")), /mixed/);
+  // Keyed alike, the same.
+  const keyed = (name, types) => shape(name, ["sym", "qty"], types, ["sym"]);
+  assert.match(suggestJoins(keyed("k1", "sj"), keyed("k2", "sh")).find((x) => x.join === "uj").why, /where the keys match\. qty is j in k1 and h in k2: uj makes it a mixed column/);
+});
+
 test("the switch is declared on, and the command only where it can run", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.query.joinAssistant.enable"].default, true);

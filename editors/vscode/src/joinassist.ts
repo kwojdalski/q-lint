@@ -202,13 +202,17 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
   // uj: tables alike, one under the other.
   const sameKeys = left.keys.join(" ") === right.keys.join(" ");
   if (sameKeys && common.length > 0 && common.length * 2 >= Math.max(left.columns.length, right.columns.length)) {
+    // uj goes by name alone: a column of one type in each is mixed after,
+    // which meta shows blank and sum and = read differently (#3049).
+    const differ = common.filter((c) => type(left, c) !== type(right, c) && type(left, c) !== " " && type(right, c) !== " ");
+    const mixed = differ.length === 0 ? "" : ` ${differ.map((c) => `${c} is ${type(left, c)} in ${left.expression.trim()} and ${type(right, c)} in ${right.expression.trim()}`).join(", ")}: uj makes ${differ.length === 1 ? "it a mixed column" : "each a mixed column"}, not one of either type; cast one side to the other's first.`;
     out.push({
       join: "uj",
       expression: `${l} uj ${r}`,
       why:
         left.keys.length > 0
-          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.${leftNote}`
-          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.${leftNote}`,
+          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.${mixed}${leftNote}`
+          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.${mixed}${leftNote}`,
     });
   }
   return out;
