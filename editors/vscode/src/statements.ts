@@ -264,7 +264,8 @@ export function statements(text: string): string[] {
   return statementSpans(text).map((s) => s.text);
 }
 
-const CONTEXT = /^\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*$/;
+// After any `q)` prompts, and before a trailing comment, as q reads it (#2785).
+const CONTEXT = /^(?:q\))*\\d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)(?:[ \t]+\/.*)?\s*$/;
 // `system "d .ns"` with a literal argument switches as `\d .ns` does, as the
 // language server reads it (#261); a computed one leaves the context as it was.
 const SYSTEM_CONTEXT = /^system\s*"d\s+(\.[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*|\.)\s*"\s*;?\s*(?:\s\/.*)?$/;
