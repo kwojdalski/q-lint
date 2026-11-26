@@ -1816,9 +1816,40 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
-    // Windows prints the path with its own separator.
-    assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
+    // `run` asks for JSON, which `--show-settings` now prints (#2760): the
+    // path is read out of it, since searched for in the text it is not
+    // there on Windows, where JSON writes each `\` of it as two.
+    let file_of = |printed: &str| -> PathBuf {
+        let described: serde_json::Value =
+            serde_json::from_str(printed).unwrap_or_else(|e| panic!("{e}: {printed}"));
+        described[0]["file"].as_str().unwrap().into()
+    };
+    assert!(
+        file_of(&text).ends_with(Path::new("tests").join("x.q")),
+        "{text}"
+    );
     assert!(!text.contains("QE004"), "{text}");
+    // A `\` in a name is escaped the same way wherever it is one.
+    #[cfg(unix)]
+    {
+        let out = run(
+            &repo.path("."),
+            &["--show-settings", "--stdin-filename", "tests/x\\y.q"],
+        );
+        let escaped = String::from_utf8(out.stdout).unwrap();
+        assert!(escaped.contains(r"x\\y.q"), "{escaped}");
+        assert!(file_of(&escaped).ends_with("tests/x\\y.q"), "{escaped}");
+    }
+    // As text, Windows prints the path with its own separator.
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["--show-settings", "--stdin-filename", "tests/x.q"])
+        .output()
+        .unwrap();
+    let plain = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{plain}");
+    assert!(plain.replace('\\', "/").contains("tests/x.q"), "{plain}");
+    assert!(!plain.contains("QE004"), "{plain}");
     // Ruff's form, with the buffer named `-`, describes the same file (#1198).
     let out = run(
         &repo.path("."),
