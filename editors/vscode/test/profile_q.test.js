@@ -113,6 +113,7 @@ test("every call is recorded with its caller, and every function is put back", {
   assert.strictEqual(functionStats(profile)[0].fn, ".foo.top");
   assert.deepStrictEqual(flame(profile).filter((f) => f.depth === 1).map((f) => f.fn).sort(), [".foo.fib", ".foo.nil", ".foo.two"]);
   assert.ok(profile.overheadPerCall > 0 && profile.overheadPerCall < 1e6, String(profile.overheadPerCall));
+  assert.deepStrictEqual(profile.kept, []);
   assert.ok(await same(c), "the functions are the ones that were there");
   assert.ok(await noState(c), ".qlint holds nothing");
   // A projection stays as it was, and still works.
@@ -160,6 +161,8 @@ test("a definition the profiled code made itself is kept, the others put back (#
   const profile = readProfile(await run(c, ".foo", [".foo.nil:{[] 43}", ".foo.top 3"]), ".foo");
   await c.call(PROFILE_CLEANUP, 0);
   assert.strictEqual(profile.error, "");
+  // And it is answered as kept: the panel said every function was put back (#2980).
+  assert.deepStrictEqual(profile.kept, [".foo.nil"]);
   assert.strictEqual(String((await c.evaluate(".foo.nil[]")).value), "43");
   assert.strictEqual((await c.evaluate("(.foo.top;.foo.fib;.foo.two;.foo.bad)~snap 1 2 4 5")).value, true);
   // Nor does the cleanup of a stopped run undo one.

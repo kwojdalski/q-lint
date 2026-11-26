@@ -1134,9 +1134,10 @@ offered) timed, as cProfile times a Python program. Each lambda directly in
 the namespace is replaced for the run by its own text with the timing
 written into it - a note, by `.z.p`, where its body starts and wherever it
 hands a value back or signals - and the very objects that were there are
-put back after, whether the run succeeded or failed; a second message
-follows to make sure of it, and the working state in `.qlint.prof` is
-deleted. A function timed is still one function: a call adds no frame to
+put back after, whether the run succeeded or failed (a function the run
+itself defines anew keeps its new definition, and the panel names it); a
+second message follows to make sure of it, and the working state in
+`.qlint.prof` is deleted. A function timed is still one function: a call adds no frame to
 q's stack, so a recursion as deep as q allows still runs, one through
 `.z.s` is counted call by call, and a reference the run takes to a function
 - a callback it registers, `.z.ts` - goes on answering once the profile is

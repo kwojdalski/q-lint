@@ -31,6 +31,7 @@ const RAW = [
   [0, 100, 600, 200, 700],
   [1000, 400, 300, 100, 200],
   [],
+  [],
 ];
 // What the process answers of the namespace's functions.
 const READ = { name: [".ns.top", ".ns.a", ".ns.b"], text: ["{[] .ns.a 1; .ns.b[]}", "{$[x>0;.z.s x-1;x]}", "{[] .ns.a 0}"] };
@@ -72,14 +73,15 @@ test("the answer is read, and one function or one call reads as atoms", () => {
   const p = readProfile(RAW, ".ns");
   assert.strictEqual(p.calls, 5);
   assert.deepStrictEqual(p.recorded[3], { id: 4, parent: 2, fn: ".ns.a", start: 200, duration: 100 });
-  const one = readProfile([5, 1, "", 1, ".ns.g", 1, 0, ".ns.g", 3, 4, ".ns.k"], ".ns");
+  const one = readProfile([5, 1, "", 1, ".ns.g", 1, 0, ".ns.g", 3, 4, ".ns.k", ".ns.g"], ".ns");
   assert.deepStrictEqual(one.functions, [".ns.g"]);
   assert.deepStrictEqual(one.untimed, [".ns.k"]);
+  assert.deepStrictEqual(one.kept, [".ns.g"]);
   assert.deepStrictEqual(one.recorded, [{ id: 1, parent: 0, fn: ".ns.g", start: 3, duration: 4 }]);
-  const none = readProfile([5, 1, "", 0, [], [], [], [], [], [], []], ".ns");
+  const none = readProfile([5, 1, "", 0, [], [], [], [], [], [], [], []], ".ns");
   assert.deepStrictEqual(none.recorded, []);
   assert.throws(() => readProfile("junk", ".ns"), /something other than a profile/);
-  assert.throws(() => readProfile([1, 1, "", 1, [], [1, 2], [0], [], [], [], []], ".ns"), /profile/);
+  assert.throws(() => readProfile([1, 1, "", 1, [], [1, 2], [0], [], [], [], [], []], ".ns"), /profile/);
 });
 
 test("the table counts a recursive call once in the total, and self time without the calls made", () => {
@@ -107,7 +109,7 @@ test("the flame chart merges calls by their path of callers, widest first", () =
 test("the page writes a time as linetimings does, the unit picked as rounded (#1804)", () => {
   const page = loadSmallPage(["profile.js"]);
   const shown = (ns) => {
-    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: ns, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 1, untimed: [], stats: [], frames: [] });
+    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: ns, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 1, untimed: [], kept: [], stats: [], frames: [] });
     return page.posted.at(-1).rendered.summary.match(/ in (.*?)\.$/)[1];
   };
   assert.strictEqual(shown(999600), "1.00 ms");
@@ -119,11 +121,24 @@ test("the page writes a time as linetimings does, the unit picked as rounded (#1
   }
 });
 
+test("the panel names the functions the run defined anew, and says only of the others that they were put back (#2980)", () => {
+  const page = loadSmallPage(["profile.js"]);
+  const notes = (kept) => {
+    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 2, untimed: [], kept, stats: [], frames: [] });
+    return page.body.textContent;
+  };
+  assert.match(notes([]), /Every function was put back as it was\./);
+  const one = notes([".ns.f"]);
+  assert.doesNotMatch(one, /Every function was put back/);
+  assert.match(one, /The run itself defined \.ns\.f anew: it is as the run left it\. Every other function was put back as it was\./);
+  assert.match(notes([".ns.f", ".ns.g"]), /The run itself defined \.ns\.f, \.ns\.g anew: they are as the run left them\. Every other function was put back as it was\./);
+});
+
 test("the profile keeps the sort chosen when its tab is hidden and shown again, which reloads the page (#2080)", () => {
   let state;
   const api = () => ({ postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))), getState: () => state, setState: (s) => (state = JSON.parse(JSON.stringify(s))) });
   let posted = [];
-  const profile = { type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 3, recorded: 3, functions: 2, untimed: [], stats: [{ fn: ".ns.a", calls: 2, total: 4, self: 4, mean: 2, max: 3 }, { fn: ".ns.b", calls: 1, total: 6, self: 6, mean: 6, max: 6 }], frames: [] };
+  const profile = { type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 3, recorded: 3, functions: 2, untimed: [], kept: [], stats: [{ fn: ".ns.a", calls: 2, total: 4, self: 4, mean: 2, max: 3 }, { fn: ".ns.b", calls: 1, total: 6, self: 6, mean: 6, max: 6 }], frames: [] };
   const first = loadSmallPage(["profile.js"], { acquireVsCodeApi: api });
   first.send(profile);
   assert.strictEqual(posted.at(-1).rendered.sortedBy, "total desc");
@@ -341,7 +356,7 @@ test("the profile table's sort headers are buttons with aria-sort, and keep the 
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", "profile.js"), "utf8"), sandbox);
   const stat = (fn, calls) => ({ fn, calls, total: calls, self: calls, mean: 1, max: 1 });
-  const data = { type: "profile", id: 1, code: "f[]", process: "dev", namespace: ".ns", functions: 2, untimed: [], calls: 3, recorded: 3, total: 3, overheadPerCall: 1, overheadTotal: 3, stats: [stat(".ns.a", 1), stat(".ns.b", 2)], frames: [] };
+  const data = { type: "profile", id: 1, code: "f[]", process: "dev", namespace: ".ns", functions: 2, untimed: [], kept: [], calls: 3, recorded: 3, total: 3, overheadPerCall: 1, overheadTotal: 3, stats: [stat(".ns.a", 1), stat(".ns.b", 2)], frames: [] };
   listeners.forEach((f) => f({ data }));
   const ths = () => body.all((e) => e.tagName === "TH");
   assert.deepStrictEqual(ths().map((th) => th.getAttribute("aria-sort")), ["none", "none", "descending", "none", "none", "none"]);

@@ -11,7 +11,8 @@
 // defines each anew in its own context, runs the statements, and puts every
 // original back, the very objects it took, whether the run succeeded or not
 // - but for a name the run itself defined anew, which keeps its new
-// definition. A function timed this way is still one function: a call of
+// definition and is answered as kept, for the view to say so (#2980). A
+// function timed this way is still one function: a call of
 // it adds no frame to q's stack, so a recursion as deep as q allows still
 // runs (#2978), and `.z.s` inside it is the timed function, so a recursion
 // through `.z.s` is counted call by call (#2977). Its working state lives
@@ -100,14 +101,15 @@ export const PROFILE = [
   ' res:@[{[full;timed;stmts] full set\' timed; value each stmts; ""}[full;timed];stmts;{$[10h=type x;x;string x]}];',
   " t1:.z.p;",
   // Only a name still holding its timed text is put back: one the run
-  // itself defined anew keeps its new value (#1271).
-  " {[n;w;o] if[w~@[get;n;{::}]; n set o]}'[full;timed;orig];",
+  // itself defined anew keeps its new value (#1271), and is answered as
+  // kept, so that the view does not say it was put back (#2980).
+  " kept:full where not {[n;w;o] $[w~@[get;n;{::}]; [n set o; 1b]; 0b]}'[full;timed;orig];",
   " c:{[l;t1] m:(count l) div 3; id:`long$l 3*til m; fn:`$string l 1+3*til m; t:`timestamp$l 2+3*til m;",
   "   e:where not null fn; par:(count e)#0; stop:(count e)#t1; st:enlist 0; i:0;",
   "   do[m; $[null fn i; [p:st?id i; if[p<count st; stop[-1+p _ st]:t i; st:p#st]]; [par[-1+id i]:last st; st,:id i]]; i+:1];",
   "   (par;fn e;t e;stop)}[.qlint.prof.log;t1];",
   " (`float$t1-t0; `float$(inst-plain)%1000; res; `float$.qlint.prof.n; string full; `float$1+til count c 0; `float$c 0; string c 1; `float$c[2]-t0; `float$c[3]-c 2;",
-  "  string nms except full)}",
+  "  string nms except full; string kept)}",
 ].join("\n");
 
 /// The cleanup that runs after `PROFILE`, whatever became of it: its
@@ -180,6 +182,9 @@ export interface Profile {
   /// The lambdas of the namespace left as they were, not timed: their text
   /// could not be given the timing.
   untimed: string[];
+  /// The functions not put back: the run itself defined them anew, or
+  /// deleted them, and they are as it left them (#1271).
+  kept: string[];
   recorded: Call[];
 }
 
@@ -198,7 +203,7 @@ export function readProfile(raw: unknown, namespace: string): Profile {
   const bad = (): never => {
     throw new Error(`the process answered something other than a profile: ${JSON.stringify(raw)?.slice(0, 200)}`);
   };
-  if (!Array.isArray(p) || p.length !== 11 || typeof p[0] !== "number" || typeof p[1] !== "number" || typeof p[2] !== "string" || typeof p[3] !== "number") {
+  if (!Array.isArray(p) || p.length !== 12 || typeof p[0] !== "number" || typeof p[1] !== "number" || typeof p[2] !== "string" || typeof p[3] !== "number") {
     return bad();
   }
   // One function or one call answers an atom or a string where many answer
@@ -212,7 +217,8 @@ export function readProfile(raw: unknown, namespace: string): Profile {
   const starts = floats(p[8]) ?? [];
   const durations = floats(p[9]) ?? [];
   const untimed = named(p[10]);
-  if (functions === undefined || untimed === undefined || [parents, names, starts, durations].some((l) => l.length !== ids.length)) {
+  const kept = named(p[11]);
+  if (functions === undefined || untimed === undefined || kept === undefined || [parents, names, starts, durations].some((l) => l.length !== ids.length)) {
     return bad();
   }
   return {
@@ -223,6 +229,7 @@ export function readProfile(raw: unknown, namespace: string): Profile {
     calls: p[3] as number,
     functions,
     untimed,
+    kept,
     recorded: ids.map((id, i) => ({ id, parent: parents[i], fn: names[i], start: starts[i], duration: durations[i] })),
   };
 }
@@ -337,6 +344,7 @@ export interface ProfileView {
   recorded: number;
   functions: number;
   untimed: string[];
+  kept: string[];
   stats: FunctionStats[];
   frames: Frame[];
 }
@@ -354,6 +362,7 @@ export function profileView(profile: Profile, process: string, code: string): Pr
     recorded: profile.recorded.length,
     functions: profile.functions.length,
     untimed: profile.untimed,
+    kept: profile.kept,
     stats: functionStats(profile),
     frames: flame(profile),
   };

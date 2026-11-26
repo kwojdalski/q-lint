@@ -60,6 +60,19 @@
     return parts.join(", ") + ".";
   }
 
+  // What became of the functions after the run: all put back, but for the
+  // ones the run itself defined anew, which are as it left them (#2980).
+  function putBack(p) {
+    if (p.kept.length === 0) {
+      return "Every function was put back as it was.";
+    }
+    const one = p.kept.length === 1;
+    return (
+      "The run itself defined " + p.kept.join(", ") + " anew: " + (one ? "it is" : "they are") + " as the run left " + (one ? "it" : "them") +
+      ". Every other function was put back as it was."
+    );
+  }
+
   function sorted(stats) {
     const out = stats.slice();
     out.sort(function (a, b) {
@@ -148,7 +161,7 @@
         "div",
         "note",
         "Timed on " + p.process + " by .z.p. The timing adds about " + duration(p.overheadPerCall) + " a call, measured there, " +
-          duration(p.overheadTotal) + " in all; a function's time includes it for each call it makes. Every function was put back as it was.",
+          duration(p.overheadTotal) + " in all; a function's time includes it for each call it makes. " + putBack(p),
       ),
     );
     if (p.untimed.length > 0) {
