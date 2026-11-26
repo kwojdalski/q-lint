@@ -912,8 +912,12 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
         // outline, the lenses and other files' Go to Definition lost them
         // (#2960). `problems` reports the brace, and ends it here too.
         if !stack.is_empty() && begins_statement(line, &raw[offset..offset + line.len()]) {
+            // At the newline before the line, where a `}` would be: an end
+            // is the byte of its closer, and what reads past it starts at
+            // `end + 1`, which at `offset` itself fell inside a character
+            // of more than one byte opening the line (`é`).
             for s in stack.drain(..) {
-                scopes[s].end = offset;
+                scopes[s].end = offset - 1;
             }
             beyond = 0;
         }
