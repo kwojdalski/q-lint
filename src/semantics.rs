@@ -1599,6 +1599,141 @@ fn unplaced(
     placed
 }
 
+/// Each global a k statement assigns, at the offset of its `k)` line, with
+/// the name where reading says which: `k)lim:100`, `k)a:1;b:2`. `None` for a
+/// write whose target is not one of those - `k)f:{a::x}`, `k)n:1+o:2`,
+/// `k)(e;j):1 2`, `k)r+:1`, `` k).[`b;();:;1] `` (KDB-X 5 writes `a`, `o`,
+/// `e` and `j`, `r` and `b`) - which may be any name. A statement that
+/// assigns nothing is not listed: `k)f 7`, `` k)-1"t: x" ``, `k)m:#:` past
+/// its `m`, and a lambda's locals, `k)f:{a:x;a}`. The statement runs on
+/// through its indented lines: KDB-X 5 `k)x:1`, `  y:2` assigns `y`.
+pub(crate) fn k_statement_writes(raw: &str) -> Vec<(usize, Option<&str>)> {
+    let mut out = vec![];
+    let mut offset = 0;
+    let mut lines = raw.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        let at = offset;
+        offset += line.len();
+        let prefixes = crate::language_prefixes(line);
+        if prefixes == 0
+            || line.as_bytes()[prefixes - 2] != b'k'
+            || line[prefixes..].starts_with('\\')
+        {
+            continue;
+        }
+        while let Some(next) = lines.peek().filter(|l| l.starts_with([' ', '\t'])) {
+            offset += next.len();
+            lines.next();
+        }
+        // A block comment may fold into the statement, and what continues
+        // it after that is not read here.
+        if lines
+            .peek()
+            .is_some_and(|l| l.trim_end_matches(['\r', '\n', ' ', '\t']) == "/")
+        {
+            out.push((at, None));
+        }
+        let text = &raw.as_bytes()[at + prefixes..offset];
+        let name = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+        // The last byte before `i` that is not a blank, and where it is.
+        let before = |i: usize| {
+            text[..i]
+                .iter()
+                .rposition(|b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+                .map(|p| (p, text[p]))
+        };
+        // The name ending just before `end`, if what ends there is a name
+        // and no number: `0:` and `1:` are k's file verbs.
+        let named = |end: usize| {
+            let start = text[..end]
+                .iter()
+                .rposition(|&b| !name(b))
+                .map_or(0, |p| p + 1);
+            (start < end && !text[start].is_ascii_digit()).then_some(start)
+        };
+        let (mut braces, mut brackets, mut i) = (0i32, 0i32, 0);
+        while i < text.len() {
+            match text[i] {
+                b'"' => {
+                    i += 1;
+                    while i < text.len() && text[i] != b'"' {
+                        i += 1 + usize::from(text[i] == b'\\');
+                    }
+                }
+                b'/' if i == 0 || matches!(text[i - 1], b' ' | b'\t' | b'\n') => {
+                    while i < text.len() && text[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                // A symbol holds its colons: `` `:f 0:x `` assigns nothing.
+                b'`' => {
+                    while text
+                        .get(i + 1)
+                        .is_some_and(|&b| name(b) || b == b':' || b == b'/')
+                    {
+                        i += 1;
+                    }
+                }
+                b'{' => braces += 1,
+                b'}' => braces -= 1,
+                b'(' | b'[' => brackets += 1,
+                b')' | b']' => brackets -= 1,
+                b':' => {
+                    let global = text.get(i + 1) == Some(&b':');
+                    let next = text[i + 1 + usize::from(global)..]
+                        .iter()
+                        .find(|b| !matches!(b, b' ' | b'\t'));
+                    match before(i) {
+                        // `a:` and `a::`, and `a[0]:`, `(a;b):`.
+                        Some((p, b)) if name(b) || matches!(b, b']' | b')') => {
+                            let target = named(p + 1).filter(|_| name(b));
+                            let opens = target
+                                .is_none_or(|start| before(start).is_none_or(|(_, b)| b == b';'));
+                            if b.is_ascii_digit() && target.is_none() {
+                                // A file verb.
+                            } else if braces > 0 && !global {
+                                // A local of the lambda.
+                            } else if let Some(start) = target
+                                && braces == 0
+                                && brackets == 0
+                                && opens
+                            {
+                                out.push((
+                                    at,
+                                    Some(&raw[at + prefixes + start..at + prefixes + p + 1]),
+                                ));
+                            } else {
+                                out.push((at, None));
+                            }
+                        }
+                        // `a+:1`, against the verb `+:` that follows no name.
+                        Some((p, b))
+                            if b"+-*%!&|<>=~,^#_$?@".contains(&b)
+                                && braces == 0
+                                && before(p)
+                                    .is_some_and(|(_, b)| name(b) || matches!(b, b']' | b')')) =>
+                        {
+                            out.push((at, None));
+                        }
+                        // The `:` an amend is handed, `` .[`b;();:;1] ``,
+                        // which writes the global its symbol names.
+                        Some((_, b';' | b'[' | b'('))
+                            if matches!(next, Some(b';' | b']' | b')')) =>
+                        {
+                            out.push((at, None));
+                        }
+                        _ => {}
+                    }
+                    i += usize::from(global);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
 pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     let (scopes, namespaces) = scopes(code, raw);
     let namespaces = unplaced(code, raw, &scopes, &namespaces);
@@ -2501,10 +2636,13 @@ pub(crate) fn unnamed_writes<'c>(
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
+    // Only where the line does not say which: `k)lim:100` writes `lim`
+    // and nothing else, and is a definition of it like any other (#3004).
     found.extend(
-        re!(r"(?m)^k\)[^\n]*:")
-            .find_iter(raw)
-            .map(|m| (m.start(), Unnamed::Overwrite)),
+        k_statement_writes(raw)
+            .into_iter()
+            .filter(|(_, name)| name.is_none())
+            .map(|(at, _)| (at, Unnamed::Overwrite)),
     );
     // A name bound to a string literal and nothing else: `s:"a:1 2 3"`, not
     // `s:" " sv parts`, which starts with one (BuaBook's cargs.q values a
@@ -2898,7 +3036,17 @@ pub fn check(
     // a name read in a `\d .ns` lambda is `.ns.x` and nothing else - q 5
     // has no root fallback. After `x:1`, `\d .ns`, `f:{[a] a+x}`, calling
     // `.ns.f 1` is 'x.
-    let exact = global_writes(code, raw, &scopes, &namespaces, resolved, true);
+    let mut exact = global_writes(code, raw, &scopes, &namespaces, resolved, true);
+    // A `k)` line assigns q's globals, and where it says which, that name
+    // is defined from there on, to a value the views do not show: the
+    // rest of the file is read as it stands (#3004).
+    let mut k_written = HashSet::new();
+    for (at, name) in k_statement_writes(raw) {
+        if let Some(name) = name {
+            exact.entry(resolved(name, ns_at(at))).or_default().push(at);
+            k_written.insert(qualify(name, ns_at(at)));
+        }
+    }
     // What this file defines itself; the workspace answers for the rest,
     // keyed the same way (#359).
     let own: HashSet<String> = exact.keys().cloned().collect();
@@ -2917,7 +3065,7 @@ pub fn check(
         .collect();
     let mut numeric = HashSet::new();
     for (name, assignments) in &globals {
-        if assignments.len() != 1 {
+        if assignments.len() != 1 || k_written.contains(name) {
             continue;
         }
         let start = code.len() - code[assignments[0]..].trim_start().len();
@@ -4914,6 +5062,14 @@ fn named_values(
             .entry(key(name, m.get(0).unwrap().start()))
             .or_default()
             .extend([0, 0]);
+    }
+    // A global a `k)` line assigns holds what the views do not show: q 5
+    // `h:1h`, `k)h:"abc"`, then `h 0` is "a" (#3004).
+    for (at, name) in k_statement_writes(raw) {
+        if let Some(name) = name {
+            writes.entry(name).or_default().extend([0, 0]);
+            exact.entry(key(name, at)).or_default().extend([0, 0]);
+        }
     }
     // A global amended by name in a context: `@[`.;`c;:;v]` writes the root
     // `c`, `@[`.ns;`c;..]` writes `.ns.c`, whatever `\d` is in force (q 5:

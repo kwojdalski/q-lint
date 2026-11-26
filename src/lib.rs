@@ -8289,6 +8289,13 @@ fn lint_rules(
                 .entry(qualified(name.start(), name.as_str()))
                 .or_default() += 1;
         }
+        // And one a `k)` line assigns: q 5 `f:{x}`, `k)f:{x+y}`, then
+        // `f[1;2]` is 3 (#3004).
+        for (at, name) in semantics::k_statement_writes(source) {
+            if let Some(name) = name {
+                *assigned.entry(qualified(at, name)).or_default() += 1;
+            }
+        }
         // Each name of a `set'`: q 5 `` f:{x}; `f`g set' ({x+y};1); f[1;2] ``
         // is 3 (#753).
         for (whole, names) in semantics::each_set_targets(code) {

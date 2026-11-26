@@ -285,6 +285,64 @@ fn a_context_switch_is_followed_in_each_spelling_q_runs() {
 }
 
 #[test]
+fn a_k_line_stands_down_only_the_names_it_may_write() {
+    // #3004. Any `k)` line with a colon in it made the whole file one that
+    // "writes names it does not say", and four findings about names the
+    // line never touches were dropped with it.
+    let body = "f:{x+y}\nr:f[1;2;3]\nh:1h\ns:h[\"hi\"]\nv:undefinedName\n";
+    let codes = |source: &str| {
+        let mut codes: Vec<String> = lint(source, "t.q", Profile::Uqf)
+            .into_iter()
+            .map(|f| f.code)
+            .filter(|c| ["QA012", "QF018", "QT022"].contains(&&**c))
+            .collect();
+        codes.sort();
+        codes
+    };
+    let all = ["QA012", "QF018", "QT022"];
+    assert_eq!(codes(body), all);
+    // A write of another name, a lambda's own locals, and no write at all:
+    // a colon in a string, in a symbol, in the verb `#:`.
+    for k in [
+        "k)zzk:1",
+        "k)zzk::1",
+        "k)g:{a:x;a}",
+        "k)-1\"t: x\"",
+        "k)zzk:`:f 0:,\"a\"",
+        "k)zzk:#:",
+        "k)zzk:1;zzj:2",
+        "k)1+1 / a:1",
+    ] {
+        assert_eq!(codes(&format!("{body}{k}\n")), all, "{k}");
+        assert_eq!(codes(&format!("{k}\n{body}")), all, "{k}");
+    }
+    // The name the line writes is the one that is no longer known: KDB-X 5
+    // runs `f:{x}`, `k)f:{x+y}`, `f[1;2]` to 3.
+    for (k, left) in [
+        ("k)f:{x}", ["QF018", "QT022"]),
+        ("k)h:\"abc\"", ["QA012", "QF018"]),
+        ("k)undefinedName:1", ["QA012", "QT022"]),
+        ("q)k)undefinedName:1", ["QA012", "QT022"]),
+        ("k)zzk:1;undefinedName:2", ["QA012", "QT022"]),
+    ] {
+        assert_eq!(codes(&format!("{k}\n{body}")), left, "{k}");
+    }
+    // A write the line does not name may be of any of them: KDB-X 5 writes
+    // `a`, `o`, `e` and `j`, `r`, `y` and `b` here.
+    for k in [
+        "k)g:{a::x}",
+        "k)n:1+o:2",
+        "k)(e;j):1 2",
+        "k)r+:1",
+        "k)x:1\n  y:2",
+        "k).[`b;();:;1]",
+        "k)g:{\n  a::x}",
+    ] {
+        assert!(codes(&format!("{body}{k}\n")).is_empty(), "{k}");
+    }
+}
+
+#[test]
 fn a_block_comment_folds_into_the_foreign_statement_an_indented_line_continues() {
     // #3010. KDB-X 5 hands `t)e`, `/`, `  f`, `\`, `  g` to `.t.e` as one
     // statement, "e\n/\n/  f\n/\n  g", and loads `k)f:{[a;b] a+`, `/`,
