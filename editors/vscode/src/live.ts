@@ -89,6 +89,7 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
 import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
+import { moveScratch } from "./scratch";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, UNLIMITED_READ_ONLY, armTimeout, directMode, evaluationText, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
@@ -524,7 +525,9 @@ export class QTerminals {
     const layout = layoutEnvFor(qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir()) ?? settings.qBinary, from);
     const { shown, hidden, refs } = terminalEnv(layout, variables, await dotenvFor(from));
     // A file inside the folder is named relative to it, as you would type it.
-    const relative = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    // One starting with `-` from `./`, or q reads it as an option (#2373).
+    const inside = file !== undefined && cwd !== undefined ? relativeInside(cwd, file) : undefined;
+    const relative = inside?.startsWith("-") ? `.${path.sep}${inside}` : inside;
     const args = file === undefined ? [] : [relative ?? file, ...extraArgs];
     // A relative q is the folder's, as in the launcher, also for a file
     // outside every folder, whose terminal starts elsewhere (#1716).
@@ -1192,6 +1195,11 @@ export class Live {
     return this.connectTo(bound);
   }
 
+  /// Whether Toggle Unlimited Query is on: a pane that runs code asks too (#2362).
+  isUnlimited(): boolean {
+    return this.controls.unlimited;
+  }
+
   /// Whether a query is running on the active connection: connecting
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
@@ -1757,6 +1765,8 @@ export class Live {
     await this.context.globalState.update(RELABELS_KEY, log);
     await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
     await this.retarget(from, to);
+    // Its scratch buffer is by label too, in storage every window shares (#2405).
+    moveScratch(this.context.globalStorageUri?.fsPath, from, to);
   }
 
   /// The renames and deletions made in other workspaces since this one's
@@ -2518,7 +2528,13 @@ export class Live {
       void window.showErrorMessage(plainMessage(`q-lint: "${process.label}" was deleted meanwhile; its tunnel was not set.`));
       return;
     }
-    await this.save(now.map((p) => (p.label === process.label ? withExtras(p, { ...p, ssh }) : p)));
+    const saved = now.find((p) => p.label === process.label)!;
+    const updated = withExtras(saved, { ...saved, ssh });
+    // Another tunnel reaches another q: its password was not given for that (#2371).
+    if (passwordsToForget([saved], [updated]).length > 0) {
+      await this.context.secrets.delete(this.passwordKey(saved));
+    }
+    await this.save(now.map((p) => (p.label === process.label ? updated : p)));
     void window.showInformationMessage(
       plainMessage(ssh === undefined
         ? `q-lint: ${process.label} is connected to directly from the next connect.`
@@ -3393,11 +3409,11 @@ export class Live {
   /// the console, under `label`: Query a Tag's merged table.
   /// `mode`: shown as that, whatever the query mode: `.qlint.plot`'s chart
   /// (#960).
-  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart"): void {
+  showGrid(label: string, code: string, payload: GridPayload, millis: number, mode?: "grid" | "chart", merged?: boolean): void {
     const configuration = workspace.getConfiguration("q-lint");
     const settings = readLive((key, fallback) => configuration.get(key, fallback));
     this.modes.show(
-      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload } },
+      { process: label, code, millis, answer: { ok: true, type: 98, text: [], grid: payload }, ...(merged ? { merged } : {}) },
       { ...settings, mode: mode ?? (settings.mode === "console" ? "grid" : settings.mode) },
     );
   }
@@ -3732,7 +3748,7 @@ export class Live {
   }
 
   /// The result the panel shows, with the process and code it came from.
-  resultOnShow(): { process: string; code: string; payload: GridPayload; run: number } | undefined {
+  resultOnShow(): { process: string; code: string; payload: GridPayload; run: number; merged?: boolean } | undefined {
     return this.modes.current();
   }
 

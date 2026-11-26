@@ -104,7 +104,8 @@ export class SchemaTools {
       })),
       { title: `q-lint: templates for ${name}` },
     );
-    if (picked === undefined) {
+    // Turned off at the pick: nothing is run or opened (#2421).
+    if (picked === undefined || !this.on("templates")) {
       return;
     }
     if (picked.template.runs) {

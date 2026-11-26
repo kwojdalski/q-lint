@@ -12,7 +12,7 @@
 // whose `-22!` would read every partition - have none. At most `limit`
 // names are sent, with how many there are.
 //
-//   `names`types`counts`sizes`total`views!(names;types;counts;sizes;count of all;which are views)
+//   `names`types`counts`sizes`total`views`keyed!(names;types;counts;sizes;count of all;which are views;which are keyed tables)
 import { typeName } from "./grid";
 
 /// The most globals the view lists.
@@ -26,7 +26,8 @@ export const VARS = [
   " v:{[x;w] $[w;(::);@[value;x;{(::)}]]}'[n;w];",
   " qp:{$[`qp in key `.Q;@[.Q.qp;x;{0b}];0b]} each v;",
   " sz:{[x;p] $[(99h<type x)|1b~p;0N;@[-22!;x;{0N}]]}'[v;qp];",
-  " `names`types`counts`sizes`total`views!(n;@[type each v;where w;:;100h];@[{@[count;x;{0N}]} each v;where w;:;0N];sz;count a;w)}",
+  " kt:{$[99h=type x;98h=type key x;0b]} each v;",
+  " `names`types`counts`sizes`total`views`keyed!(n;@[type each v;where w;:;100h];@[{@[count;x;{0N}]} each v;where w;:;0N];sz;count a;w;kt)}",
 ].join("\n");
 
 export interface Variable {
@@ -38,6 +39,8 @@ export interface Variable {
   size?: number;
   /// A view, which was not evaluated: it has no count and no size.
   view?: true;
+  /// A keyed table, a dictionary of two tables (#2384).
+  keyed?: true;
 }
 
 /// A q long as a number, or undefined for a null: the IPC client decodes
@@ -60,10 +63,11 @@ export function readVariables(raw: unknown): { variables: Variable[]; total: num
   const counts = list(r.counts);
   const sizes = list(r.sizes);
   const views = list(r.views);
+  const keyed = list(r.keyed);
   const variables = names.map((name, i): Variable => {
     const count = long(counts[i]);
     const size = long(sizes[i]);
-    return { name, type: long(types[i]) ?? 0, ...(count !== undefined ? { count } : {}), ...(size !== undefined ? { size } : {}), ...(views[i] === true ? { view: true as const } : {}) };
+    return { name, type: long(types[i]) ?? 0, ...(count !== undefined ? { count } : {}), ...(size !== undefined ? { size } : {}), ...(views[i] === true ? { view: true as const } : {}), ...(keyed[i] === true ? { keyed: true as const } : {}) };
   });
   return { variables, total: long(r.total) ?? variables.length };
 }
@@ -87,12 +91,19 @@ export function bytesText(bytes: number): string {
 
 /// What a variable's kind is called: q's type name, a table, a function, a
 /// view.
-export function kindText(type: number, view = false): string {
+export function kindText(type: number, view = false, keyed = false): string {
   if (view) {
     return "view";
   }
   if (type === 98) {
     return "table";
+  }
+  if (type === 99 && keyed) {
+    return "keyed table";
+  }
+  // A list mapped from a file with get: 77, or 77 plus its items' type (#2385).
+  if (type >= 77 && type <= 96) {
+    return type === 77 ? "mapped list" : `mapped ${typeName(type - 77).replace(/ \(.\)$/, "")} list`;
   }
   if (type === 99) {
     return "dictionary";
@@ -111,8 +122,8 @@ export function kindText(type: number, view = false): string {
 /// A variable's line in the view, after its name: its kind, count and size.
 export function describeVariable(v: Variable): string {
   return [
-    kindText(v.type, v.view),
-    ...(v.count !== undefined && v.type >= 0 && v.type < 100 ? [`${v.count.toLocaleString("en")} ${v.type === 98 ? "rows" : "items"}`] : []),
+    kindText(v.type, v.view, v.keyed),
+    ...(v.count !== undefined && v.type >= 0 && v.type < 100 ? [`${v.count.toLocaleString("en")} ${v.type === 98 || v.keyed ? "rows" : "items"}`] : []),
     ...(v.size !== undefined ? [bytesText(v.size)] : []),
   ].join(" · ");
 }

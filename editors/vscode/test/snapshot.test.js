@@ -138,6 +138,20 @@ test("a failed query writes nothing; Update Snapshot rewrites only on Replace; o
   assert.match(stub.messages.at(-1)[1], /q-lint\.snapshotTests\.enable to true/);
 });
 
+// A cut result recorded passes whatever changes past the cut (#2454).
+test("a result cut at 2000 lines or characters is not recorded or updated, and says why (#2454)", async () => {
+  const files = { "/ws/src/__snapshots__/t.qsnap": formatSnapshot({ query: "t", result: "a" }) };
+  let rows = ["a", "-", ...Array.from({ length: 1997 }, (_, i) => String(i)), ".."];
+  const s = setup(files, () => ({ ok: true, type: 98, text: rows }));
+  stub.inputs.push("long");
+  await stub.commands.get(SNAPSHOT_COMMANDS.record)();
+  assert.match(stub.messages.at(-1)[1], /result on dev is longer than the 2000 lines a snapshot holds.*no snapshot was written/);
+  rows = ["\"" + "x".repeat(1996) + ".."];
+  await stub.commands.get(SNAPSHOT_COMMANDS.update)({ uri: vscode.Uri.file("/ws/src/__snapshots__/t.qsnap") });
+  assert.match(stub.messages.at(-1)[1], /wider than the 2000 characters/);
+  assert.deepStrictEqual(s.written, []);
+});
+
 test("a declined guard or a dropped connection writes nothing and says why, without rejecting (#2261)", async () => {
   const files = { "/ws/src/__snapshots__/t.qsnap": formatSnapshot({ query: "count t", result: "3" }) };
   const s = setup(files, () => ({ ok: true, type: -7, text: ["4"] }));

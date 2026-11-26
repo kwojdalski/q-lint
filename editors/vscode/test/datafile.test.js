@@ -37,7 +37,12 @@ test("a data file is loaded by its path, or from its text for a process elsewher
   assert.strictEqual(d.loadExpression("csv", "/my data/t.csv", true, sample), '("SF ";enlist ",")0:`$":/my data/t.csv"');
   assert.strictEqual(d.loadExpression("csv", "C:\\d\\t.csv", true, sample), '("SF ";enlist ",")0:`:C:/d/t.csv');
   assert.strictEqual(d.loadExpression("csv", "x", false, { types: ["S", "J"], delimiter: "\t" }, 'a\tb\n"x"\t1\n'), '("SJ";enlist "\\t")0:("a\\tb";"\\"x\\"\\t1")');
-  assert.strictEqual(d.loadExpression("json", "/d/t.json", true, sample), ".j.k raze read0 `:/d/t.json");
+  // A byte order mark first is dropped: .j.k refuses it (#2448).
+  assert.strictEqual(d.loadExpression("json", "/d/t.json", true, sample), '.j.k {$["\\357\\273\\277"~3#x;3_x;x]}raze read0 `:/d/t.json');
+  assert.strictEqual(d.loadExpression("json", "x", false, sample, '\ufeff[1]'), '.j.k "[1]"');
+  // Bytes are sent as they are: a Latin-1 byte as its escape, not U+FFFD (#2468).
+  assert.strictEqual(d.linesLiteral(Buffer.from("a\r\nZ\xfcrich\n\xe9\n", "latin1")), '(enlist "a";"Z\\374rich";enlist "\\351")');
+  assert.strictEqual(d.linesLiteral(Buffer.from("\ufeffa,b\n1,\u00e9\n")), '("a,b";"1,\u00e9")');
   // A file that starts with a byte order mark is read by its lines, the
   // mark dropped: 0: would keep it in the first column's name (#1966).
   const marked = d.sampleText("\ufeffa,b\n1,2\n");

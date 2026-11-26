@@ -97,3 +97,26 @@ test("a logpoint leaves its function callable where q refuses a global write: un
   assert.strictEqual(await c.call(LOG_REMOVE, "sq"), true);
   assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
 });
+
+// A typed or pattern parameter list: `(value f)1` is `0`1, no names to bind,
+// and the wrapper built from it made every call fail with 'match (#2406).
+test("a logpoint on a function with typed or pattern parameters leaves it answering as before (#2406)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "f:{[x:`j;y:`j] x+y}\ng:{[(a;b)] a+b}\nk:{[(a;b);c] a+b+c}\n");
+  for (const name of ["f", "g", "k"]) {
+    assert.strictEqual(await c.call(LOG_ADD, name), name);
+  }
+  assert.strictEqual(Number(await value(c, "f[1;2]")), 3);
+  assert.strictEqual(Number(await value(c, "g 1 2")), 3);
+  assert.strictEqual(Number(await value(c, "k[1 2;3]")), 6);
+  // The function's own check still applies.
+  await assert.rejects(value(c, "f[1;2f]"), /type/);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).hits.map((h) => [h.name, h.args]), [
+    ["f", "1 2"],
+    ["g", ",1 2"],
+    ["k", "(1 2;3)"],
+    ["f", "(1;2f)"],
+  ]);
+  for (const name of ["f", "g", "k"]) {
+    assert.strictEqual(await c.call(LOG_REMOVE, name), true);
+  }
+});

@@ -270,6 +270,22 @@ test("the column manager runs nothing when the active process changed while Run 
   assert.ok(!other.sent.some((m) => m[0] === RUN_SCRIPT));
 });
 
+// Named, then Escape at the process pick: the empty dashboard was kept (#2404).
+test("Add to Dashboard cancelled at the process pick keeps no new dashboard (#2404)", async (t) => {
+  const { live, context } = await setUp(t);
+  await context.workspaceState.update(SAVED_QUERIES_KEY, [{ name: "px", code: "select from trade" }]);
+  new Dashboards(context, live);
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...", undefined);
+  assert.strictEqual(await stub.commands.get(DB_COMMANDS.addToDashboard)("px"), "cancelled");
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY) ?? [], []);
+  // Picked, it is saved with its tile.
+  stub.inputs.push("Desk");
+  stub.picks.push("$(add) New dashboard...");
+  const id = await stub.commands.get(DB_COMMANDS.addToDashboard)("px", undefined, "hdb");
+  assert.deepStrictEqual(context.workspaceState.get(DASHBOARDS_KEY).map((d) => [d.name, d.tiles.map((x) => x.id)]), [["Desk", [id]]]);
+});
+
 test("a dashboard runs its tiles' read-only queries, keeps a timer only with an interval, and stops when turned off", async (t) => {
   const { panels } = capture();
   const { live, context } = await setUp(t);

@@ -108,6 +108,20 @@ export function trimmed(text: string): string {
     .replace(/\n+$/, "");
 }
 
+/// Why `text`, a result SNAPSHOT_RUN printed, is not all of the value, or
+/// undefined when it is: `.Q.S` at 2000 by 2000 ends a longer result with a
+/// `..` line and a wider line with `..` at 1999 characters. A change past
+/// the cut leaves the text the same, so a snapshot of it would pass (#2454).
+export function snapshotCut(text: string[]): string | undefined {
+  if (text.length >= 2000 && text[text.length - 1] === "..") {
+    return "longer than the 2000 lines a snapshot holds";
+  }
+  if (text.some((l) => l.length >= 1999 && l.endsWith(".."))) {
+    return "wider than the 2000 characters a snapshot's line holds";
+  }
+  return undefined;
+}
+
 /// Whether two results are the same, as a snapshot compares them.
 export function sameResult(a: string, b: string): boolean {
   return trimmed(a) === trimmed(b);

@@ -417,3 +417,51 @@ test("in a multi-root workspace a folder's relative qBinary is found in that fol
   assert.match(said ?? stub.messages.at(-1)[1], new RegExp(`${path.join(home, "B", "bin", "q").replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")} expires on 2026\\.12\\.01`));
   assert.strictEqual(interpreters.status(), "$(terminal) q 4.1 2024.01.01");
 });
+
+// With warningDays 0 and the licence ending tomorrow, no warning is due and
+// the command's own text said "in 1 days" (#2379).
+test("Check q Licence Expiry says 'in 1 day' of a licence that ends tomorrow (#2379)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lic-one-"));
+  const now = new Date();
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const expiry = `${tomorrow.getFullYear()}.${String(tomorrow.getMonth() + 1).padStart(2, "0")}.${String(tomorrow.getDate()).padStart(2, "0")}`;
+  fakeQ(path.join(home, "bin", "q"), `QLINTVER|4.1|2024.10.16|m64|${expiry}`);
+  setUp(t, home);
+  stub.config.user["licence.warningDays"] = 0;
+  assert.match(await stub.commands.get(I.INTERPRETER_COMMANDS.checkLicence)(), new RegExp(`expires on ${expiry.replace(/\./g, "\\.")}, in 1 day\\.$`));
+});
+
+// The day warned on was UTC's, the days left local ones: west of UTC an
+// evening warned twice, and the next morning not at all (#2378).
+test("the licence warning is once a local day, whatever UTC's day is (#2378)", async (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  t.after(() => (tz === undefined ? delete process.env.TZ : (process.env.TZ = tz)));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lic-day-"));
+  fakeQ(path.join(home, "bin", "q"), "QLINTVER|4.1|2024.10.16|m64|2026.12.05");
+  const { interpreters } = setUp(t, home);
+  await stub.commands.get(I.INTERPRETER_COMMANDS.checkLicence)();
+  assert.match(await interpreters.warnFromKept(new Date(2026, 10, 25, 18)), /in 10 days/);
+  // 20:00 in New York is the next day in UTC.
+  assert.strictEqual(await interpreters.warnFromKept(new Date(2026, 10, 25, 20)), undefined, "once that local day");
+  assert.match(await interpreters.warnFromKept(new Date(2026, 10, 26, 10)), /in 9 days/);
+});
+
+// KDB-X's installer leaves qBinary `q`, with a PATH link to ~/.kx/bin/q:
+// the probe was kept under the link's target, and looked up by the link
+// (#2377).
+test("a probe kept for ~/.kx/bin/q is the one of a PATH link to it: status bar, check mark and warning (#2377)", async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-lic-link-"));
+  const kdbx = fakeQ(path.join(home, ".kx", "bin", "q"), "QLINTVER|5|2026.07.23|m64|2026.12.01");
+  fs.mkdirSync(path.join(home, "bin"));
+  fs.symlinkSync(kdbx, path.join(home, "bin", "q"));
+  const { interpreters, context, changeEditor } = setUp(t, home);
+  let shown;
+  stub.picks.push((options) => ((shown = options.items), undefined));
+  await stub.commands.get(I.INTERPRETER_COMMANDS.select)();
+  assert.deepStrictEqual(Object.keys(context.globalState.get("q-lint.interpreter.probes")), [kdbx]);
+  assert.deepStrictEqual(shown.filter((i) => i.description === kdbx).map((i) => i.label), ["$(check) q 5 2026.07.23"]);
+  changeEditor("q");
+  assert.strictEqual(interpreters.status(), "$(terminal) q 5 2026.07.23");
+  assert.match(await interpreters.warnFromKept(new Date(2026, 10, 25)), /expires on 2026\.12\.01, in 6 days/);
+});

@@ -218,6 +218,14 @@ test("Timers lists \\t and the TorQ jobs; a job is turned off and \\t set; on a 
   assert.match(views.timers()[0].description, /^every 500 ms, no \.z\.ts$/);
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], 0), true);
   assert.strictEqual(views.timers()[0].description, "off");
+  // A keybinding's interval is checked as the box's is: q ignores these silently (#2380).
+  assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], 500), true);
+  for (const bad of [15000000000, 2147483648, -5, 1.5, 1e21]) {
+    assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.setTimerInterval)(views.timers()[0], bad), false, String(bad));
+    assert.match(stub.messages.at(-1)[1], /is not a timer interval: Whole milliseconds; 0 turns the timer off\. The timer was not set\./);
+  }
+  await viewOf(ADMIN_VIEWS.timers).refresh(true);
+  assert.match(views.timers()[0].description, /^every 500 ms/);
 });
 
 test("closing a handle and setting \\t send nothing when another process became active while asked (#1259)", async (t) => {
@@ -326,5 +334,40 @@ test("a view connected to another process mid-read reads that one, not the first
   assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 9"]);
   assert.strictEqual(view.view.description, "dev-b");
   assert.strictEqual(view.view.message, undefined);
+  view.dispose();
+});
+
+// A reconnect to the same label while the view was hidden kept the old
+// connection's rows, its handle still "this connection" (#2376).
+test("a reconnect made while the view is hidden is read again when it is shown (#2376)", async () => {
+  stub.reset();
+  const { vscode } = require("./vscode_stub.js");
+  const make = vscode.window.createTreeView;
+  let visibility;
+  vscode.window.createTreeView = (id, options) => {
+    const view = make(id, options);
+    view.onDidChangeVisibility = (f) => ((visibility = f), { dispose() {} });
+    return view;
+  };
+  let changed;
+  let handle = 7;
+  const live = {
+    activeLabel: () => "rdb",
+    borrow: (use) => use({}, { label: "rdb" }),
+    onDidChange: (f) => ((changed = f), { dispose() {} }),
+  };
+  const view = new AdminView("q-lint.test", live, async () => ({ nodes: [{ label: `handle ${handle}` }] }));
+  vscode.window.createTreeView = make;
+  await view.refresh();
+  assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 7"]);
+  view.view.visible = false;
+  visibility();
+  handle = 8;
+  changed("connected");
+  view.view.visible = true;
+  visibility();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(view.rows().map((n) => n.label), ["handle 8"]);
   view.dispose();
 });

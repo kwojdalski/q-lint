@@ -21,6 +21,7 @@ import {
   parseSnapshot,
   preview,
   sameResult,
+  snapshotCut,
   snapshotName,
   snapshotQuery,
   validName,
@@ -78,6 +79,12 @@ async function result(live: Live, query: string): Promise<string | undefined> {
   }
   if (!done.value.ok) {
     void window.showErrorMessage(plainMessage(`q-lint: the query failed on ${done.process} ('${done.value.error}); no snapshot was written.`));
+    return undefined;
+  }
+  // Cut, a change past the cut would pass the snapshot (#2454).
+  const cut = snapshotCut(done.value.text);
+  if (cut !== undefined) {
+    void window.showErrorMessage(plainMessage(`q-lint: the result on ${done.process} is ${cut}, so a change past that would not fail it; no snapshot was written. Snapshot a smaller part of it.`));
     return undefined;
   }
   return done.value.text.join("\n");

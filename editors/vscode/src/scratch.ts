@@ -8,7 +8,7 @@
 // (q-lint.processes.scratchBuffer.enable), the command refuses and opens
 // nothing.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Uri, commands, window, workspace, type ExtensionContext } from "vscode";
 import type { Live, ProcessArg } from "./live";
@@ -35,6 +35,44 @@ export function scratchFileName(label: string, scope?: string): string {
 /// What a new scratch buffer starts with.
 export function scratchHeader(label: string): string {
   return `/ Scratch buffer for ${label.replace(/[\r\n]+/g, " ")}: kept by q-lint between sessions. Queries run from it go to ${label.replace(/[\r\n]+/g, " ")}.\n\n`;
+}
+
+/// The saved process `from` was renamed `to`, or deleted (`to` undefined):
+/// its buffer, kept by label, moves with it, or is put aside under
+/// `scratch/deleted`, so the next process given the label starts empty
+/// (#2405). One already kept under `to`, left by an earlier process of that
+/// label, is put aside first. `storage`: the extension's global storage.
+export function moveScratch(storage: string | undefined, from: string, to: string | undefined): void {
+  if (typeof storage !== "string") {
+    return;
+  }
+  try {
+    const dir = join(storage, "scratch");
+    const old = join(dir, scratchFileName(from));
+    const aside = (path: string, label: string): void => {
+      if (existsSync(path)) {
+        mkdirSync(join(dir, "deleted"), { recursive: true });
+        renameSync(path, join(dir, "deleted", `${Date.now()}-${scratchFileName(label)}`));
+      }
+    };
+    if (!existsSync(old)) {
+      return;
+    }
+    if (to === undefined) {
+      aside(old, from);
+      return;
+    }
+    const path = join(dir, scratchFileName(to));
+    aside(path, to);
+    const text = readFileSync(old, "utf8");
+    // Its header names the process it is for.
+    if (text.startsWith(scratchHeader(from))) {
+      writeFileSync(old, scratchHeader(to) + text.slice(scratchHeader(from).length));
+    }
+    renameSync(old, path);
+  } catch {
+    // A buffer that cannot be moved is left where it is: the rename stands.
+  }
 }
 
 export function registerScratchBuffers(

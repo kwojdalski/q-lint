@@ -259,3 +259,13 @@ test("a parameter list with a comment in it is still the lambda's parameters (#1
   // (#2332).
   assert.deepStrictEqual(paramsAt("f:{[a; / b]\n 1] |x}"), ["a"]);
 });
+
+// Inserted before #2407 under a \d, unqualified: still recognised and removed.
+test("a statement inserted unqualified under \\d before #2407 is still removed (#2407)", () => {
+  const source = "\\d .ns\nf:{[a;b] a+b}\n";
+  const old = source.replace("]", "]" + cacheStatement("p000001", ["a", "b"]));
+  const t = toggleAt(old, old.indexOf("a+b"));
+  assert.strictEqual(t.kind, "remove");
+  assert.strictEqual(old.slice(0, t.start) + old.slice(t.end), source);
+  assert.strictEqual(cacheStatement("p000001", ["a"], ".ns"), "@[`.qlint.cache.p000001 set;a;::];@[`.ns.a set;a;::];");
+});

@@ -75,8 +75,15 @@ export class AdminView implements TreeDataProvider<AdminNode> {
         if (what === "disconnected") {
           this.kept = undefined;
           this.show();
-        } else if (what === "connected" && this.view.visible) {
-          void this.refresh();
+        } else if (what === "connected") {
+          if (this.view.visible) {
+            void this.refresh();
+          } else {
+            // A reconnect to the same label is another connection: its rows
+            // are read when the view is shown again (#2376).
+            this.kept = undefined;
+            this.show();
+          }
         }
       }),
     ];
@@ -323,6 +330,13 @@ export function registerAdminViews(context: ExtensionContext, live: Live_): { cl
         return false;
       }
       ms = Number(text.trim());
+    }
+    // Given by a keybinding, checked as the box checks it: q takes a \t it
+    // cannot hold - negative, past 2^31 - silently, and turns the timer off (#2380).
+    const problem = intervalProblem(String(ms));
+    if (problem !== undefined) {
+      void window.showErrorMessage(plainMessage(`q-lint: ${String(ms)} is not a timer interval: ${problem} The timer was not set.`));
+      return false;
     }
     const done = await change(intervalCode(ms), "set the timer", label, timers);
     await timers.view?.refresh();

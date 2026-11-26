@@ -258,6 +258,10 @@ test("a baseline is named first in qlinter.toml, its count read, and its paths m
   assert.strictEqual(tomlWithBaseline('profile = "style"\n\n[lint]\nignore = ["QS"]\n'), 'baseline = "qlinter-baseline.json"\nprofile = "style"\n\n[lint]\nignore = ["QS"]\n');
   assert.strictEqual(tomlWithBaseline("# top\nprofile = 1\n"), '# top\nbaseline = "qlinter-baseline.json"\nprofile = 1\n');
   assert.strictEqual(tomlWithBaseline('baseline = "b.json"\n'), undefined);
+  // A folder named with a quote or a backslash, escaped as TOML reads it (#2416).
+  assert.strictEqual(tomlWithBaseline("", 'it\'s "q"/qlinter-baseline.json'), 'baseline = "it\'s \\"q\\"/qlinter-baseline.json"\n');
+  assert.strictEqual(tomlWithBaseline("", "a\\b/qlinter-baseline.json"), 'baseline = "a\\\\b/qlinter-baseline.json"\n');
+  assert.strictEqual(pyprojectWithBaseline("[tool.qlinter]\n", 'x"y/b.json'), '[tool.qlinter]\nbaseline = "x\\"y/b.json"\n');
   assert.deepStrictEqual(writtenCount("qlinter: wrote 12 finding(s) in 3 file(s) to the baseline x"), { findings: 12, files: 3 });
   assert.strictEqual(writtenCount("nothing"), undefined);
   assert.strictEqual(rebased('{"code":"QS001","count":1,"line":"a","path":"/ws/src/a.q"}', "/ws"), '{"code":"QS001","count":1,"line":"a","path":"src/a.q"}');
@@ -335,6 +339,36 @@ test("Write Lint Baseline keeps the findings: the draft's ../ paths are resolved
     assert.strictEqual(JSON.parse(readFileSync(target, "utf8")).findings[0].path, "src/a.q");
     assert.ok(realpathSync(ws));
   } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(ws, { recursive: true, force: true });
+    rmSync(fake, { force: true });
+  }
+});
+
+// Turned off while its Write dialog was open, the baseline was written
+// and the configuration offered (#2422).
+test("Write Lint Baseline turned off at its Write dialog writes nothing (#2422)", async () => {
+  const { mkdtempSync, writeFileSync, existsSync, rmSync } = require("node:fs");
+  const { join, basename } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const ws = mkdtempSync(join(tmpdir(), "qlint-bl-off-"));
+  const fake = join(ws, "..", `${basename(ws)}-fake.js`);
+  writeFileSync(
+    fake,
+    `const fs=require("fs");const a=process.argv;if(!a.includes("--write-baseline"))process.exit(0);` +
+      `fs.writeFileSync(a[a.indexOf("--write-baseline")+1],JSON.stringify({"qlinter-baseline":1,findings:[]}));process.stderr.write("qlinter: wrote 0 finding(s) in 0 file(s)");`,
+  );
+  const { context, restore } = setUp();
+  try {
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: ws }, name: "ws" }];
+    registerBaseline(context, () => ({ command: process.execPath, args: [fake] }));
+    stub.picks.push(() => ((stub.config.user["baseline.enable"] = false), "Write"));
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.strictEqual(existsSync(join(ws, "qlinter-baseline.json")), false);
+    assert.match(stub.messages.at(-1)[1], /lint baseline is turned off/);
+  } finally {
+    delete stub.config.user["baseline.enable"];
     vscode.workspace.workspaceFolders = undefined;
     restore();
     rmSync(ws, { recursive: true, force: true });

@@ -351,6 +351,21 @@ test("Table Templates reads the table, runs a read picked and opens the insert t
   assert.deepStrictEqual([off.live.sent, off.live.ran], [[], []]);
 });
 
+// Turned off while the template pick was open, the read picked still ran (#2421).
+test("Table Templates turned off at its pick runs and opens nothing (#2421)", async () => {
+  const { live } = setUp();
+  live.answers.TABLE_INFO = tableInfo;
+  for (const label of ["Select first 100", "Insert template"]) {
+    const before = opened.length;
+    stub.picks.push(() => ((stub.config.user["processExplorer.tableTemplates.enable"] = false), label));
+    await run(SCHEMA_COMMANDS.templates, { kind: "table", label: "trade", name: "trade" });
+    assert.deepStrictEqual(live.ran, []);
+    assert.strictEqual(opened.length, before);
+    assert.match(infos().at(-1), /Table Templates is turned off/);
+    delete stub.config.user["processExplorer.tableTemplates.enable"];
+  }
+});
+
 test("Show Schema Diagram draws the tables and links in a panel with no script; it saves as SVG, copies as Mermaid, and closes when turned off (#966)", async () => {
   const { live, schema } = setUp();
   live.answers.SCHEMA = [
@@ -404,4 +419,17 @@ test("Show Schema Diagram draws the tables and links in a panel with no script; 
   await run(SCHEMA_COMMANDS.diagram);
   assert.match(infos().at(-1), /connect to a q process first/);
   assert.deepStrictEqual(none.live.sent, []);
+});
+
+// Query a Tag's merged result is shown under `tag <tag>`, no process: a
+// wrangle step or cell edit went to runOnProcess, which refused with
+// "no q process is labelled \"tag prod\"" (#2374).
+test("Wrangle Result and Edit Cell on a merged tag result say it is several processes' and send nothing (#2374)", async () => {
+  const { live } = setUp();
+  live.shown = { process: "tag prod", code: "select from t", merged: true, payload: { ...payload, names: ["process", "sym", "px"], types: [11, 11, 9], cells: [["rdb1", "rdb2"], ...payload.cells], raw: [[], ...payload.raw] } };
+  await run(RESULT_VIEW.wrangle);
+  await run(RESULT_VIEW.editCell, { webviewSection: "cell", column: 2, row: 0 });
+  assert.deepStrictEqual(live.ran, []);
+  assert.match(infos().at(-2), /tag prod merges several processes' rows; run the query on one process to wrangle it/);
+  assert.match(infos().at(-1), /tag prod merges several processes' rows; run the query on one process to edit its cells/);
 });

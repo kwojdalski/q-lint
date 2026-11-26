@@ -213,6 +213,9 @@ const PREVIOUS_RUNS = 20;
 
 interface Shown {
   process: string;
+  /// Query a Tag's merged table: `process` names the tag, and each row's
+  /// process is in its first column (#2374).
+  merged?: boolean;
   code: string;
   millis: number;
   payload: GridPayload;
@@ -463,9 +466,9 @@ export class QueryModes {
 
   /// The result on show, with the process and code it came from: what the
   /// Data Wrangler (#961) and a cell edit (#964) work from.
-  current(): { process: string; code: string; payload: GridPayload; run: number } | undefined {
+  current(): { process: string; code: string; payload: GridPayload; run: number; merged?: boolean } | undefined {
     const shown = this.shown;
-    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload, run: shown.run };
+    return shown === undefined ? undefined : { process: shown.process, code: shown.code, payload: shown.payload, run: shown.run, ...(shown.merged ? { merged: true } : {}) };
   }
 
   /// Where the live half fetches pages of a held result from.
@@ -493,7 +496,7 @@ export class QueryModes {
   /// same code and process is replaced under its id, so the page keeps its
   /// view, sort, filters and scroll, and no tab is added. One not on show
   /// is replaced where it is, and the result on show stays (#1636).
-  show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean; token?: string }, live: LiveSettings, inPlace = false): boolean {
+  show(result: { process: string; code: string; millis: number; answer: GridAnswer; held?: boolean; token?: string; merged?: boolean }, live: LiveSettings, inPlace = false): boolean {
     const { answer } = result;
     if (live.mode === "console" || !answer.ok) {
       return false;
@@ -525,6 +528,7 @@ export class QueryModes {
       at: Date.now(),
       ...(last !== undefined ? { before: { payload: last.payload, process: last.process, at: last.at } } : {}),
       ...(saved !== undefined ? { saved } : {}),
+      ...(result.merged ? { merged: true } : {}),
       look,
     };
     if (result.held === true) {
@@ -1133,7 +1137,12 @@ export class QueryModes {
       const filled = fillDrilldown(t.query, shown.payload, column, row);
       return { label: t.label, detail: "code" in filled ? filled.code : `Cannot run: ${filled.error}`, filled };
     });
-    const picked = await window.showQuickPick(items, { title: `q-lint: drill down from ${name} on ${shown.process}`, matchOnDetail: true });
+    // A merged tag result's row came from the process in its first column (#2374).
+    const process = shown.merged ? shown.payload.cells[0]?.[row] : shown.process;
+    if (process === undefined || process === "") {
+      return;
+    }
+    const picked = await window.showQuickPick(items, { title: `q-lint: drill down from ${name} on ${process}`, matchOnDetail: true });
     if (picked === undefined) {
       return;
     }
@@ -1144,7 +1153,7 @@ export class QueryModes {
     if (this.runner === undefined) {
       return;
     }
-    await this.runner(picked.filled.code, shown.process, shown.code);
+    await this.runner(picked.filled.code, process, shown.code);
   }
 
   /// While the saved query `name` runs as `code`, its result is taken for
@@ -1636,7 +1645,10 @@ export class QueryModes {
     }
     const text = resultMarkdown({ process: shown.process, code: shown.code, at: shown.at, payload: this.exportPayload(shown), rows: this.rowsOf(rows, shown), decimals: settings().gridDecimals, formats: this.formatsOn() }, relative === undefined ? undefined : linkTarget(relative));
     const before = existing === undefined ? "" : Buffer.from(existing).toString("utf8");
-    const gap = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+    // In the report's own line ending: its first break's (#2455).
+    const eol = /\r?\n/.exec(before)?.[0] ?? "\n";
+    const lf = before.replace(/\r\n/g, "\n");
+    const gap = (lf === "" || lf.endsWith("\n\n") ? "" : lf.endsWith("\n") ? "\n" : "\n\n").replace(/\n/g, eol);
     const name = to.path.replace(/^.*\//, "");
     const lines = text.text.split("\n");
     const preview = lines.slice(0, 14).join("\n") + (lines.length > 14 ? `\n... ${lines.length - 14} more line(s)` : "");
@@ -1658,7 +1670,7 @@ export class QueryModes {
         await workspace.fs.createDirectory(Uri.joinPath(image, ".."));
         await workspace.fs.writeFile(image, Buffer.from(svg, "utf8"));
       }
-      await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text, "utf8"));
+      await workspace.fs.writeFile(to, Buffer.from(before + gap + text.text.replace(/\r?\n/g, eol), "utf8"));
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: could not write ${to.fsPath}: ${error instanceof Error ? error.message : String(error)}`));
       return;

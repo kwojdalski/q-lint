@@ -351,3 +351,17 @@ test("the cheat sheet view lives while its switch is on, and inserts at the curs
   for (const d of context.subscriptions) d.dispose?.();
   vscode.window.activeTextEditor = undefined;
 });
+
+// The dot, colon or minus inside a literal was taken for Apply, Assign or
+// Subtract (#2410).
+test("a number or temporal literal is no glyph: its dot, colon and minus are not looked up (#2410)", () => {
+  for (const [line, at] of [["d:2024.01.01", 6], ["x:1.5", 3], ["t:12:30", 4], ["x:1e-3", 4], ["t:2024.01.02D10:00:00", 13], ["x:.5", 2]]) {
+    assert.strictEqual(h.nameAt(line, at), undefined, `${line} at ${at}`);
+  }
+  // The operators around one still are, and 0: 1: 2: are one operator each.
+  assert.deepStrictEqual(h.nameAt("a:-1", 2), { name: "-", start: 2, end: 3 });
+  assert.deepStrictEqual(h.nameAt("x:1.5", 1), { name: ":", start: 1, end: 2 });
+  assert.deepStrictEqual(h.nameAt("`:f 0: x", 4), { name: "0:", start: 4, end: 6 });
+  assert.deepStrictEqual(h.nameAt("x . y", 2), { name: ".", start: 2, end: 3 });
+  assert.deepStrictEqual(h.nameAt("10 2/ 3", 4), { name: "/", start: 4, end: 5 });
+});

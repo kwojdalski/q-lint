@@ -199,6 +199,18 @@ export class Interpreters {
     return kept;
   }
 
+  /// What a probe kept for `file`, under its own path or another reaching
+  /// the same file: discovery keeps the first path it found, and the
+  /// configured `q` may be a PATH link to it (#2377).
+  private keptFor(file: string | undefined): Kept | undefined {
+    if (file === undefined) {
+      return undefined;
+    }
+    const kept = this.kept();
+    const real = nodeFiles.real(file);
+    return kept[file] ?? Object.entries(kept).find(([key]) => nodeFiles.real(key) === real)?.[1];
+  }
+
   /// The status bar item, while the picker is on and a q editor is active.
   private sync(): void {
     const on = readInterpreter(get).enabled && window.activeTextEditor?.document.languageId === "q";
@@ -214,7 +226,7 @@ export class Interpreters {
     }
     const binary = this.binary();
     const file = resolveBinary(binary);
-    const kept = file !== undefined ? this.kept()[file] : undefined;
+    const kept = this.keptFor(file);
     this.item.text = `$(terminal) ${iconsEscaped(kept !== undefined ? versionText(kept) : path.basename(binary))}`;
     this.item.tooltip = `q interpreter: ${file ?? `${binary} (not found)`}\nSelect q Interpreter`;
     this.item.show();
@@ -255,7 +267,7 @@ export class Interpreters {
       );
       return [
         ...probed.map(({ interpreter, answer }): Item => ({
-          label: `${interpreter.path === current ? "$(check) " : ""}${answer !== undefined ? versionText(answer) : "q (did not answer)"}`,
+          label: `${current !== undefined && nodeFiles.real(interpreter.path) === nodeFiles.real(current) ? "$(check) " : ""}${answer !== undefined ? versionText(answer) : "q (did not answer)"}`,
           description: interpreter.path,
           detail: interpreter.detail,
           file: interpreter.path,
@@ -335,7 +347,7 @@ export class Interpreters {
       return text;
     }
     const warning = expiryWarning(file, kept.expiry, days, read.warningDays);
-    const text = warning ?? `q-lint: the q licence used by ${file} expires on ${kept.expiry}, in ${days} days.`;
+    const text = warning ?? `q-lint: the q licence used by ${file} expires on ${kept.expiry}, in ${days} day${days === 1 ? "" : "s"}.`;
     void (warning !== undefined ? window.showWarningMessage(plainMessage(text)) : window.showInformationMessage(plainMessage(text)));
     return text;
   }
@@ -351,7 +363,7 @@ export class Interpreters {
       return undefined;
     }
     const file = resolveBinary(this.binary());
-    const kept = file !== undefined ? this.kept()[file] : undefined;
+    const kept = this.keptFor(file);
     if (file === undefined || kept?.expiry === undefined) {
       return undefined;
     }
@@ -360,7 +372,8 @@ export class Interpreters {
     if (warning === undefined) {
       return undefined;
     }
-    const day = today.toISOString().slice(0, 10);
+    // The local day, as daysLeft counts them, not UTC's (#2378).
+    const day = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const warned = this.context.globalState.get<Record<string, string>>(WARNED_KEY, {});
     if (warned?.[file] === day) {
       return undefined;
