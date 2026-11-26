@@ -1056,6 +1056,28 @@ fn a_load_after_a_q_prompt_is_an_edge() {
 }
 
 #[test]
+fn a_load_on_a_k_line_is_an_edge() {
+    // KDB-X: with lib.q's `kl:1`, `` `kl in key`. `` is 1b after
+    // `k)\l lib.q` and after `q)k)\l lib.q` (#2819).
+    for load in ["k)\\l lib.q\n", "q)k)\\l lib.q\n", "k)q)\\l lib.q\n"] {
+        let g = graph(&[("lib.q", "kl:1\n"), ("a.q", load)], false);
+        assert_eq!(deps(&g, "a.q"), ["lib.q"], "{load:?}");
+    }
+    // Under the `\d` in force, as any load is, and not in a block comment.
+    let g = graph(
+        &[
+            ("lib.q", "kl:1\n"),
+            ("a.q", "\\d .a\nk)\\l lib.q\n"),
+            ("b.q", "r:.a.kl\n"),
+            ("c.q", "/\nk)\\l lib.q\n\\\nr:1\n\\\nk)\\l lib.q\n"),
+        ],
+        false,
+    );
+    assert_eq!(deps(&g, "b.q"), ["lib.q"]);
+    assert!(deps(&g, "c.q").is_empty());
+}
+
+#[test]
 fn a_bracketed_symbol_handed_to_get_or_value_is_a_read() {
     // q 5: after `cfg:5`, `(get[`cfg];value[`cfg];get (`cfg))` is 5 5 5
     // (#537). Not a dynamic place either.

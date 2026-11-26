@@ -1325,7 +1325,7 @@ fn global_writes(
     // So does `\l` of a table's directory or file: q 5's `.Q.lo` sets the
     // last part of the path, and `\l data/trades` defines `trades` (#534).
     // Not a script, `\l x.q`, whose name defines nothing.
-    for (at, rest) in load_lines(code, raw) {
+    for (at, _, rest) in load_lines(code, raw) {
         if let Some(m) =
             re!(r"^[ \t]+(?:\S*/)?([A-Za-z][A-Za-z0-9_]*)/?[ \t\r]*\n?$").captures(rest)
         {
@@ -1466,16 +1466,38 @@ fn assigned_by_amend(code: &str, at: usize) -> usize {
 /// What one file defines for the files around it: its global names, and
 /// which of them it assigns a lambda. Read, never run - the same passes the
 /// checks use, stopped before any rule.
-/// Each `\l` line, with where it starts and what follows the `\l` in the
-/// code view. `q)\l b.q` loads as `\l b.q` does (q 5), though `views` has
-/// blanked the prompt (#536).
-fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, &'a str)> {
-    let mut offset = 0;
+/// Each `\l` line, with where it starts, and where and what follows the
+/// `\l` in the code view. `q)\l b.q` loads as `\l b.q` does (q 5), though
+/// `views` has blanked the prompt (#536). So does one after `k)`, or a run of
+/// prefixes: KDB-X has lib.q's `kl` after `k)\l lib.q` and after
+/// `q)k)\l lib.q` (#2819). The views blank a k line whole, so that one is
+/// read from the source, where no block comment holds it.
+fn load_lines<'a>(code: &'a str, raw: &'a str) -> impl Iterator<Item = (usize, usize, &'a str)> {
+    // Whether a block comment holds the line, and whether a lone `\` has
+    // ended the script above it.
+    let (mut offset, mut comment, mut ended) = (0, false, false);
     code.split_inclusive('\n').filter_map(move |line| {
         let at = offset;
         offset += line.len();
-        let prompt = if raw[at..].starts_with("q)") { 2 } else { 0 };
-        line[prompt..].strip_prefix("\\l").map(|rest| (at, rest))
+        let source = &raw[at..at + line.len()];
+        match source.trim_end() {
+            "/" => comment = true,
+            "\\" if comment => comment = false,
+            "\\" => ended = true,
+            _ => {}
+        }
+        let prefixes = crate::language_prefixes(source);
+        let line = if prefixes > 2 || source.starts_with("k)") {
+            if comment || ended {
+                return None;
+            }
+            source
+        } else {
+            line
+        };
+        line[prefixes..]
+            .strip_prefix("\\l")
+            .map(|rest| (at, at + prefixes + 2, rest))
     })
 }
 
@@ -2000,9 +2022,8 @@ fn is_system(view: &str, at: usize) -> bool {
 /// its path, and whether it is a file symbol, which no `\cd` moves.
 fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bool)> {
     let mut sites = vec![];
-    for (at, rest) in load_lines(code, raw) {
+    for (at, from, rest) in load_lines(code, raw) {
         if let Some(m) = re!(r"^\s+(\S+)").captures(rest) {
-            let from = rest.as_ptr() as usize - code.as_ptr() as usize;
             let path = m.get(1).unwrap().range();
             sites.push((at, from + path.start..from + path.end, false));
         }
@@ -2192,8 +2213,8 @@ pub(crate) fn unnamed_writes<'c>(
     raw: &str,
 ) -> Vec<(usize, Unnamed)> {
     let mut found: Vec<(usize, Unnamed)> = load_lines(code, raw)
-        .filter(|(_, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
-        .map(|(at, _)| (at, Unnamed::Evaluation))
+        .filter(|(_, _, rest)| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        .map(|(at, ..)| (at, Unnamed::Evaluation))
         .collect();
     // A `k)` line is blank in both views, as another language's, but k
     // assigns q's globals: q 5 `a:1`, `k)a:1 2 3`, then `a 0` is 1.
