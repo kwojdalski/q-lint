@@ -2346,3 +2346,84 @@ a:12:00?10
 a:12:30:?10
 a:12:-10
 a:12:#10
+
+=== QE010 profile: general | a capital after an integer, an exponent or a temporal, and a temporal letter after an uppercase exponent (#2828, #2829, #2831; q 5: '1T, '1e3N, '12:00T, '0D12N, '2000.01.01N, '1E3)
+a:1T
+b:12T
+c:1e3N
+d:1e3W
+e:12:00T
+f:12:00:00D
+g:0D12N
+h:2000.01.01N
+i:2000.01.01D12W
+j:2000.01.01T12D
+k:1E3p
+l:1E3n
+
+=== QE010 profile: general | a letter a timespan, timestamp or datetime with a short clock does not take (#2830; q 5: '0D12x, '2000.01.01D12x, '2000.01.01T12)
+a:0D12x
+b:2000.01.01D12x
+c:2000.01.01T12p
+d:2000.01.01T12n
+
+=== QE010 profile: general | a point or a second e after an exponent (#2841; q 5: '1e3.5, '1.5e3.5, '1ee3)
+a:1e3.5
+b:1.5e3.5
+c:f[1ee3]
+
+=== clean profile: general | while a clock filled to the second takes more, an empty clock takes a type letter, and a token ending in c is chars (#2830, #2832, #2833; q 5 parses each)
+a:0D12:00:00x
+b:2000.01.01T12:00:00.123p
+c:1Dp
+d:0Dn
+e:2000.01.01Dp
+f:2000.01.01Tz
+g:1ec
+h:1.5e-3c
+i:0Wjc
+j:1bc
+k:0Ngc
+l:1D
+m:2000.01.01D
+n:1E3f
+
+=== QE010 profile: general | a vector literal item its last item cannot type (#2835-#2838; q 5: '0D12, '2000.01.01D12, '1, '2000.01.01T12, '1.5, '1e3, '2000.01.01, '12:00u)
+a:0D12 1
+b:0D12 12:00
+c:2000.01.01D12 1
+d:1 2000.01.01T12
+e:2000.01.01T12 12:00
+f:1.5 12:00
+g:1e3 2000.01m
+h:-1.5 1u
+i:1e3 0D12
+j:2000.01.01 12:00
+k:2000.01 1u
+l:12:00 2000.01m
+m:12:00u 12:00:00
+
+=== QE010 profile: general | a guid null after anything but a null, and a typed null over an item it cannot type (#2839, #2840; q 5: '1, '0W, '2000.01.01, '12:00)
+a:1 0Ng
+b:0W 0Ng
+c:2000.01.01 0Ng
+d:1 0Nm
+e:12:00 0Nd
+f:2000.01.01 0Ne
+g:2000.01.01 1t
+
+=== clean profile: general | while a suffixed time takes nulls and items it can read, and the last item types what it can (#2834-#2840; q 5 parses each)
+a:12:00u 0N
+b:12:00u 1u
+c:12:00:00v 1v
+d:12:00:00v 0n
+e:0D12 2000.01.01D12
+f:2000.01.01T12 2000.01.01
+g:1.5 12:00:00.000
+h:0D12 1 2000.01.01D12
+i:.5 12:00:00.000 12:00:00
+j:0N 0Ng
+k:2001 0Nm
+l:2000.01.01d 0Nd
+m:0D 12:00:00.12345
+n:2000.01.01T12:00 0D12
