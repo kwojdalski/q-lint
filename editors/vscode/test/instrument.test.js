@@ -32,7 +32,7 @@ test("a restore over a connection of its own goes to the process it is given, th
       return allowed;
     },
     async openSeparate(process) {
-      const connection = { sent: [], aborted: false, call: async (code) => (connection.sent.push(code), answer(code)), abort: () => (connection.aborted = true) };
+      const connection = { sent: [], aborted: false, callOwn: async (code) => (connection.sent.push(code), answer(code)), abort: () => (connection.aborted = true) };
       opened.push([process.label, connection]);
       return connection;
     },
@@ -51,11 +51,11 @@ test("a restore over a connection of its own goes to the process it is given, th
   let accept;
   const busy = { guardAllows: async () => true, openSeparate: () => new Promise((resolve) => (accept = resolve)) };
   await assert.rejects(() => restoreApart(busy, dev, "cov", "Putting back", 20), /dev did not answer within 0\.02 s/);
-  const late = { sent: [], aborted: false, call: async (code) => late.sent.push(code), abort: () => (late.aborted = true) };
+  const late = { sent: [], aborted: false, callOwn: async (code) => late.sent.push(code), abort: () => (late.aborted = true) };
   accept(late);
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepStrictEqual([late.sent, late.aborted], [[], true]);
-  const hung = { guardAllows: async () => true, openSeparate: async () => ({ call: () => new Promise(() => {}), abort() {} }) };
+  const hung = { guardAllows: async () => true, openSeparate: async () => ({ callOwn: () => new Promise(() => {}), abort() {} }) };
   await assert.rejects(() => restoreApart(hung, dev, "cov", "Putting back", 20), /did not answer/);
 });
 

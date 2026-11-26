@@ -814,7 +814,9 @@ class QTests {
     // timed out. Either way the functions are still replaced (#1892).
     let why = "no connection, or a query is running";
     const own = await this.live
-      .runOnActive(restore, async (connection) => readRestored(await connection.call(restore)), "ask", process.label)
+      // Put back as it was installed, though the evaluation turned direct
+      // meanwhile (#2562).
+      .runOnActive(restore, async (connection) => readRestored(await connection.callOwn(restore)), "ask", process.label)
       .catch((error: unknown) => {
         why = error instanceof Error ? error.message : String(error);
         return undefined;

@@ -304,7 +304,8 @@ export async function restoreApart(
   const opening = live.openSeparate(process);
   try {
     const connection = await Promise.race([opening, late]);
-    return readRestored(await Promise.race([connection.call(restore), late]));
+    // Only a restore: sent though the process is now evaluated directly (#2562).
+    return readRestored(await Promise.race([connection.callOwn(restore), late]));
   } finally {
     clearTimeout(timer);
     // Closed whether it answered or not: a connection a busy process

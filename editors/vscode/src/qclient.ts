@@ -362,6 +362,15 @@ export class QConnection {
     if (direct !== undefined) {
       return Promise.reject(new DirectRefused(directRefusal(direct)));
     }
+    return this.callOwn(expression, ...args);
+  }
+
+  /// `call`, sent though the connection now evaluates directly: only for
+  /// q-lint's own lambdas that put back what an earlier `call` installed
+  /// on the process, which took that lambda. Unwrapped Query toggled while
+  /// Capture Locals, a coverage run or a profile ran left the function
+  /// instrumented: the restore was refused before it was sent (#2562).
+  callOwn(expression: string, ...args: unknown[]): Promise<unknown> {
     const sent = args.map(statementsOut);
     const message: Buffer = serialize(sent.length === 0 ? expression : [expression, ...sent]);
     message.writeUInt8(SYNC, 1);

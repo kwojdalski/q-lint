@@ -58,11 +58,20 @@ function setup(failure, run) {
     activeProcess: () => process,
     guardAllows: async () => true,
     // A connection of its own, as #1892's restore opens.
-    openSeparate: async (to) => ({ call: async (lambda) => (apart.push([to.label, lambda]), { kept: [], d: null }), abort() {} }),
+    openSeparate: async (to) => {
+      const call = async (lambda) => (apart.push([to.label, lambda]), { kept: [], d: null });
+      return { call, callOwn: call, abort() {} };
+    },
     async runOnActive(code, query) {
       this.guarded.push(code);
       const connection = {
+        // Unwrapped Query turned on meanwhile: `call` refuses, as a direct
+        // connection does; q-lint's own restore is still sent (#2562).
         call: async (lambda, ...args) => {
+          if (this.direct) throw new Error("this needs q-lint's own evaluator lambda, and dev uses direct evaluation");
+          return connection.callOwn(lambda, ...args);
+        },
+        callOwn: async (lambda, ...args) => {
           if (this.dropped) throw new Error("connection closed");
           sent.push(lambda);
           if (lambda === RUN && run !== undefined) return run(this);
@@ -85,6 +94,16 @@ function setup(failure, run) {
   const api = registerLocalsAtError(stub.newContext(), live);
   return { sent, apart, live, api, shown: () => shownText };
 }
+
+test("the function is put back though Unwrapped Query was turned on while the capture ran (#2562)", async () => {
+  const s = setup({ process: "dev", code: ".ns.m[1;2]", error: "type", trace: TRACE }, (live) => ((live.direct = true), { ok: false, error: "type", trace: "" }));
+  stub.picks.push({ label: ".ns.m", frame: { name: ".ns.m", where: "/w/lib.q:5" } });
+  stub.picks.push("Run Again");
+  await stub.commands.get(CAPTURE_LOCALS)();
+  assert.deepStrictEqual(s.sent, [restoreExpression("err"), DRIFT, installLambda("err"), RUN, restoreExpression("err")]);
+  assert.deepStrictEqual(s.apart, []);
+  assert.ok(!stub.messages.some(([, m]) => /may still be instrumented/.test(m)), JSON.stringify(stub.messages));
+});
 
 test("Capture Locals at Last Error asks, instruments, runs again and puts the function back", async () => {
   const s = setup({ process: "dev", code: ".ns.m[1;2]", error: "type", trace: TRACE });
