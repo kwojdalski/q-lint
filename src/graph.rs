@@ -82,10 +82,17 @@ pub fn build_from(
     let contexts = contexts(&loads, &tree, &modules);
     // A module's root names are its own context's, not the root's: no other
     // file reads them there unless it loads the module at its root with `\l`.
+    // Nor are a script's that every loader loads under a context: after
+    // `\d .a` / `\l lib/b.q`, b.q's `ff:42` is `.a.ff` and q 5 has no `ff`
+    // for a root `h:{ff}`, which the lint reports as undefined (#2876).
     let root = rooted(&loads, &tree, &contexts, &modules);
     for (d, read) in reads.iter().enumerate() {
-        if modules.is_module[d] && !root[d] {
-            for name in &read.implicit_defines {
+        if !root[d] {
+            // But for one the script assigns again after a `\d .`: KDB-X
+            // runs b.q's `xx:1` / `\d .` / `xx:2` under `\d .a` to `.a.xx` 1
+            // and a root `xx` 2 (#2824).
+            let moved = |name: &&String| !read.root_defines.contains(name);
+            for name in read.implicit_defines.iter().filter(moved) {
                 if let Some(defs) = definers.get_mut(name) {
                     defs.retain(|&x| x != d);
                 }
@@ -101,6 +108,20 @@ pub fn build_from(
                 }
             }
         }
+    }
+    // A namespace nobody assigns whole is made by the files assigning its
+    // members, and a read of it reads them all: KDB-X runs `.cfg.port:5010`
+    // in one file and `\d .cfg` / `retries:3` in another, and `.cfg` is
+    // ``` ``port`retries!(::;5010;3) ``` (#2827).
+    let mut members: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (name, defs) in &definers {
+        for (dot, _) in name.match_indices('.').filter(|&(dot, _)| dot > 0) {
+            members.entry(&name[..dot]).or_default().extend(defs);
+        }
+    }
+    for defs in members.values_mut() {
+        defs.sort_unstable();
+        defs.dedup();
     }
     let identity = &tree.identity;
     let targets = |i: usize, load: &str| tree.targets(i, load);
@@ -143,11 +164,18 @@ pub fn build_from(
             }
         }
         for name in &names {
-            let Some((name, defs)) = resolve(name, &definers).or_else(|| {
-                in_q.get(name)
-                    .and_then(|q| definers.get_key_value(q))
-                    .map(|(k, d)| (k.as_str(), d.as_slice()))
-            }) else {
+            let Some((name, defs)) = resolve(name, &definers)
+                .or_else(|| {
+                    in_q.get(name)
+                        .and_then(|q| definers.get_key_value(q))
+                        .map(|(k, d)| (k.as_str(), d.as_slice()))
+                })
+                .or_else(|| {
+                    members
+                        .get_key_value(name.as_str())
+                        .map(|(k, d)| (*k, d.as_slice()))
+                })
+            else {
                 continue;
             };
             let others: Vec<_> = defs
@@ -167,7 +195,10 @@ pub fn build_from(
                 );
             }
         }
-        for (load, _) in &reads[i].loads {
+        // A script only measured or read, `` hcount `:b.q ``, is reached
+        // too, though nothing puts it in a context (#2805).
+        let loads = reads[i].loads.iter().map(|(load, _)| load);
+        for load in loads.chain(&reads[i].mentions) {
             for d in targets(i, load) {
                 if identity[d] != identity[i] {
                     node.dependencies.insert(paths[d].clone());
@@ -183,6 +214,27 @@ pub fn build_from(
         graph.insert(path.clone(), node);
     }
     graph
+}
+
+/// What tells one file on disk from another, whatever name it is reached
+/// by: its device and inode, which a symlink resolves to and a hard link
+/// shares, where a hard link's canonical path is its own (#2859). Without
+/// those - on Windows, or for a path that names no file - the canonical
+/// path, or else the path as given.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OnDisk {
+    Inode(u64, u64),
+    Path(PathBuf),
+}
+
+/// The file `path` is on disk.
+pub fn on_disk(path: &Path) -> OnDisk {
+    #[cfg(unix)]
+    if let Ok(found) = std::fs::metadata(path) {
+        use std::os::unix::fs::MetadataExt;
+        return OnDisk::Inode(found.dev(), found.ino());
+    }
+    OnDisk::Path(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
 /// The files of a graph, found by any name a load reaches them by.
@@ -213,21 +265,19 @@ impl<'a> Tree<'a> {
             }
         }
         // One file under two names is one file: neither name depends on the
-        // other, nor makes a name the file defines ambiguous (#527).
+        // other, nor makes a name the file defines ambiguous (#527). A hard
+        // link is such a name, with a real path of its own (#2859).
+        let mut first: HashMap<OnDisk, usize> = HashMap::new();
         let identity = files
             .iter()
-            .map(|p| {
-                std::fs::canonicalize(p)
-                    .ok()
-                    .and_then(|real| position.get(&real).copied())
-                    .unwrap_or(position[p])
-            })
+            .enumerate()
+            .map(|(i, p)| *first.entry(on_disk(p)).or_insert(i))
             .collect();
         // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
         // `.Q.lo`), so it leads to each of them (#533).
         let mut scripts_in: HashMap<&Path, Vec<usize>> = HashMap::new();
         for (i, p) in files.iter().enumerate() {
-            if let Some(dir) = p.parent() {
+            if let Some(dir) = p.parent().filter(|_| !partition_named(p)) {
                 scripts_in.entry(dir).or_default().push(i);
             }
         }
@@ -252,14 +302,27 @@ impl<'a> Tree<'a> {
     }
 }
 
+/// Whether a directory's load takes the file at `path` for a partition and
+/// not a script, by its name: `.Q.lo` runs no entry that starts with a digit,
+/// nor `par.txt`. KDB-X's `\l db` with a db/1b.q stops with 'part and never
+/// runs it (#2815).
+pub fn partition_named(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        name == "par.txt"
+            || name
+                .as_encoded_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_digit)
+    })
+}
+
 /// The files `\l load` in the file at `from` leads to, as the graph follows
 /// it: the first place q tries that `file` finds, under the path tried or
 /// the real path it names, or else the scripts `scripts_in` finds directly
 /// in the directory at the first place - a directory only where q looks, the
-/// current one: `\l .`, a database reloading itself, is no load of the
-/// scripts beside the file that says it. Nothing for a load that reaches no
-/// file. The language server follows a load line with this too, over the
-/// files it indexes.
+/// current one, and never `\l .`, a database reloading itself, which runs
+/// no script. Nothing for a load that reaches no file. The language server
+/// follows a load line with this too, over the files it indexes.
 pub fn loaded<T>(
     from: &Path,
     load: &str,
@@ -267,6 +330,12 @@ pub fn loaded<T>(
     file: impl Fn(&Path) -> Option<T>,
     scripts_in: impl FnOnce(&Path) -> Vec<T>,
 ) -> Vec<T> {
+    // `.Q.lo` runs a directory's scripts unless the load is of `.` itself:
+    // KDB-X, started beside b.q, runs it for `\l ./` and `\l ../here` and
+    // not for `\l .` (#2814).
+    if load == "." {
+        return vec![];
+    }
     let candidates = load_targets(from, load, cwd);
     candidates
         .iter()
@@ -322,46 +391,10 @@ fn contexts(
     contexts
 }
 
-/// The context KDB-X runs the module at `file` in when it is found under
-/// `root` by its path there: `.m.mymod` for `mymod/init.q` or `mymod.q`,
-/// `.m.pkg.0sub` for `pkg/sub/init.q`, as `` use`pkg.sub `` names it. A
-/// file outside `root` is taken to be found by its own name. `None` for a
-/// path no module name spells.
-fn module_namespace(file: &Path, root: &Path) -> Option<String> {
-    let mut parts: Vec<&str> = match file.strip_prefix(root) {
-        Ok(relative) => relative
-            .components()
-            .map(|c| c.as_os_str().to_str())
-            .collect::<Option<_>>()?,
-        Err(_) => {
-            let own = file.file_name()?.to_str()?;
-            match file.parent().and_then(Path::file_name) {
-                Some(dir) if own.starts_with("init.") => vec![dir.to_str()?, own],
-                _ => vec![own],
-            }
-        }
-    };
-    let last = parts.pop()?;
-    let stem = last
-        .strip_suffix(".q")
-        .or_else(|| last.strip_suffix(".k"))?;
-    if stem != "init" || parts.is_empty() {
-        parts.push(stem);
-    }
-    let word = |p: &&str| {
-        p.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    if parts.is_empty() || !parts.iter().all(word) {
-        return None;
-    }
-    let rest: String = parts[1..].iter().map(|p| format!(".0{p}")).collect();
-    Some(format!(".m.{}{rest}", parts[0]))
-}
-
 /// The KDB-X modules of a tree, read as KDB-X 5's `.Q.m` loads them.
 struct Modules {
-    /// Whether each file is a module (`References::module`).
+    /// Whether each file is a module: one that assigns `export`
+    /// (`References::module`) and that some `use` reaches.
     is_module: Vec<bool>,
     /// The files each file's `` use`name `` reaches, each with the module
     /// name it was reached by.
@@ -379,9 +412,10 @@ struct Modules {
 /// leaves `key `.m.pkg` as ``` ``0sub ```. `` use`.b ``, in a module, is
 /// relative to it: beside an `init.q`, under a flat `a.q` (KDB-X tries
 /// `a.q/b.q`), one directory up for each dot more, and runs in the using
-/// module's context with `.0b` added. A module no `use` reaches is taken
-/// to be found by its path under the directory a `\l` in it is tried
-/// against first (`module_namespace`).
+/// module's context with `.0b` added. A file no `use` reaches is a script,
+/// whatever it assigns: KDB-X 5 running `q a.q` or `\l a.q` over an
+/// `export:{...}` beside `util:{x+1}` leaves `util` at the root and
+/// `key `.m` empty (#2668).
 fn modules(reads: &[&References], tree: &Tree) -> Modules {
     let is_module: Vec<bool> = reads.iter().map(|r| r.module).collect();
     let mut uses: Vec<Vec<(usize, String)>> = vec![vec![]; reads.len()];
@@ -418,14 +452,10 @@ fn modules(reads: &[&References], tree: &Tree) -> Modules {
             }
         }
     }
-    let reached: BTreeSet<usize> = uses.iter().flatten().map(|&(d, _)| d).collect();
     let mut namespaces: Vec<BTreeSet<String>> = vec![BTreeSet::new(); reads.len()];
     let mut pending: Vec<(usize, String)> = vec![];
-    for (i, file) in tree.files.iter().enumerate() {
-        if is_module[i] && !reached.contains(&i) {
-            pending.extend(module_namespace(file, start_dir(tree.roots, file)).map(|ns| (i, ns)));
-        }
-        for (d, name) in &uses[i] {
+    for used in &uses {
+        for (d, name) in used {
             if !name.starts_with('.') {
                 let mut parts = name.split('.');
                 let first = parts.next().unwrap_or_default();
@@ -453,6 +483,7 @@ fn modules(reads: &[&References], tree: &Tree) -> Modules {
             pending.push((*target, format!("{}{rest}", base.join("."))));
         }
     }
+    let is_module = namespaces.iter().map(|ns| !ns.is_empty()).collect();
     Modules {
         is_module,
         uses,
@@ -526,10 +557,12 @@ impl Default for Placement {
 }
 
 impl Placement {
-    /// `file`, the index of a script whose root definitions are `implicit`
-    /// (its `References::implicit_defines`), with them where q puts them.
-    pub fn apply(&self, file: &mut FileIndex, implicit: &[String]) {
-        for name in implicit {
+    /// `file`, the index of the script `read` is the `References` of, with
+    /// its root definitions (`References::implicit_defines`) where q puts
+    /// them. One assigned again after a `\d .` stays at the root too: that
+    /// write is the root's wherever the script is loaded (#2824).
+    pub fn apply(&self, file: &mut FileIndex, read: &References) {
+        for name in &read.implicit_defines {
             let lambda = file.lambdas.contains(name);
             for ns in &self.contexts {
                 let qualified = format!("{ns}.{name}");
@@ -538,7 +571,7 @@ impl Placement {
                 }
                 file.defined.insert(qualified);
             }
-            if !self.root {
+            if !self.root && !read.root_defines.contains(name) {
                 file.lambdas.remove(name);
                 file.defined.remove(name);
             }
@@ -548,9 +581,8 @@ impl Placement {
 
 /// Where each file at `paths`, with `reads` its `References`, puts
 /// its root definitions. The workspace index's counterpart of the contexts
-/// `build` gives the graph, which keeps every root name instead: an edge
-/// too many is a file rebuilt for nothing, a name too many is a read of a
-/// name q never creates passed as defined.
+/// `build` gives the graph: a name too many is a read of a name q never
+/// creates passed as defined.
 pub fn placements(paths: &[PathBuf], reads: &[&References], roots: &[PathBuf]) -> Vec<Placement> {
     let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
     let tree = Tree::new(paths, roots);

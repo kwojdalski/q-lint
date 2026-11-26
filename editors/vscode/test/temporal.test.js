@@ -120,6 +120,9 @@ test("a hover finds the literal under the cursor, and nothing in a string, a com
   assert.strictEqual(at("/ 2024.01.02", 5), undefined);
   assert.strictEqual(at("x: 1 / 2024.01.02", 10), undefined);
   assert.strictEqual(at("v2024", 3), undefined);
+  // A line that starts inside a string open from the line above (#2919).
+  assert.strictEqual(t.temporalAt('  2024.01.02 to"', 4, true), undefined);
+  assert.strictEqual(t.temporalAt('  2024.01.02 to",2024.01.03', 20, true)?.text, "2024.01.03");
   // A symbol or a file handle is no literal (#1417).
   assert.strictEqual(at("x:`2024.01.01", 5), undefined);
   assert.strictEqual(at("f `:1700000000", 6), undefined);
@@ -197,6 +200,21 @@ test("the hover lives only while the feature is on, and Convert replaces the sel
   vscode.window.activeTextEditor = fakeEditor("a 2024.01.02 b", [1, 13]);
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)("int, days since 2000.01.01 (`\"i\"$`)"), "8767");
   assert.strictEqual(vscode.window.activeTextEditor.text, "a 8767 b");
+  // Nothing in a block comment or in a string open from the line above,
+  // which only the lines above tell (#2919): no hover, and no conversion.
+  const lines = ["/", "old run: 2024.01.02D10:00:00", "\\", 's:"from', '  2024.01.02 to"', "d:2024.01.03"];
+  const doc = { lineAt: (i) => ({ text: lines[i] }) };
+  const hovered = (line, character) => registered[0].provider.provideHover(doc, { line, character })?.contents.value;
+  assert.strictEqual(hovered(1, 12), undefined);
+  assert.strictEqual(hovered(4, 4), undefined);
+  assert.match(hovered(5, 4), /\*\*date\*\*/);
+  for (const [line, character] of [[1, 12], [4, 4]]) {
+    vscode.window.activeTextEditor = fakeEditor("", undefined);
+    vscode.window.activeTextEditor.document.lineAt = doc.lineAt;
+    vscode.window.activeTextEditor.selection.active = { line, character };
+    assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)("Unix seconds"), undefined);
+    assert.match(stub.messages.at(-1)[1], /select a q temporal value/);
+  }
   // Nothing to convert.
   vscode.window.activeTextEditor = fakeEditor("abc", [0, 3]);
   assert.strictEqual(await stub.commands.get(t.CONVERT_TEMPORAL)(), undefined);

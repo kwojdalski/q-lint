@@ -1,8 +1,8 @@
 // The function profile (#987): the namespace checked, the process's answer
 // read, the table and the flame chart worked out - and, through the stand-in
 // `vscode` and a q process played by a socket server, the command's life:
-// off, it refuses and sends nothing; on, it sends the profile and then the
-// cleanup; and the read-only guard asks first on a guarded process whatever
+// off, it refuses and sends nothing; on, it reads the namespace's functions,
+// sends them back with the timing in their text, and then the cleanup; and the read-only guard asks first on a guarded process whatever
 // the query, since the run replaces its functions. The q side is
 // profile_q.test.js.
 const { stub, vscode } = require("./vscode_stub.js");
@@ -10,7 +10,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const net = require("node:net");
 const { serialize, deserialize } = require("node-q/lib/c.js");
-const { PROFILE, PROFILE_CLEANUP, namespaceProblem, readProfile, functionStats, flame, profileView } = require("../out/profile.js");
+const { PROFILE, PROFILE_READ, PROFILE_CLEANUP, namespaceProblem, profileText, readProfile, functionStats, flame, profileView } = require("../out/profile.js");
 const { registerFunctionProfile, PROFILE_FUNCTIONS, namespaceIn, guardedCode } = require("../out/profileview.js");
 const { guardCheck } = require("../out/guard.js");
 const { Live } = require("../out/live.js");
@@ -30,7 +30,11 @@ const RAW = [
   [".ns.top", ".ns.a", ".ns.b", ".ns.a", ".ns.a"],
   [0, 100, 600, 200, 700],
   [1000, 400, 300, 100, 200],
+  [],
+  [],
 ];
+// What the process answers of the namespace's functions.
+const READ = { name: [".ns.top", ".ns.a", ".ns.b"], text: ["{[] .ns.a 1; .ns.b[]}", "{$[x>0;.z.s x-1;x]}", "{[] .ns.a 0}"] };
 
 test("a namespace is a top-level dotted name, and not q's own", () => {
   assert.strictEqual(namespaceProblem(".lib"), undefined);
@@ -46,17 +50,38 @@ test("a namespace is a top-level dotted name, and not q's own", () => {
   assert.strictEqual(namespaceIn("1+1"), undefined);
 });
 
+test("the timing goes into a function's own text: where its body starts, and where it hands a value back or signals", () => {
+  const entry = (name) => `qlintprof:$[\`prof in key\`.qlint;.qlint.prof.in\`${name};::];`;
+  assert.strictEqual(profileText("{x+1}", ".ns.f"), `{${entry(".ns.f")}qlintprof@x+1}`);
+  assert.strictEqual(profileText("{[a;b] c:a+b; c}", ".ns.f"), `{[a;b]${entry(".ns.f")} c:a+b; qlintprof@c}`);
+  // An early return and a signal close the call too; a nested lambda's are
+  // its own, and a `'` that is an adverb is none.
+  assert.strictEqual(
+    profileText("{[x] if[x<0; 'neg]; if[x=0; :0]; r:{:x}each x,'x; $[x>9; :9; r]}", "f"),
+    `{[x]${entry("f")} if[x<0; 'qlintprof@neg]; if[x=0; :qlintprof@0]; r:{:x}each x,'x; qlintprof@$[x>9; :qlintprof@9; r]}`,
+  );
+  // Nothing handed back: the call still ends.
+  assert.strictEqual(profileText("{[] a::1;}", "f"), `{[]${entry("f")} a::1;qlintprof[::]}`);
+  assert.strictEqual(profileText("{}", "f"), `{${entry("f")}qlintprof[::]}`);
+  // Not one lambda, or a name that is no name: no timing.
+  assert.strictEqual(profileText("k){x+1}", ".ns.f"), undefined);
+  assert.strictEqual(profileText("{x}[1]", ".ns.f"), undefined);
+  assert.strictEqual(profileText("{x}", ".ns.a b"), undefined);
+});
+
 test("the answer is read, and one function or one call reads as atoms", () => {
   const p = readProfile(RAW, ".ns");
   assert.strictEqual(p.calls, 5);
   assert.deepStrictEqual(p.recorded[3], { id: 4, parent: 2, fn: ".ns.a", start: 200, duration: 100 });
-  const one = readProfile([5, 1, "", 1, ".ns.g", 1, 0, ".ns.g", 3, 4], ".ns");
+  const one = readProfile([5, 1, "", 1, ".ns.g", 1, 0, ".ns.g", 3, 4, ".ns.k", ".ns.g"], ".ns");
   assert.deepStrictEqual(one.functions, [".ns.g"]);
+  assert.deepStrictEqual(one.untimed, [".ns.k"]);
+  assert.deepStrictEqual(one.kept, [".ns.g"]);
   assert.deepStrictEqual(one.recorded, [{ id: 1, parent: 0, fn: ".ns.g", start: 3, duration: 4 }]);
-  const none = readProfile([5, 1, "", 0, [], [], [], [], [], []], ".ns");
+  const none = readProfile([5, 1, "", 0, [], [], [], [], [], [], [], []], ".ns");
   assert.deepStrictEqual(none.recorded, []);
   assert.throws(() => readProfile("junk", ".ns"), /something other than a profile/);
-  assert.throws(() => readProfile([1, 1, "", 1, [], [1, 2], [0], [], [], []], ".ns"), /profile/);
+  assert.throws(() => readProfile([1, 1, "", 1, [], [1, 2], [0], [], [], [], [], []], ".ns"), /profile/);
 });
 
 test("the table counts a recursive call once in the total, and self time without the calls made", () => {
@@ -84,7 +109,7 @@ test("the flame chart merges calls by their path of callers, widest first", () =
 test("the page writes a time as linetimings does, the unit picked as rounded (#1804)", () => {
   const page = loadSmallPage(["profile.js"]);
   const shown = (ns) => {
-    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: ns, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 1, stats: [], frames: [] });
+    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: ns, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 1, untimed: [], kept: [], stats: [], frames: [] });
     return page.posted.at(-1).rendered.summary.match(/ in (.*?)\.$/)[1];
   };
   assert.strictEqual(shown(999600), "1.00 ms");
@@ -96,11 +121,24 @@ test("the page writes a time as linetimings does, the unit picked as rounded (#1
   }
 });
 
+test("the panel names the functions the run defined anew, and says only of the others that they were put back (#2980)", () => {
+  const page = loadSmallPage(["profile.js"]);
+  const notes = (kept) => {
+    page.send({ type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 1, recorded: 1, functions: 2, untimed: [], kept, stats: [], frames: [] });
+    return page.body.textContent;
+  };
+  assert.match(notes([]), /Every function was put back as it was\./);
+  const one = notes([".ns.f"]);
+  assert.doesNotMatch(one, /Every function was put back/);
+  assert.match(one, /The run itself defined \.ns\.f anew: it is as the run left it\. Every other function was put back as it was\./);
+  assert.match(notes([".ns.f", ".ns.g"]), /The run itself defined \.ns\.f, \.ns\.g anew: they are as the run left them\. Every other function was put back as it was\./);
+});
+
 test("the profile keeps the sort chosen when its tab is hidden and shown again, which reloads the page (#2080)", () => {
   let state;
   const api = () => ({ postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))), getState: () => state, setState: (s) => (state = JSON.parse(JSON.stringify(s))) });
   let posted = [];
-  const profile = { type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 3, recorded: 3, functions: 2, stats: [{ fn: ".ns.a", calls: 2, total: 4, self: 4, mean: 2, max: 3 }, { fn: ".ns.b", calls: 1, total: 6, self: 6, mean: 6, max: 6 }], frames: [] };
+  const profile = { type: "profile", id: 1, namespace: ".ns", process: "dev", code: "f[]", total: 10, overheadPerCall: 0, overheadTotal: 0, error: "", calls: 3, recorded: 3, functions: 2, untimed: [], kept: [], stats: [{ fn: ".ns.a", calls: 2, total: 4, self: 4, mean: 2, max: 3 }, { fn: ".ns.b", calls: 1, total: 6, self: 6, mean: 6, max: 6 }], frames: [] };
   const first = loadSmallPage(["profile.js"], { acquireVsCodeApi: api });
   first.send(profile);
   assert.strictEqual(posted.at(-1).rendered.sortedBy, "total desc");
@@ -137,7 +175,7 @@ test("the switch is declared on, and the command only where it can run", () => {
 });
 
 /// A q process played by a socket server, answering every message with
-/// `answer`; the messages are kept, decoded.
+/// what `answer` makes of it, decoded; the messages are kept.
 async function fakeQ(answer) {
   const sent = [];
   const sockets = new Set();
@@ -157,7 +195,7 @@ async function fakeQ(answer) {
         const message = buffer.subarray(0, buffer.readUInt32LE(4));
         buffer = buffer.subarray(message.length);
         sent.push(deserialize(message));
-        const out = serialize(answer);
+        const out = serialize(answer(sent.at(-1)));
         out.writeUInt8(2, 1);
         socket.write(out);
       }
@@ -202,12 +240,12 @@ function fakePanels() {
   return panels;
 }
 
-async function setUp(t, tags, config = {}) {
+async function setUp(t, tags, config = {}, more = {}) {
   stub.reset();
   Object.assign(stub.config.user, config);
-  const q = await fakeQ(RAW);
+  const q = await fakeQ((message) => (message[0] === PROFILE_READ ? READ : RAW));
   const context = stub.newContext();
-  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags }]);
+  await context.globalState.update("q-lint.processes", [{ label: "rdb", host: "127.0.0.1", port: q.port, tags, ...more }]);
   const live = new Live(context);
   const profile = registerFunctionProfile(context, live);
   t.after(async () => {
@@ -231,7 +269,8 @@ test("off, the command refuses and sends nothing; on, the profile runs, is clean
   stub.changeConfig("q-lint.query.functionProfile.enable");
   const view = await stub.commands.get(PROFILE_FUNCTIONS)(".ns", ".ns.top[]");
   assert.deepStrictEqual(q.sent.slice(before), [
-    [PROFILE, ".ns", [".ns.top[]"]],
+    [PROFILE_READ, ".ns"],
+    [PROFILE, ".ns", READ.name, READ.text, READ.text.map((text, i) => profileText(text, READ.name[i])), [".ns.top[]"]],
     [PROFILE_CLEANUP, 0],
   ]);
   assert.strictEqual(view.stats.length, 3);
@@ -255,6 +294,27 @@ test("off, the command refuses and sends nothing; on, the profile runs, is clean
   assert.strictEqual(q.sent.length, sent);
 });
 
+// The wrappers and the statements went to the gateway as they were, where
+// Run Query sends the same code to its servers: it profiled the gateway's
+// functions, or failed there on the servers' table (#3060).
+test("on a TorQ gateway the profile refuses code Run Query sends to the servers, and sends nothing (#3060)", async (t) => {
+  const panels = fakePanels();
+  const { q, live } = await setUp(t, [], {}, { gateway: ["rdb"] });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  assert.strictEqual(
+    await stub.commands.get(PROFILE_FUNCTIONS)(".stats", ".stats.vwap[select from trade where sym=`AAPL]"),
+    "q-lint: Profile Functions runs the code in q-lint's own q, which on the TorQ gateway rdb would run it on the gateway itself, not through .gw.syncexec on its servers as Run Query does. Use Run Query there.",
+  );
+  assert.strictEqual(q.sent.length, before);
+  assert.strictEqual(panels.length, 0);
+  // The gateway's own code is profiled there, as Run Query runs it there.
+  await stub.commands.get(PROFILE_FUNCTIONS)(".gw", ".gw.getserverids[`rdb]");
+  const sent = q.sent.slice(before);
+  assert.deepStrictEqual(sent.map((m) => [m[0], m[1]]), [[PROFILE_READ, ".gw"], [PROFILE, ".gw"], [PROFILE_CLEANUP, 0]]);
+  assert.deepStrictEqual(sent[1].at(-1), [".gw.getserverids[`rdb]"]);
+});
+
 test("on a guarded process the run is held until confirmed, even for a query that only reads", async (t) => {
   fakePanels();
   const { q, live } = await setUp(t, ["prod"]);
@@ -266,7 +326,7 @@ test("on a guarded process the run is held until confirmed, even for a query tha
   assert.strictEqual(q.sent.length, before);
   stub.picks.push("Run Anyway");
   await stub.commands.get(PROFILE_FUNCTIONS)(".ns", "count trade");
-  assert.deepStrictEqual(q.sent.slice(before).map((m) => m[0]), [PROFILE, PROFILE_CLEANUP]);
+  assert.deepStrictEqual(q.sent.slice(before).map((m) => m[0]), [PROFILE_READ, PROFILE, PROFILE_CLEANUP]);
 });
 
 test("the profile table's sort headers are buttons with aria-sort, and keep the focus as they sort (#1252)", () => {
@@ -295,7 +355,7 @@ test("the profile table's sort headers are buttons with aria-sort, and keep the 
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "media", "profile.js"), "utf8"), sandbox);
   const stat = (fn, calls) => ({ fn, calls, total: calls, self: calls, mean: 1, max: 1 });
-  const data = { type: "profile", id: 1, code: "f[]", process: "dev", namespace: ".ns", functions: 2, calls: 3, recorded: 3, total: 3, overheadPerCall: 1, overheadTotal: 3, stats: [stat(".ns.a", 1), stat(".ns.b", 2)], frames: [] };
+  const data = { type: "profile", id: 1, code: "f[]", process: "dev", namespace: ".ns", functions: 2, untimed: [], kept: [], calls: 3, recorded: 3, total: 3, overheadPerCall: 1, overheadTotal: 3, stats: [stat(".ns.a", 1), stat(".ns.b", 2)], frames: [] };
   listeners.forEach((f) => f({ data }));
   const ths = () => body.all((e) => e.tagName === "TH");
   assert.deepStrictEqual(ths().map((th) => th.getAttribute("aria-sort")), ["none", "none", "descending", "none", "none", "none"]);
@@ -309,7 +369,7 @@ test("the profile table's sort headers are buttons with aria-sort, and keep the 
   delete Element.prototype.appendChild;
 });
 
-test("turned off while it asks for the namespace, no wrapper is installed (#1453)", async (t) => {
+test("turned off while it asks for the namespace, no function is replaced (#1453)", async (t) => {
   const panels = fakePanels();
   const { q, live } = await setUp(t, [], { "query.functionProfile.enable": true });
   await live.connectTo("rdb");

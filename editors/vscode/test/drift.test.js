@@ -31,6 +31,12 @@ test("a KDB-X module's definitions are named in its context, .m.<module> (#2321)
   assert.strictEqual(moduleContext("pkg\\sub\\init.q"), ".m.pkg.0sub");
   assert.strictEqual(moduleContext("init.q"), ".m.init");
   assert.strictEqual(moduleContext("my-mod/init.q"), undefined);
+  // The path a view names it by: the workspace's, or the file's own (#2917).
+  const { modulePathOf } = require("../out/definitions.js");
+  assert.strictEqual(modulePathOf("/w/pkg/sub/init.q", "pkg/sub/init.q"), "pkg/sub/init.q");
+  assert.strictEqual(modulePathOf("/x/mymod/init.q", "/x/mymod/init.q"), "mymod/init.q");
+  assert.strictEqual(modulePathOf("C:\\x\\mymod\\init.q", undefined), "mymod/init.q");
+  assert.strictEqual(modulePathOf("C:\\x\\mymod.q", "C:\\x\\mymod.q"), "mymod.q");
 });
 
 test("definitions: top-level lambdas, in their context, with their lines", () => {
@@ -83,6 +89,49 @@ test("definitions: top-level lambdas, in their context, with their lines", () =>
   );
   // An unclosed lambda, or a global assign, is no definition.
   assert.deepStrictEqual(definitions("f:{x\ng::{x}\n"), []);
+});
+
+// q runs `q)g:{x}` as `g:{x}`: left out, a changed `q)` function was never
+// compared, reloaded or documented (#3009).
+test("definitions: one behind q) prompts is a definition, in its context, and one behind k) is none (#3009)", () => {
+  const text = ["f:{x}", "q)g:{x}", "q)q) g2:{x+1}", "k)q)g3:{x+2} / note", "q)g4:{[a]", "  a}", "k)h:{x}", "q)k)h2:{x}", "\\d .ns", "q)g:{x*2}", "q).o.g:{x}", "q)v:42", "q)p:{x+y}[1]"].join("\r\n");
+  assert.deepStrictEqual(definitions(text), [
+    { name: "f", text: "{x}", line: 0, endLine: 0 },
+    { name: "g", text: "{x}", line: 1, endLine: 1 },
+    { name: "g2", text: "{x+1}", line: 2, endLine: 2 },
+    { name: "g3", text: "{x+2}", line: 3, endLine: 3 },
+    { name: "g4", text: "{[a]\n  a}", line: 4, endLine: 5 },
+    { name: ".ns.g", text: "{x*2}", line: 9, endLine: 9 },
+    { name: ".o.g", text: "{x}", line: 10, endLine: 10 },
+  ]);
+  // Only at the statement's start: in a string or a lambda it is no prompt.
+  assert.deepStrictEqual(definitions("a:\"q)f:{x}\"\n"), []);
+});
+
+// KDB-X defines each of these from the file (drift_q.test.js); none was read.
+test("definitions sharing a line, and names with _ or a digit after a dot, are read (#2921)", () => {
+  const read = (text) => definitions(text).map((d) => [d.name, d.text, d.line, d.endLine]);
+  assert.deepStrictEqual(read("h:{x};k:{y}\n.ns._g:{x}\n.ns.1a:{x}"), [
+    ["h", "{x}", 0, 0],
+    ["k", "{y}", 0, 0],
+    [".ns._g", "{x}", 1, 1],
+    [".ns.1a", "{x}", 2, 2],
+  ]);
+  // Beside other code, and each on the lines it spans.
+  assert.deepStrictEqual(read("a:1;m:{x*2} / c;n:{x}\nt:{x}[1];u:{z};\nv:{[a;b]\n  a+b};w:{x}"), [
+    ["m", "{x*2}", 0, 0],
+    ["u", "{z}", 1, 1],
+    ["v", "{[a;b]\n  a+b}", 2, 3],
+    ["w", "{x}", 3, 3],
+  ]);
+  // A `;` in a string, a bracket or a lambda separates nothing.
+  assert.deepStrictEqual(read('s:"a;b:{";c:{x;y}\nd:(1;e:{x})'), [["c", "{x;y}", 0, 0]]);
+  // One after a `system "d .ns"` on its line is defined there, as q does it.
+  assert.deepStrictEqual(read('\\d .dd\nq1:{x};system "d .ee";q2:{y}\nq3:{z}').map((d) => d[0]), [".dd.q1", ".ee.q2", ".ee.q3"]);
+  // k's lambdas are not q's to compare or send, and `::` here makes a view.
+  assert.deepStrictEqual(read("k)f:{x};g:{y}\nf::{x+1}\nn :: {x}"), []);
+  // Only those before any switch are a module's own.
+  assert.deepStrictEqual(definitions('h:{x};system "d .o";k:{y}\nexport:([h])', "modd/init.q").map((d) => d.name), [".m.modd.h", ".o.k"]);
 });
 
 test("texts compare without trailing blanks", () => {

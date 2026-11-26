@@ -23,7 +23,12 @@ pub fn literal_type(text: &str) -> Option<i16> {
     if text.is_empty() {
         return None;
     }
-    if text == "()" {
+    // Blanks between the parentheses are still the empty list: `( )`.
+    if text
+        .strip_prefix('(')
+        .and_then(|t| t.strip_suffix(')'))
+        .is_some_and(|t| t.trim().is_empty())
+    {
         return Some(0);
     }
     if text.starts_with('{') {
@@ -48,6 +53,23 @@ pub fn literal_type(text: &str) -> Option<i16> {
         return Some(atom(t));
     }
     numbers(&tokens).map(atom)
+}
+
+/// How many items the literal `text` holds, when `literal_type` reads it
+/// as a list: a simple vector, or `()`, which holds none.
+pub(crate) fn literal_count(text: &str) -> Option<usize> {
+    let kind = literal_type(text)?;
+    let text = text.trim_matches([' ', '\t', '\n', '\r']);
+    match kind {
+        0 => Some(0),
+        10 => string_length(text),
+        11 => symbols(text),
+        // A boolean or byte vector is one token, an item per digit or pair.
+        1 => Some(text.len() - 1),
+        4 => Some((text.len() - 2) / 2),
+        2..20 => Some(text.split_ascii_whitespace().count()),
+        _ => None,
+    }
 }
 
 /// A brace group that closes at the end of `text`: one lambda, not one
@@ -116,8 +138,13 @@ fn string_length(text: &str) -> Option<usize> {
 /// How many symbols `` `a`b `` writes, when `text` is only backticks and
 /// the characters a symbol literal continues with. A `/` continues one only
 /// after a `:` in it: KDB-X's `` `:a/b `` is a symbol, `` `a/ `` a derived
-/// function and `` `.a/b `` an error (#1245).
+/// function and `` `.a/b `` an error (#1245). An underscore straight after
+/// the first backtick is drop, not a name's: KDB-X parses `` `_a `` as
+/// `` ` _ a `` and raises 'a, though `` `a`_b `` is two symbols.
 fn symbols(text: &str) -> Option<usize> {
+    if text.starts_with("`_") {
+        return None;
+    }
     let mut colon = false;
     text.chars()
         .all(|c| {
@@ -174,7 +201,9 @@ fn suffix_type(letter: u8) -> Option<i16> {
 
 /// The vector type of numbers written `1 2.5 0N`, with an optional type
 /// letter on the last: a float where any is written with a point or is a
-/// float null or infinity, a long otherwise.
+/// float null or infinity, a long otherwise. Nothing where a whole number is
+/// past the largest its type holds, which q refuses: `32768h`, `-32768h`
+/// and `9223372036854775808` alike, though not as a float (#2672).
 fn numbers(tokens: &[&str]) -> Option<i16> {
     let (last, rest) = tokens.split_last()?;
     let (last, letter) = match last.as_bytes().last() {
@@ -187,6 +216,9 @@ fn numbers(tokens: &[&str]) -> Option<i16> {
         _ => (*last, None),
     };
     let mut float = false;
+    // The largest whole number written, sign aside: more digits than a
+    // `u64` holds is past every type's.
+    let mut largest = 0u64;
     for token in rest.iter().copied().chain([last]) {
         match token {
             "0N" | "0W" | "-0W" => {}
@@ -201,15 +233,29 @@ fn numbers(tokens: &[&str]) -> Option<i16> {
                     return None;
                 }
                 float |= digits.contains('.');
+                let whole = whole.trim_start_matches('0');
+                largest = largest.max(match whole {
+                    "" => 0,
+                    _ => whole.parse().unwrap_or(u64::MAX),
+                });
             }
         }
     }
+    let fits = |t: i16| {
+        let most = match t {
+            5 => i16::MAX as u64,
+            6 => i32::MAX as u64,
+            _ => i64::MAX as u64,
+        };
+        (largest <= most).then_some(t)
+    };
     match (letter, float) {
         // A point or a float null under an integer's letter is refused.
         (Some(5..=7), true) => None,
+        (Some(t @ 5..=7), false) => fits(t),
         (Some(t), _) => Some(t),
         (None, true) => Some(9),
-        (None, false) => Some(7),
+        (None, false) => fits(7),
     }
 }
 
@@ -326,6 +372,9 @@ pub struct Typed {
     /// Whether some assignment is `""`, a vector of no items: q joins one
     /// to a list of any type into that list's type, `"",1 2` is 1 2 (7h).
     pub empty: bool,
+    /// How many items it holds, where it is a list and every assignment
+    /// gives it as many.
+    pub count: Option<usize>,
 }
 
 /// Each local in `raw` whose type its assignments settle. `code` is the
@@ -367,12 +416,13 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
                 continue;
             }
             let local = super::navigate::local_of(code, raw, &scopes, s, name);
-            if let Some((kind, end, empty)) = settled(code, comments, &local, &sigs) {
+            if let Some((kind, end, empty, count)) = settled(code, comments, &local, &sigs) {
                 out.push(Typed {
                     local,
                     kind,
                     end,
                     empty,
+                    count,
                 });
             }
         }
@@ -382,16 +432,17 @@ pub fn typed_locals_up_to(code: &str, raw: &str, comments: &str, most: usize) ->
 }
 
 /// The one type every write of `local` gives it, when each is a plain
-/// assignment of a literal, with where the first one's value ends and
-/// whether any is `""`.
+/// assignment of a literal, with where the first one's value ends,
+/// whether any is `""`, and the one count of items they all have.
 fn settled(
     code: &str,
     comments: &str,
     local: &Local,
     sigs: &[(usize, usize)],
-) -> Option<(i16, usize, bool)> {
+) -> Option<(i16, usize, bool, Option<usize>)> {
     let mut found: Option<(i16, usize)> = None;
     let mut empty = false;
+    let mut counts: Vec<Option<usize>> = vec![];
     for place in local.places.iter().filter(|p| p.write) {
         // A typed parameter, `{[a:`j] ...}` (q 4.1), is no assignment: `a`
         // is whatever the caller passes, checked to be a long.
@@ -402,13 +453,19 @@ fn settled(
         let text = &comments[value.clone()];
         let t = literal_type(text)?;
         empty |= text.trim() == "\"\"";
+        counts.push(literal_count(text));
         match found {
             Some((k, _)) if k != t => return None,
             Some(_) => {}
             None => found = Some((t, value.start + text.trim_end().len())),
         }
     }
-    found.map(|(t, end)| (t, end, empty))
+    let count = counts
+        .first()
+        .copied()
+        .flatten()
+        .filter(|_| counts.windows(2).all(|w| w[0] == w[1]));
+    found.map(|(t, end)| (t, end, empty, count))
 }
 
 /// Each lambda signature in `code`, `{[...]`, as the bytes between its

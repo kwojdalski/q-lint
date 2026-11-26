@@ -1798,6 +1798,12 @@ test("the debugger's breakpoints patch a function in place: .Q.bs and what it ca
   assert.deepStrictEqual(writes(".Q.BP"), []);
 });
 
+test("-36! loads an encryption master key, which reval does not survive: it is asked about (#2630)", () => {
+  for (const code of ["first -36!(`:k;\"p\")", "-36!(`:f;\"pwd\")", "(-36)!(`:f;\"pwd\")", "{-36!x}(`:f;\"p\")"]) {
+    assert.deepStrictEqual(writes(code), ["loads an encryption master key with -36!"], code);
+  }
+});
+
 test("a writer picked out of .h by any index is called, as out of .q and .Q (#2272)", () => {
   const asks = [".h[`ht]`g", "(.h`ht)`g", "(.h@`ht)`g", "(get`.h)[`ht]`g", "(value`.h)`ht", ".h[`$\"ht\"]`g", "{.h[x]}[`ht]`g", ".h[`val]\"a:77\"", "(.h . enlist`ht)`g", ".h[`$\"h\",\"t\"]`g"];
   for (const code of asks) {
@@ -2028,4 +2034,124 @@ test("an assignment call after an operator applied infix, and a lambda iterated 
   // `each` takes the function on its left: what is left of that is not its argument.
   assert.deepStrictEqual(writes("enlist {update v:77 from x} each enlist {`e}[]"), ["updates what ({`e}[]) names in place"]);
   assert.deepStrictEqual(writes("count{x+1}'[1 2]"), []);
+});
+
+test("csv, q's own \",\", is a format on the left of 0: - text prepared, no file written (#2643)", () => {
+  for (const code of ["csv 0: t", ".q.csv 0: t", "(csv) 0: t", "-1 csv 0: t"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("`:f.csv 0: csv 0: t"), ["writes the file `:f.csv with 0:"]);
+  assert.deepStrictEqual(writes("h 0: t"), ["writes a file with 0:"]);
+});
+
+test("hopen of an http or https URL, as .Q.hg opens it, connects: no file is opened (#2646)", () => {
+  for (const code of ["hopen `:http://example.com", "hopen `:https://example.com:443"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("hopen `:http.txt"), ["opens the file `:http.txt with hopen"]);
+});
+
+test("handle 0 written with extra zeros is handle 0: the string is evaluated there (#2623)", () => {
+  for (const code of ['00"a:1"', '0000"a:1"', '00i"a:1"', '-00"a:1"', '(00)"a:1"', '00j@"a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  assert.deepStrictEqual(writes('00"count t"'), []);
+});
+
+test("the expression after \\t or \\ts is read whole: a \" /\" in a string in it hides nothing (#2622)", () => {
+  assert.deepStrictEqual(writes('\\t count " /";zz::1'), ["assigns zz"]);
+  assert.deepStrictEqual(writes('\\ts {x} " /";`zz set 1'), ["calls set"]);
+  assert.deepStrictEqual(writes('\\t "a /b";hdel `:f'), ["calls hdel"]);
+  // A comment after it is still none of it.
+  assert.deepStrictEqual(writes("\\t count t /zz::1"), []);
+});
+
+test("\\v, \\f, \\a and \\b given a namespace list its names: a read (#2645)", () => {
+  for (const code of ["\\v .q", "\\f .q", "\\a .", "\\b .ns", "\\v .a.b", 'system "v .q"', 'system "f .q"']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("\\v x"), ["runs the system command \\v"]);
+});
+
+test("the workers of .Q.L and .Q.bv, and .Q.dbg, assign globals or load a database: they are writers (#2631)", () => {
+  for (const name of [".Q.MAP", ".Q.L1", ".Q.bvfp", ".Q.dbg"]) {
+    assert.deepStrictEqual(writes(`${name}[x]`), [`calls ${name}`], name);
+  }
+  assert.deepStrictEqual(writes(".Q.MAP[]"), ["calls .Q.MAP"]);
+});
+
+test(".z.ph and .h.jx value the query string they are given, as .h.val does: they are asked about (#2632)", () => {
+  assert.deepStrictEqual(writes('.z.ph("?zp:1";()!())'), ["calls .z.ph"]);
+  assert.deepStrictEqual(writes('.h.jx[0j;"zz:1"]'), ["calls .h.jx"]);
+  assert.deepStrictEqual(writes('.h.jx[0j] "zz:1"'), ["calls .h.jx"]);
+});
+
+test("upsert on a value - a name alone or a table written out - gives a new table: a read (#2644)", () => {
+  for (const code of ["t upsert s", "([]a:1 2) upsert ([]a:enlist 3)", "kt upsert s", "([k:1 2]v:3 4) upsert (1;5)", "d upsert `a`b!1 2"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  // On a symbol, in brackets, or inside a lambda given a name, it is asked about.
+  for (const code of ["`t upsert s", "(`t) upsert s", "`:db/t/ upsert s", "upsert[`t;s]", "{x upsert y}[`t;s]"]) {
+    assert.ok(writes(code).includes("calls upsert"), code);
+  }
+  // What the right side does is still read.
+  assert.deepStrictEqual(writes("t upsert `:f set 1"), ["calls set"]);
+});
+
+test("embedPy and PyKX named by a symbol run Python as their names do (#2636)", () => {
+  const cases = {
+    '`.p.e "import os"': [".p.e"], '`.p.e @ "import os"': [".p.e"], 'value[`.p.e] "import os"': [".p.e"],
+    'get[`.pykx.pyexec] "import os"': [".pykx.pyexec"], '(`.pykx.pyexec) "import os"': [".pykx.pyexec"], '(`$".p.e") "import os"': [".p.e"],
+  };
+  for (const [code, [name]] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [`runs Python with ${name}`], code);
+  }
+  // Its namespace listed is a read.
+  assert.deepStrictEqual(writes("key `.p"), []);
+});
+
+test("handle 0 given to apply or a trap, or applied by each or peach, evaluates the strings it is given (#2625, #2626)", () => {
+  for (const code of ['@[0;"a:1"]', '.[0;enlist"a:1"]', '@[0;"a:1";::]', '.[0;enlist"a:1";::]', '0 each enlist "a:1"', '(0)each enlist"a:1"', '0 peach enlist "a:1"', '(0 each) enlist "a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  // A string that only reads, reads.
+  assert.deepStrictEqual(writes('0 each enlist "count t"'), []);
+  assert.deepStrictEqual(writes('@[0;"count t"]'), []);
+});
+
+test("an evaluator derived by each or peach in brackets, or passed as an argument, runs the strings and trees around it (#2627)", () => {
+  const cases = {
+    '(value each) enlist "k1:1"': "evaluates a string with value",
+    '@[value each;enlist"k2:1"]': "evaluates a string with value",
+    '.[value each;enlist enlist"k3:1"]': "evaluates a string with value",
+    '{x y}[value each;enlist "k4:1"]': "evaluates a string with value",
+    '.Q.fu[value peach;enlist"k5:1"]': "evaluates a string with value",
+    '(get peach) enlist "k9:1"': "evaluates a string with get",
+    "(eval each) enlist (:;`zz;1)": "evaluates an assignment with eval",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  assert.deepStrictEqual(writes('(value each) enlist "count t"'), []);
+});
+
+test("a lambda parse or -5! makes of a string, applied, runs; one -9! deserialises, applied, is asked about (#2633, #2634)", () => {
+  assert.deepStrictEqual(writes('(parse "{zz::1}")[]'), ["applies what parse makes of a string that changes the process"]);
+  assert.deepStrictEqual(writes('(-5!"{zz::1}")[]'), ["applies what -5! makes of a string that changes the process"]);
+  assert.deepStrictEqual(writes("(-9!0x010000001800000064000a00080000007b7a7a393a3a317d)[]"), ["applies a value -9! deserialises, which the guard cannot read"]);
+  assert.deepStrictEqual(writes("(-9!0x0100)@1"), ["applies a value -9! deserialises, which the guard cannot read"]);
+  // Made and not applied, or a lambda that only reads, is a read.
+  for (const code of ['parse "{zz::1}"', '(parse "{x+1}")[1]', '(-5!"{x+1}") 1', "-9!0x0100", "count -9!x"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a function named by a symbol cast from a string made at run time, applied, is asked about (#2629)", () => {
+  for (const code of ['(`$".q.",string`set) . (`b;1)', '(`$".q.","set")[`b;1]', "(`$x) . (`b;1)"]) {
+    assert.deepStrictEqual(writes(code), ["applies a function named by a symbol cast from what the guard cannot read"], code);
+  }
+  // Cast and not applied is a value.
+  for (const code of ['`$"a",x', "(`$x)", "count `$x", "(`$x),`a", "@[f;::;`$()]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
 });

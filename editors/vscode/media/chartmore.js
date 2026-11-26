@@ -64,6 +64,8 @@
   /// The book over `rows`: {bids, asks}, each [price, size] pairs with
   /// neither null and a size above zero, and the row read when the levels
   /// are lists (the first shown). Null when the grid holds no book.
+  /// `unsided` counts the rows whose side is neither buy nor sell (`1b`,
+  /// `long`): they are in no level, which is said, not kept quiet (#3144).
   function depthBook(grid, rows) {
     const cols = depthColumns(grid);
     if (!cols) {
@@ -109,12 +111,45 @@
       ap.forEach(function (p, i) { add(asks, p, as[i]); });
       return Object.assign({ mode: "lists", row: r, bids: bids, asks: asks }, cut ? { cut: true } : {});
     }
+    let unsided = 0;
     rows.forEach(function (r) {
       // A symbol shows as buy or `buy, a string as "buy" (one character ,"b").
       const side = grid.cells[cols.side][r].replace(/^`/, "").replace(/^,?"(.*)"$/, "$1");
-      add(BUY.test(side) ? bids : SELL.test(side) ? asks : [], v(cols.price, r), v(cols.size, r));
+      const into = BUY.test(side) ? bids : SELL.test(side) ? asks : null;
+      if (into) {
+        add(into, v(cols.price, r), v(cols.size, r));
+      } else {
+        unsided++;
+      }
     });
-    return { mode: "sides", bids: bids, asks: asks };
+    return { mode: "sides", bids: bids, asks: asks, unsided: unsided };
+  }
+
+  /// "12 rows have a side that is neither buy nor sell".
+  function unsidedText(n) {
+    return n.toLocaleString("en-US") + (n === 1 ? " row has" : " rows have") + " a side that is neither buy nor sell";
+  }
+
+  /// Whether a result is drawn as a depth chart by itself: its columns are
+  /// a book's (depthColumns) and its rows read as one book. Not a history -
+  /// quotes or trades, a row a time under a first column of times - whose
+  /// rows piled into one book gave a mid and a spread of -0.1 from the
+  /// whole of it (#3124); nor rows that cross, bids at or above asks, as a
+  /// history's do; nor a book with no level, as where no row's side is buy
+  /// or sell (#3144). Depth stays a kind to choose for each of them.
+  function depthByItself(grid) {
+    const cols = depthColumns(grid);
+    if (!cols || (cols.mode !== "lists" && grid.columns[0].temporal)) {
+      return false;
+    }
+    const rows = [];
+    for (let r = 0; r < grid.cells[0].length; r++) {
+      rows.push(r);
+    }
+    const book = depthBook(grid, rows);
+    const bid = book.bids.reduce(function (m, l) { return Math.max(m, l[0]); }, -Infinity);
+    const ask = book.asks.reduce(function (m, l) { return Math.min(m, l[0]); }, Infinity);
+    return book.bids.length + book.asks.length > 0 && bid < ask;
   }
 
   /// Sizes at one price summed, each side from its best price out, with
@@ -132,7 +167,7 @@
   }
 
   /// What a depth chart of `rows` draws: {type, depth, datasets, mid,
-  /// spread, note?}. The bid side is a step falling to the mid, the ask side
+  /// spread, unsided, note?}. The bid side is a step falling to the mid, the ask side
   /// one rising from it, each point {x: price, y: the size at that price
   /// and beyond}, in rising price, and `levels` the prices it has.
   function depthData(grid, rows) {
@@ -143,7 +178,7 @@
     const bids = cumulative(book.bids, true);
     const asks = cumulative(book.asks, false);
     if (bids.length === 0 && asks.length === 0) {
-      return { type: "line", depth: true, datasets: [], note: "The order book is empty: no level has a price and a size above zero." };
+      return { type: "line", depth: true, datasets: [], note: book.unsided ? "The order book is empty: " + unsidedText(book.unsided) + " (buy is b, bid or buy; sell is a, s, ask, sell or offer)." : "The order book is empty: no level has a price and a size above zero." };
     }
     const best = { bid: bids.length ? bids[0][0] : null, ask: asks.length ? asks[0][0] : null };
     const mid = best.bid !== null && best.ask !== null ? (best.bid + best.ask) / 2 : null;
@@ -161,6 +196,7 @@
       mode: book.mode,
       row: book.row,
       cut: book.cut === true,
+      unsided: book.unsided || 0,
       mid: mid,
       spread: best.bid !== null && best.ask !== null ? best.ask - best.bid : null,
       datasets: [
@@ -241,12 +277,27 @@
     return "#" + x.map(function (v, i) { return Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0"); }).join("");
   }
 
+  /// The `k`-th colour (from 0) for a value past the palette's: hues a
+  /// golden angle apart, so that no two near in turn are near in hue, in
+  /// two lightnesses. "#rrggbb".
+  function hueColour(k) {
+    const h = ((k * 137.508) % 360) / 60;
+    const l = k % 2 ? 0.44 : 0.62;
+    const c = (1 - Math.abs(2 * l - 1)) * 0.62;
+    const x = c * (1 - Math.abs((h % 2) - 1));
+    const m = l - c / 2;
+    const parts = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h) % 6];
+    return "#" + parts.map(function (v) { return Math.round((v + m) * 255).toString(16).padStart(2, "0"); }).join("");
+  }
+
   /// What a map of `rows` draws: {type, map, datasets: [{label, data,
-  /// colours}], legend, dropped, note?}. Each point {x: longitude, y:
+  /// colours}], legend, legendMore, dropped, note?}. Each point {x: longitude, y:
   /// latitude, r, row}. `size`: a numeric column whose square root scales
   /// the points from 3 to 15 pixels; `colour`: a column whose value colours
   /// them, a numeric one from the theme's first colour to its fourth, any
-  /// other one colour per value. -1 for neither. Rows with no position,
+  /// other one colour per value - the theme's, then further ones of their
+  /// own (#3141) - of which the legend names twelve, `legendMore` counting
+  /// the rest. -1 for neither. Rows with no position,
   /// or one off the map, are dropped and counted.
   function mapData(grid, rows, opts, look) {
     const cols = mapColumns(grid);
@@ -292,6 +343,7 @@
     };
     let colourOf = function () { return palette[0]; };
     const legend = [];
+    let more = 0;
     if (colour >= 0 && grid.columns[colour].numeric) {
       const span = range(colour);
       // One value alone is the legend's one entry, and drawn in its colour:
@@ -308,10 +360,32 @@
       }
     } else if (colour >= 0) {
       const seen = new Map();
+      // Past the palette's colours a value has one of its own: taken in
+      // turn again, the seventh value was drawn as the first (#3141).
+      // Nor, while there are few, one near a colour taken already.
+      const used = new Set(palette.map(function (c) { return String(c).toLowerCase(); }));
+      const near = function (c) {
+        const a = rgb(c);
+        return used.size < 24 && Array.from(used).some(function (u) {
+          const b = rgb(u);
+          return b && Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 96;
+        });
+      };
+      let hue = 0;
       kept.forEach(function (r) {
         const t = grid.cells[colour][r];
         if (!seen.has(t)) {
-          seen.set(t, palette[seen.size % palette.length]);
+          let c = palette[seen.size];
+          if (c === undefined) {
+            // In a few tries: there are only so many colours, and a
+            // column of thousands of values shares them.
+            let tries = 0;
+            do {
+              c = hueColour(hue++);
+            } while (++tries < 16 && (used.has(c) || near(c)));
+            used.add(c);
+          }
+          seen.set(t, c);
         }
       });
       seen.forEach(function (c, t) {
@@ -319,6 +393,7 @@
           legend.push({ label: t === "" ? "(null)" : t, colour: c });
         }
       });
+      more = seen.size - legend.length;
       colourOf = function (r) { return seen.get(grid.cells[colour][r]); };
     }
     const data = kept.map(function (r) { return { x: grid.values[cols.lon][r], y: grid.values[cols.lat][r], r: radius(r), row: r }; });
@@ -330,6 +405,7 @@
       size: size,
       colour: colour,
       legend: legend,
+      legendMore: more,
       dropped: dropped,
       datasets: [{ label: grid.columns[cols.lat].name + ", " + grid.columns[cols.lon].name, data: data, colours: kept.map(colourOf) }],
     };
@@ -498,9 +574,48 @@
     return hi - lo <= Math.abs(full || 0) / 200 ? null : { min: lo, max: hi };
   }
 
-  /// The points of a pane inside `range` ({min, max}), or all of them.
+  /// `range`, a zoom, while it meets the x that the points of `data`, a
+  /// linkedData(), span; null once they have moved out of it, as those of a
+  /// query run again for a later window have: every pane was empty (#3128).
+  function zoomOver(data, range) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    data.panes.forEach(function (p) {
+      p.data.forEach(function (pt) {
+        if (pt.y !== null && isFinite(pt.y)) {
+          lo = Math.min(lo, pt.x);
+          hi = Math.max(hi, pt.x);
+        }
+      });
+    });
+    return range && lo <= hi && (range.max < lo || range.min > hi) ? null : range || null;
+  }
+
+  /// The points of a pane (rising x) inside `range` ({min, max}), or all of
+  /// them, and a point where its line crosses an edge of the range: on
+  /// screen a zoomed pane clips the line at its edges, so that it runs
+  /// through, where the points inside alone left a gap to each edge, or
+  /// nothing between two points (#3130).
   function inRange(points, range) {
-    return range ? points.filter(function (p) { return p.x >= range.min && p.x <= range.max; }) : points;
+    if (!range) {
+      return points;
+    }
+    const valued = function (p) { return p.y !== null && isFinite(p.y); };
+    const out = [];
+    points.forEach(function (p, i) {
+      const from = points[i - 1];
+      if (from && valued(from) && valued(p)) {
+        [range.min, range.max].forEach(function (edge) {
+          if (from.x < edge && p.x > edge) {
+            out.push({ x: edge, y: from.y + ((p.y - from.y) * (edge - from.x)) / (p.x - from.x) });
+          }
+        });
+      }
+      if (p.x >= range.min && p.x <= range.max) {
+        out.push(p);
+      }
+    });
+    return out;
   }
 
   /// Chart.js's configuration for one pane of a linkedData(): its series
@@ -540,9 +655,18 @@
         }
       },
     };
+    // A value with a null (a gap) either side has no segment, and gets a
+    // point, as a line chart's does: a price set only on the rows that
+    // traded drew an empty pane (#3129).
+    const gap = function (p) { return !p || p.y === null; };
+    const isolated = function (ctx) {
+      const d = ctx.dataset.data;
+      const i = ctx.dataIndex;
+      return !gap(d[i]) && gap(d[i - 1]) && gap(d[i + 1]) ? 2 : 0;
+    };
     return {
       type: "line",
-      data: { datasets: [{ label: pane.label, column: pane.column, data: pane.data, borderColor: colour, backgroundColor: colour, pointRadius: 0, borderWidth: 1.5, spanGaps: false }] },
+      data: { datasets: [{ label: pane.label, column: pane.column, data: pane.data, borderColor: colour, backgroundColor: colour, pointRadius: isolated, borderWidth: 1.5, spanGaps: false }] },
       plugins: [crosshair],
       options: {
         animation: false,
@@ -565,39 +689,12 @@
 
   // --- SVG
 
-  /// Series of points on linear axes as an SVG document, drawn by hand as
-  /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
-  /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
-  /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
-  /// legend?} - `xWhole`, an x in whole units (dates), ticked by whole ones.
-  /// `opts`: {width, height, background, title, at} - `at`, a y offset, for
-  /// a pane inside another SVG.
-  function xySvg(spec, look, opts) {
-    opts = opts || {};
-    const W = opts.width || 800;
-    const H = opts.height || 450;
-    const xml = C.xml;
-    const fg = xml(look.foreground || "#333");
-    const border = xml(look.border || "#ccc");
-    const left = 64;
-    const right = 20;
-    const top = opts.title ? 40 : 16;
-    const bottom = spec.legend === false && !spec.xTitle ? 28 : 64;
-    const pw = W - left - right;
-    const ph = H - top - bottom;
-    const out = ['<svg xmlns="http://www.w3.org/2000/svg"' + (opts.at !== undefined ? ' x="0" y="' + opts.at + '"' : "") + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + xml(look.font || "sans-serif") + '" font-size="11">'];
-    if (opts.background) {
-      out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
-    }
-    if (opts.title) {
-      out.push('<text x="' + W / 2 + '" y="22" text-anchor="middle" font-size="14" fill="' + fg + '">' + xml(opts.title) + "</text>");
-    }
+  /// What an xySvg() `spec` spans: its points that have a value (`all`),
+  /// its x and y ranges, the y axis' ticks, those of them in range, and
+  /// the left margin their labels need (#3133).
+  function xyAxes(spec) {
     const all = [];
     spec.series.forEach(function (s) { s.points.forEach(function (p) { if (p.y !== null && isFinite(p.y)) { all.push(p); } }); });
-    if (all.length === 0 && !spec.outline) {
-      out.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.note || "Nothing to chart.") + "</text></svg>");
-      return out.join("\n");
-    }
     const extent = function (pick, fixed, zero) {
       if (fixed) {
         return fixed;
@@ -614,20 +711,65 @@
     };
     const xr = extent(function (p) { return p.x; }, spec.xRange, false);
     const yr = extent(function (p) { return p.y; }, spec.yRange, spec.series.some(function (s) { return s.area; }));
+    const yt = C.ticks(yr.lo, yr.hi);
+    const yValues = yt.values.filter(function (v) { return v >= yr.lo && v <= yr.hi; });
+    return { all: all, xr: xr, yr: yr, yt: yt, yValues: yValues, left: C.yMargin(yValues.map(function (v) { return C.short(v, yt.step); }), Boolean(spec.yTitle)) };
+  }
+
+  /// Series of points on linear axes as an SVG document, drawn by hand as
+  /// chartspec.js's chartSvg is: {series: [{label, colour, points: [{x, y,
+  /// r?, colour?}], mode: "line" | "before" | "after" | "points", area}],
+  /// xTitle, yTitle, xText(v, step), xWhole?, xRange?, yRange?, outline?,
+  /// legend?, legendItems?, legendMore?} - `xWhole`, an x in whole units
+  /// (dates), ticked by whole ones; `legendMore`, the entries the legend
+  /// leaves out, which it counts.
+  /// `opts`: {width, height, background, title, at, left} - `at`, a y offset,
+  /// for a pane inside another SVG, and `left`, the one margin of such panes,
+  /// so that their x axes line up.
+  function xySvg(spec, look, opts) {
+    opts = opts || {};
+    const W = opts.width || 800;
+    const H = opts.height || 450;
+    const xml = C.xml;
+    const fg = xml(look.foreground || "#333");
+    const border = xml(look.border || "#ccc");
+    const right = 20;
+    const top = opts.title ? 40 : 16;
+    const out = ['<svg xmlns="http://www.w3.org/2000/svg"' + (opts.at !== undefined ? ' x="0" y="' + opts.at + '"' : "") + ' width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + xml(look.font || "sans-serif") + '" font-size="11">'];
+    if (opts.background) {
+      out.push('<rect width="100%" height="100%" fill="' + xml(opts.background) + '"/>');
+    }
+    if (opts.title) {
+      out.push('<text x="' + W / 2 + '" y="22" text-anchor="middle" font-size="14" fill="' + fg + '">' + xml(opts.title) + "</text>");
+    }
+    const axes = xyAxes(spec);
+    if (axes.all.length === 0 && !spec.outline) {
+      out.push('<text x="' + W / 2 + '" y="' + H / 2 + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.note || "Nothing to chart.") + "</text></svg>");
+      return out.join("\n");
+    }
+    const xr = axes.xr;
+    const yr = axes.yr;
+    const yt = axes.yt;
+    const left = opts.left || axes.left;
+    const pw = W - left - right;
+    // The legend in as many rows as it takes (#3132), a third of the image
+    // at most.
+    const legend = spec.legend === false ? [] : C.legendRows(spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)), spec.legendMore);
+    const bottom = spec.legend === false && !spec.xTitle ? 28 : C.legendMargin(legend);
+    const ph = H - top - bottom;
     // Halved, so a span past the largest double does not overflow.
     const X = function (v) { return left + (xr.hi === xr.lo ? pw / 2 : ((v / 2 - xr.lo / 2) / (xr.hi / 2 - xr.lo / 2)) * pw); };
     const Y = function (v) { return top + ph - (yr.hi === yr.lo ? ph / 2 : ((v / 2 - yr.lo / 2) / (yr.hi / 2 - yr.lo / 2)) * ph); };
     const f = function (v) { return v.toFixed(1); };
     out.push('<clipPath id="plot' + (opts.at || 0) + '"><rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '"/></clipPath>');
-    const yt = C.ticks(yr.lo, yr.hi);
-    yt.values.filter(function (v) { return v >= yr.lo && v <= yr.hi; }).forEach(function (v) {
+    axes.yValues.forEach(function (v) {
       out.push('<line x1="' + left + '" x2="' + (left + pw) + '" y1="' + f(Y(v)) + '" y2="' + f(Y(v)) + '" stroke="' + border + '" stroke-width="0.5"/>');
       out.push('<text x="' + (left - 6) + '" y="' + f(Y(v)) + '" dy="0.32em" text-anchor="end" fill="' + fg + '">' + xml(C.short(v, yt.step)) + "</text>");
     });
     const xt = C.ticks(xr.lo, xr.hi, spec.xWhole);
-    xt.values.filter(function (v) { return v >= xr.lo && v <= xr.hi; }).forEach(function (v) {
-      out.push('<text x="' + f(X(v)) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + fg + '">' + xml(spec.xText ? spec.xText(v, xt.step) : C.short(v, xt.step)) + "</text>");
-    });
+    out.push.apply(out, C.xLabels(xt.values.filter(function (v) { return v >= xr.lo && v <= xr.hi; }).map(function (v) {
+      return { x: X(v), text: spec.xText ? spec.xText(v, xt.step) : C.short(v, xt.step) };
+    }), top + ph + 16, W, fg));
     out.push('<rect x="' + left + '" y="' + top + '" width="' + pw + '" height="' + ph + '" fill="none" stroke="' + border + '"/>');
     out.push('<g clip-path="url(#plot' + (opts.at || 0) + ')">');
     if (spec.outline) {
@@ -675,6 +817,10 @@
           out.push('<path d="' + d + " V" + base + " H" + f(pts[0][0]) + ' Z" fill="' + colour + '" fill-opacity="0.3" stroke="none"/>');
         }
         out.push('<path d="' + d + '" fill="none" stroke="' + colour + '" stroke-width="1.5"/>');
+        // A value alone between nulls is a point: its path is a move (#3129).
+        if (pts.length === 1) {
+          out.push('<circle cx="' + f(pts[0][0]) + '" cy="' + f(pts[0][1]) + '" r="2" fill="' + colour + '"/>');
+        }
       });
     });
     out.push("</g>");
@@ -684,14 +830,7 @@
     if (spec.yTitle) {
       out.push('<text transform="translate(14 ' + (top + ph / 2) + ') rotate(-90)" text-anchor="middle" fill="' + fg + '">' + xml(spec.yTitle) + "</text>");
     }
-    if (spec.legend !== false) {
-      let lx = left;
-      (spec.legendItems || spec.series.map(function (s) { return { label: s.label, colour: s.colour }; })).forEach(function (item) {
-        out.push('<rect x="' + lx + '" y="' + (H - 16) + '" width="10" height="10" fill="' + xml(item.colour) + '"/>');
-        out.push('<text x="' + (lx + 14) + '" y="' + (H - 7) + '" fill="' + fg + '">' + xml(item.label) + "</text>");
-        lx += 24 + item.label.length * 6.5;
-      });
-    }
+    out.push.apply(out, C.legendSvg(legend, H, fg));
     out.push("</svg>");
     return out.join("\n");
   }
@@ -718,6 +857,7 @@
       xTitle: "longitude",
       yTitle: "latitude",
       legendItems: data.legend && data.legend.length ? data.legend : undefined,
+      legendMore: data.legendMore,
       legend: Boolean(data.legend && data.legend.length),
       note: data.note,
     }, look, opts);
@@ -740,9 +880,9 @@
       out.push('<text x="' + W / 2 + '" y="18" text-anchor="middle" font-size="14" font-family="' + xml(look.font || "sans-serif") + '" fill="' + xml(look.foreground || "#333") + '">' + xml(opts.title) + "</text>");
     }
     const xRange = opts.range ? { lo: opts.range.min, hi: opts.range.max } : undefined;
-    data.panes.forEach(function (p, k) {
+    const specs = data.panes.map(function (p, k) {
       const last = k === data.panes.length - 1;
-      out.push(xySvg({
+      return {
         series: [{ label: p.label, colour: colours[k % colours.length], mode: "line", points: inRange(p.data, opts.range) }],
         xRange: xRange || (function () {
           let lo = Infinity;
@@ -755,7 +895,13 @@
         xTitle: last ? (data.x >= 0 ? grid.columns[0].name : "row") : "",
         yTitle: p.label,
         legend: false,
-      }, look, { width: W, height: each, at: (opts.title ? 24 : 0) + k * each }));
+      };
+    });
+    // One margin for every pane, the widest any needs, so that a time is
+    // at the same x in each (#3133).
+    const left = specs.reduce(function (w, spec) { return Math.max(w, xyAxes(spec).left); }, 0);
+    specs.forEach(function (spec, k) {
+      out.push(xySvg(spec, look, { width: W, height: each, at: (opts.title ? 24 : 0) + k * each, left: left }));
     });
     out.push("</svg>");
     return out.join("\n");
@@ -764,6 +910,8 @@
   const helpers = {
     depthColumns: depthColumns,
     depthBook: depthBook,
+    depthByItself: depthByItself,
+    unsidedText: unsidedText,
     depthData: depthData,
     depthTitle: depthTitle,
     depthConfig: depthConfig,
@@ -778,6 +926,7 @@
     readout: readout,
     zoomRange: zoomRange,
     inRange: inRange,
+    zoomOver: zoomOver,
     xText: xText,
     linkedConfig: linkedConfig,
     linkedSvg: linkedSvg,

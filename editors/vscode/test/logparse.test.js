@@ -75,6 +75,29 @@ test("KDB-X's error stamp is read as local time, beside TorQ's UTC lines (#2595)
   assert.strictEqual(parseLine("'2026.07.01T12:00:00.000 type").time, Date.UTC(2026, 6, 1, 16));
 });
 
+// The bounds are the times the user reads off the lines, and were held
+// against the error's time in UTC: "16:00 to 17:00" hid the 16:24 error.
+test("a time filter's bounds are held against the time a KDB-X error's line writes, its local time (#3043)", (t) => {
+  const tz = process.env.TZ;
+  t.after(() => (tz === undefined ? delete process.env.TZ : (process.env.TZ = tz)));
+  process.env.TZ = "America/New_York";
+  const out = [];
+  const b = new EntryBuilder("/l/err_rdb1.log", (e) => out.push(e));
+  ["2026.11.25D21:24:18.241112000|mac.lan|rdb|rdb1|ERR|init|about to fail", "'2026.11.25T16:24:19.278 type", "  [0] f 1"].forEach((l) => b.push(l));
+  b.flush();
+  const pass = (filter) => out.filter((x) => matches(x, { levels: [], processes: [], ...filter })).map((x) => x.lines[0].slice(0, 12));
+  assert.deepStrictEqual(pass({ from: "16:00", to: "17:00" }), ["'2026.11.25T"]);
+  assert.deepStrictEqual(pass({ to: "2026.11.25D16:30" }), ["'2026.11.25T"]);
+  assert.deepStrictEqual(pass({ from: "2026.11.25D16:24:19", to: "2026.11.25D16:24:20" }), ["'2026.11.25T"]);
+  // TorQ's line is UTC as written, and is filtered as it reads.
+  assert.deepStrictEqual(pass({ from: "21:00", to: "22:00" }), ["2026.11.25D2"]);
+  // The entries are still ordered by when they happened.
+  assert.deepStrictEqual(out.map((x) => [x.time, x.written]), [[Date.UTC(2026, 10, 25, 21, 24, 18, 241), undefined], [Date.UTC(2026, 10, 25, 21, 24, 19, 278), Date.UTC(2026, 10, 25, 16, 24, 19, 278)]]);
+  // Where local time is UTC the line's time is the time: nothing more is kept.
+  process.env.TZ = "UTC";
+  assert.strictEqual("written" in parseLine("'2026.11.25T16:24:19.278 type"), false);
+});
+
 test("times and times of day", () => {
   assert.strictEqual(timeOf("2026.11.21"), Date.UTC(2026, 10, 21));
   assert.strictEqual(timeOf("2026-11-21 08:09"), Date.UTC(2026, 10, 21, 8, 9));
@@ -187,4 +210,25 @@ test("a multi-line TorQ message is one entry, its unindented lines too (#2419)",
   // line before any TorQ line.
   const k = entries(["`hello", "2026.11.21D17:30:00.000000000|h|rdb|rdb1|ERROR|upd|x", "'2026.11.21T17:30:01.000 type"]);
   assert.deepStrictEqual(k.map((x) => x.lines.length), [1, 1, 1]);
+});
+
+// A file's last line with no newline after it is not pushed - it may still
+// grow - and was never shown: `pending` gives it as the entries it makes.
+test("a line not yet ended continues the open entry or starts one, and is not kept (#3041)", () => {
+  const done = [];
+  const b = new EntryBuilder("/l/out_rdb1.log", (e) => done.push(e));
+  assert.deepStrictEqual(b.pending(""), { entries: [] });
+  assert.deepStrictEqual(b.pending(TORQ_ERR).entries.map((e) => [e.level, e.process, e.lines]), [["ERROR", "rdb1", [TORQ_ERR]]]);
+  b.push(TORQ_INFO);
+  // A line that starts an entry: the open one, then it.
+  const two = b.pending(TORQ_ERR);
+  assert.deepStrictEqual(two.entries.map((e) => e.lines), [[TORQ_INFO], [TORQ_ERR]]);
+  assert.strictEqual(two.started, two.entries[1]);
+  assert.strictEqual(two.entries[0], b.open);
+  // One that continues it: the open entry with it, and none started. A
+  // carriage return whose newline is still to come is no part of the line.
+  const more = b.pending("  rolled back\r");
+  assert.deepStrictEqual([more.entries.map((e) => e.lines), more.started], [[[TORQ_INFO, "  rolled back"]], undefined]);
+  // Nothing was kept: the open entry is as it was, and none is done.
+  assert.deepStrictEqual([b.open.lines, done], [[TORQ_INFO], []]);
 });

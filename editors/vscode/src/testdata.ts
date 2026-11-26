@@ -10,7 +10,7 @@
 // lambda's parameter, no global of the process's (#2016). The CSV is drawn here
 // by a seeded generator, as q would read it back with `0:`: times as q
 // writes them, symbols bare, strings quoted when they need to be.
-import { plainName, qString, symbolLiteral } from "./qliteral";
+import { commentText, plainName, qString, symbolLiteral } from "./qliteral";
 import type { TableInfo } from "./tableinfo";
 
 export interface TestDataOptions {
@@ -70,6 +70,11 @@ export function wholeRange(type: string, o: TestDataOptions): [number, number] {
   return [lo, hi - lo];
 }
 
+/// The meta types of a column that holds a list of one type in each row:
+/// a book's sizes (`J`), its prices (`F`), tags (`S`). `C`, a string, has
+/// its own generator.
+const NESTED = /^[BGXHIJEFSPMDZNUVT]$/;
+
 /// The q expression of `n` random values of type `type` (a meta type
 /// character), with `o`'s pool and range.
 export function generator(type: string, o: TestDataOptions): string {
@@ -103,7 +108,10 @@ export function generator(type: string, o: TestDataOptions): string {
     case "v": return '"v"$n?86400';
     case "t": return '"t"$n?86400000';
     case "C": return "{(1+x mod 10)?.Q.a}each til n";
-    default: return "n#enlist()";
+    // A nested column is one to five of its atom's values a row, drawn as
+    // the atom is, so meta reads its type back: `n#enlist()` made every
+    // row an empty generic list and the column a mixed one (#3051).
+    default: return NESTED.test(type) ? `{[n] ${generator(type.toLowerCase(), o)}}each 1+(til n)mod 5` : "n#enlist()";
   }
 }
 
@@ -141,7 +149,7 @@ export function testDataQ(info: TableInfo, name: string, o: TestDataOptions): st
   const rows = parts.length === 1 ? parts[0] : `flip ${parts.map((p) => `(flip ${p})`).join(",")}`;
   const assign = (e: string) => (plainName(name) ? `${name}:${e}` : `(${symbolLiteral(name)}) set ${e}`);
   return [
-    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${name}. Run it on a local process.`,
+    `/ q-lint: ${keys.length > 0 ? "up to " : ""}${o.rows.toLocaleString("en-US")} rows of test data shaped as ${commentText(name)}. Run it on a local process.`,
     `\\S ${o.seed}`,
     // A keyed table keeps the first row of each key drawn: a key is one row (#1282).
     assign(keys.length > 0 ? `${by} xkey {x where(til count x)=k?k:((),y)#x}[${rows};${by}]` : rows),
@@ -204,7 +212,8 @@ function csvValue(type: string, o: TestDataOptions, next: () => number): string 
     case "v": return timeText(Math.floor(r * 86_400) * 1000).slice(0, 8);
     case "t": return timeText(Math.floor(r * DAY_MS));
     case "C": return csv(Array.from({ length: 1 + Math.floor(r * 10) }, () => String.fromCharCode(97 + Math.floor(next() * 26))).join(""));
-    default: return "";
+    // A nested column's row, its values a blank apart, as q writes a list (#3051).
+    default: return NESTED.test(type) ? Array.from({ length: 1 + Math.floor(r * 5) }, () => csvValue(type.toLowerCase(), o, next)).join(" ") : "";
   }
 }
 

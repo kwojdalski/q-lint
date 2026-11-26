@@ -1,7 +1,7 @@
 //! Navigation: the outline, workspace symbols, go to definition, find
 //! references, highlights and renaming a local - first as the library reads
 //! one file, then as the language server answers an editor over a workspace.
-use q_lint_rs::{Name, load_at, mentions, name_at, rename, rename_target};
+use q_lint_rs::{Name, load_at, load_directory, mentions, name_at, rename, rename_target};
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -64,6 +64,32 @@ fn a_string_a_comment_and_a_system_command_mention_nothing() {
 }
 
 #[test]
+fn the_command_word_of_a_timed_line_mentions_nothing() {
+    // KDB-X: with the `t` of `\t:10` renamed, `\tbl:10 count tbl` goes to
+    // the shell and is 'os (#2812). What follows the command is q.
+    let source =
+        "t:([]a:1 2)\n\\t:10 count t\n\\t count t\n\\t 100\nts:1\n\\ts ts+1\n\\ts:5 ts\nq)\\t t\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("t", "t".to_string(), 'w'),
+            ("t", "t".into(), 'r'),
+            ("t", "t".into(), 'r'),
+            ("ts", "ts".into(), 'w'),
+            ("ts", "ts".into(), 'r'),
+            ("ts", "ts".into(), 'r'),
+            ("t", "t".into(), 'r'),
+        ]
+    );
+    let reads: Vec<usize> = mentions(source)
+        .iter()
+        .filter(|m| m.definition.is_none())
+        .map(|m| m.at)
+        .collect();
+    assert_eq!(reads, [24, 35, 53, 64, 72]);
+}
+
+#[test]
 fn a_column_and_a_builtin_are_no_global() {
     // `a:` and `b:` in a table literal and `total:` in a query are written
     // as assignments and assign nothing; `count` and `til` are q's own.
@@ -75,6 +101,38 @@ fn a_column_and_a_builtin_are_no_global() {
             ("n", "n".into(), 'w'),
             ("a", "a".into(), 'r'),
             ("t", "t".into(), 'r'),
+        ]
+    );
+}
+
+#[test]
+fn a_column_delete_names_is_no_mention_of_a_global() {
+    // KDB-X drops the column whatever a global `px` holds, so the list of
+    // `delete` is no place the global is read (#2806); the `where` of a row
+    // delete is an expression, and is, and so is the name a delete from a
+    // namespace removes.
+    let source = "px:{x}\nr:delete px from t\ns:delete a, px from t\nd:delete from t where a=px\n\
+                  delete px from `.\n";
+    let reads: Vec<_> = seen(source)
+        .into_iter()
+        .filter(|(_, _, kind)| *kind == 'r')
+        .map(|(text, _, _)| text)
+        .collect();
+    assert_eq!(reads, ["t", "t", "t", "a", "px", "px"]);
+}
+
+/// q 5 after these lines has `h`, `x` and `aa` in the root and nothing else:
+/// a symbol is one token over its `:`, and only the expression `\t` times
+/// is q (#2775, #2776).
+#[test]
+fn a_symbol_and_a_system_command_write_no_global() {
+    let source = "h:`:localhost:5000\nx:`a:b:c\n\\t:100 1+1\n\\ts:10 aa:2\n\\l c:/q/lib.q\n";
+    assert_eq!(
+        seen(source),
+        [
+            ("h", "h".to_string(), 'w'),
+            ("x", "x".into(), 'w'),
+            ("aa", "aa".into(), 'w')
         ]
     );
 }
@@ -181,6 +239,33 @@ fn holds(source: &str) -> Vec<(String, bool)> {
         }
     }
     out
+}
+
+#[test]
+fn a_name_assigned_what_a_function_returns_is_outlined_as_a_value() {
+    // KDB-X 5: `type each (upper "s";count 1 2)` is -10 -7h, and `c:count`
+    // with `  1 2 3` on the line below is -7h. A string is blank in the code
+    // view, and the line below was not read, so each was outlined - and
+    // coloured where read - as the function it applies (#2965).
+    let named = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
+        names.iter().map(|&(n, f)| (n.to_string(), f)).collect()
+    };
+    assert_eq!(
+        holds(
+            "a:upper \"s\"\nb:value \"1+1\"\nc:count\n  1 2 3\nd:count\n  \"abc\"\ne:count / \"no\"\nh:count\n/ note\n\n  1 2\ni:count\nj:count each\n  (1 2;3)\nk:count each\n"
+        ),
+        named(&[
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("d", false),
+            ("e", true),
+            ("h", false),
+            ("i", true),
+            ("j", false),
+            ("k", true),
+        ])
+    );
 }
 
 #[test]
@@ -348,10 +433,16 @@ fn the_path_of_each_kind_of_load_is_found_under_the_cursor() {
     assert_eq!(path("lib/a.q", 7), Some("lib/a.q"));
     assert_eq!(path("lib/b.q", 4), Some("lib/b.q"));
     assert_eq!(path("lib/c.q", 2), Some("lib/c.q"));
-    // Not a comment, not the command, and not a path read after `\cd`.
+    // Not a comment, nor the command.
     assert_eq!(path("lib/d.q", 2), None);
     assert_eq!(path("\\l lib/a", 1), None);
-    assert_eq!(path("e.q", 1), None);
+    // A path read after `\cd` is a path, followed from the directory the
+    // `\cd` names (#2961).
+    assert_eq!(path("e.q", 1), Some("e.q"));
+    assert_eq!(
+        load_directory(source, at(source, "e.q", 1)).as_deref(),
+        Some("lib")
+    );
 }
 
 /// The local at `offset`: each place it is named, as text offsets, with the
@@ -451,6 +542,54 @@ fn a_global_is_not_renamed_within_one_file() {
         let why = rename(source, offset, "h").unwrap_err();
         assert!(why.contains("across the workspace"), "{why}");
         assert_eq!(rename_target(source, offset), Err(why));
+    }
+}
+
+/// Only a global was ever sent to the language server: a blank, a number, a
+/// string, a comment, a symbol and a word of q's were too, by the server
+/// that had just been asked (#2959).
+#[test]
+fn what_is_no_name_is_refused_as_no_name_and_not_as_a_global() {
+    let source = "x:count 123\ny:\"str\" / note\nz:`sym\n\nt:([] col:1 2)\n";
+    for (context, skip, why) in [
+        ("123", 1, "there is no name here to rename"),
+        ("str", 1, "there is no name here to rename"),
+        ("note", 2, "there is no name here to rename"),
+        ("sym", 1, "there is no name here to rename"),
+        ("\n\n", 1, "there is no name here to rename"),
+        ("count", 2, "`count` is a word of q's own"),
+        ("col", 1, "`col` here is neither a local nor a global"),
+    ] {
+        let offset = at(source, context, skip);
+        let refused = rename(source, offset, "new").unwrap_err();
+        assert!(refused.starts_with(why), "{context}: {refused}");
+        assert_eq!(rename_target(source, offset), Err(refused), "{context}");
+    }
+    let empty = rename("", 0, "new").unwrap_err();
+    assert!(empty.starts_with("there is no name"), "{empty}");
+}
+
+/// The same from the server, for a rename and for the question before one.
+#[test]
+fn the_server_refuses_a_rename_of_no_name_without_naming_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "x:count 123\ny:\"str\" / note\n\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    for (context, skip) in [
+        ("count", 2),
+        ("123", 1),
+        ("str", 1),
+        ("note", 2),
+        ("\n\n", 1),
+    ] {
+        for method in ["textDocument/prepareRename", "textDocument/rename"] {
+            let new = json!({"newName": "new"});
+            let reply = server.ask(method, &uri, text, context, skip, new);
+            assert_eq!(reply["error"]["code"], -32803, "{context}: {reply}");
+            let why = reply["error"]["message"].as_str().unwrap();
+            assert!(!why.contains("language server"), "{context}: {why}");
+        }
     }
 }
 
@@ -590,6 +729,20 @@ impl Server {
     /// A server over the workspace `dir`, holding `files`, with what the
     /// client declares and the options it sends.
     fn over(dir: &Path, files: &[(&str, &str)], client: Value, options: Value) -> (Self, Value) {
+        let folders = json!([{"uri": file_uri(dir), "name": "ws"}]);
+        Self::under(dir, dir, files, client, options, folders)
+    }
+
+    /// `over`, run in `cwd`, with the workspace folders `folders` - `[]`
+    /// for none, as an editor without a root opens one file.
+    fn under(
+        dir: &Path,
+        cwd: &Path,
+        files: &[(&str, &str)],
+        client: Value,
+        options: Value,
+        folders: Value,
+    ) -> (Self, Value) {
         for (name, text) in files {
             if let Some(parent) = dir.join(name).parent() {
                 std::fs::create_dir_all(parent).unwrap();
@@ -597,7 +750,7 @@ impl Server {
             std::fs::write(dir.join(name), text).unwrap();
         }
         let mut child = Command::new(env!("CARGO_BIN_EXE_qlinter"))
-            .current_dir(dir)
+            .current_dir(cwd)
             .env("XDG_CONFIG_HOME", dir.join("no-such-config-home"))
             .args(["--lsp"])
             .stdin(Stdio::piped())
@@ -616,7 +769,7 @@ impl Server {
         let reply = server.request(
             "initialize",
             json!({"capabilities": client, "initializationOptions": options,
-                   "workspaceFolders": [{"uri": file_uri(dir), "name": "ws"}]}),
+                   "workspaceFolders": folders}),
         );
         server.send(json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
         (server, reply)
@@ -766,6 +919,83 @@ fn navigation_is_announced_and_can_be_turned_off() {
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }
 
+/// A lambda left open ends where the next statement begins, at column 0:
+/// read to the end of the file, `new:{` typed above three definitions made
+/// them its body, and none of them was a definition any more (#2960).
+#[test]
+fn a_lambda_left_open_does_not_take_the_statements_after_it() {
+    let defined = |source: &str| -> Vec<(String, String)> {
+        mentions(source)
+            .into_iter()
+            .filter_map(|m| {
+                let d = m.definition?;
+                Some((m.name, source[d.start..d.end].to_string()))
+            })
+            .collect()
+    };
+    let is = |name: &str, statement: &str| (name.to_string(), statement.to_string());
+    let rest = [is("f", "f:{[a;b] a+b}"), is("g", "g:{[c] f[c;1]}")];
+    for open in ["new:{[a]\n  b:a+1;\n  {[c] c+", "new:(1;", "new:f[1;"] {
+        let source = format!("{open}\nf:{{[a;b] a+b}}\ng:{{[c] f[c;1]}}\n");
+        let mut all = vec![is("new", open)];
+        all.extend(rest.clone());
+        assert_eq!(defined(&source), all, "{open}");
+    }
+    // A line opening a string begins a statement too, and a comment at
+    // column 0 does not.
+    assert_eq!(
+        defined("new:{[a]\n\"abc\",a}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n")[1..],
+        rest
+    );
+    assert_eq!(
+        defined("new:{[a]\n/ note\n  a}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n"),
+        [
+            is("new", "new:{[a]\n/ note\n  a}"),
+            rest[0].clone(),
+            rest[1].clone()
+        ]
+    );
+    // A closer at column 0 still closes, as an older q read it.
+    assert_eq!(
+        defined("new:{[a]\n  a\n}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n")[0],
+        is("new", "new:{[a]\n  a\n}")
+    );
+}
+
+/// The same from the server: the outline, the workspace's symbols and
+/// another file's Go to Definition keep what follows a lambda being typed.
+#[test]
+fn the_definitions_after_a_lambda_being_typed_are_still_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "new:{\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", text)]);
+    let lib = server.open(dir.path(), "lib.q", text);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": lib}}),
+    );
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["new", "f", "g"], "{reply}");
+    let reply = server.request("workspace/symbol", json!({"query": ""}));
+    let mut names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["f", "g", "new"], "{reply}");
+    let main = "r:g 1\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.ask("textDocument/definition", &uri, main, "g 1", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 2, 0, 1)]);
+}
+
 #[test]
 fn a_definition_is_found_in_another_file_under_the_context_it_is_written_in() {
     let dir = tempfile::tempdir().unwrap();
@@ -883,6 +1113,113 @@ fn a_bare_name_four_scripts_define_goes_first_to_its_own_then_to_what_it_loads()
             ("runner.q".into(), 1)
         ]
     );
+}
+
+/// Locations as `(the last two parts of the file's path, line)`: a file
+/// read from outside every folder is named by its real path, which on
+/// Windows need not begin as the temporary directory is spelled.
+fn in_file(result: &Value) -> Vec<(String, u64)> {
+    result
+        .as_array()
+        .unwrap_or_else(|| panic!("a list of locations, not {result}"))
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let parts: Vec<&str> = uri.rsplitn(3, '/').take(2).collect();
+            (
+                format!("{}/{}", parts[1], parts[0]),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_file_loaded_from_outside_every_folder_is_read_for_what_it_defines() {
+    // With no folder, or for a load out of every folder, the link went to
+    // the file and nothing it defines was known: Go to Definition gave `[]`
+    // and signature help nothing (#2964). The files the open documents load
+    // are read, and what those load in turn.
+    // The temporary directory as it is spelled, not by its real path, which
+    // on Windows starts `\\?\` and is no URI the server names a file by.
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let files = [
+        ("single/lib.q", "f:{[a;b] a+b}\n"),
+        ("ws/main.q", ""),
+        ("outside/o.q", "\\l deeper.q\nz:{[p;q] p}\n"),
+        ("outside/deeper.q", "deep:{[d] d}\n"),
+        ("elsewhere/.keep", ""),
+    ];
+    let text = "\\l lib.q\nf[1;2]\n";
+    let (mut server, _) = Server::under(
+        &dir,
+        &dir.join("elsewhere"),
+        &files,
+        client(),
+        Value::Null,
+        json!([]),
+    );
+    let uri = server.open(&dir.join("single"), "main.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "f[1", 0, json!({}));
+    assert_eq!(
+        in_file(&reply["result"]),
+        [("single/lib.q".to_string(), 0)],
+        "{reply}"
+    );
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "f[1",
+        2,
+        json!({}),
+    );
+    assert_eq!(
+        reply["result"]["signatures"][0]["label"], "f[a;b]",
+        "{reply}"
+    );
+    drop(server);
+
+    // Inside a folder, by a relative and by an absolute path, and through
+    // a load of the file loaded.
+    let outside = dir
+        .join("outside/o.q")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    for load in ["../outside/o.q".to_string(), outside] {
+        let text = format!("\\l {load}\nz[1;2]\ndeep[1]\n");
+        let ws = dir.join("ws");
+        let folders = json!([{"uri": file_uri(&ws), "name": "ws"}]);
+        let (mut server, _) = Server::under(&dir, &ws, &[], client(), Value::Null, folders);
+        let uri = server.open(&ws, "main.q", &text);
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            &text,
+            "z[1",
+            2,
+            json!({}),
+        );
+        assert_eq!(
+            reply["result"]["signatures"][0]["label"], "z[p;q]",
+            "{load}: {reply}"
+        );
+        let reply = server.ask(
+            "textDocument/definition",
+            &uri,
+            &text,
+            "deep[",
+            0,
+            json!({}),
+        );
+        assert_eq!(
+            in_file(&reply["result"]),
+            [("outside/deeper.q".to_string(), 0)],
+            "{load}: {reply}"
+        );
+    }
 }
 
 #[test]
@@ -1065,6 +1402,37 @@ fn a_file_closed_under_another_spelling_of_its_path_stays_in_the_index() {
 }
 
 #[test]
+fn a_column_delete_names_is_no_reference_and_no_bar_to_a_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "px:{x}\nt:([]a:1 2;px:3 4)\nr:delete px from t\nr2:px 1\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask(
+        "textDocument/references",
+        &uri,
+        text,
+        "px:{x}",
+        0,
+        json!({}),
+    );
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 3, 3, 5)]
+    );
+    // And the rename the column refused goes through, leaving the column.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        text,
+        "px:{x}",
+        0,
+        json!({"newName": "price"}),
+    );
+    assert!(reply["error"].is_null(), "{reply}");
+    assert!(!reply["result"].is_null(), "{reply}");
+}
+
+#[test]
 fn a_file_loaded_under_a_context_defines_its_names_there() {
     let dir = tempfile::tempdir().unwrap();
     let part = "helper:{x+1}\nuse:{helper x}\n";
@@ -1107,7 +1475,8 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
     // and root `helper` is 'helper (#2320).
     let dir = tempfile::tempdir().unwrap();
     let module = "helper:{x*2}\nf:{helper x+1}\ng:{[a;b] a+b}\nexport:([f;g])\n";
-    let mut server = Server::start(dir.path(), &[("mymod/init.q", module)]);
+    let files = [("mymod/init.q", module), ("user.q", "m:use`mymod\n")];
+    let mut server = Server::start(dir.path(), &files);
     let text = "r:helper 3\ns:.m.mymod.helper 4\n";
     let uri = server.open(dir.path(), "other.q", text);
     let reply = server.ask(
@@ -1154,6 +1523,30 @@ fn a_kdbx_modules_names_are_found_in_its_own_context() {
         .collect();
     assert!(names.contains(&".m.mymod.f"), "{names:?}");
     assert!(!names.contains(&"f"), "{names:?}");
+}
+
+#[test]
+fn a_script_that_assigns_export_keeps_its_names_at_the_root() {
+    // KDB-X 5: `\l a.q` then `util 1` is 2, and `key `.m` is `()`. Only a
+    // `use` makes a module of a file that assigns `export` (#2668).
+    let dir = tempfile::tempdir().unwrap();
+    let script = "/ csv helpers\nexport:{[t;f] (`$\":\",f) 0: csv 0: t}\nutil:{x+1}\n";
+    let mut server = Server::start(dir.path(), &[("a.q", script)]);
+    let text = "r:util 1\n";
+    let uri = server.open(dir.path(), "b.q", text);
+    let reply = server.ask("textDocument/definition", &uri, text, "util", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("a.q", 2, 0, 4)]);
+    let reply = server.ask("textDocument/hover", &uri, text, "util", 0, json!({}));
+    let hover = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(hover.starts_with("util[x]"), "{hover}");
+    let reply = server.request("workspace/symbol", json!({"query": "util"}));
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert_eq!(names, ["util"]);
 }
 
 #[test]
@@ -1320,6 +1713,29 @@ fn highlights_mark_a_write_apart_from_a_read() {
             ((4, 13, 15), 3),
             ((5, 13, 15), 2),
             ((6, 3, 5), 2)
+        ]
+    );
+    // A symbol that may be the name is marked as text, kind 1, wherever
+    // Find References lists it: `` `hb in tables `. `` and the `` `hb ``
+    // returned, beside the write by name and the read (#2679).
+    let text = "init:{[] if[not `hb in tables `.; `hb set ([] w:`symbol$())];\n  `hb}\n\
+                r:select from hb\n";
+    let uri = server.open(dir.path(), "d.q", text);
+    let reply = server.ask(
+        "textDocument/documentHighlight",
+        &uri,
+        text,
+        "from hb",
+        5,
+        json!({}),
+    );
+    assert_eq!(
+        marks(&reply),
+        [
+            ((0, 17, 19), 1),
+            ((0, 35, 37), 3),
+            ((1, 3, 5), 1),
+            ((2, 14, 16), 2)
         ]
     );
 }
@@ -1934,6 +2350,44 @@ fn refused(reply: &Value) -> String {
 }
 
 #[test]
+fn a_modules_own_name_is_renamed_and_an_exported_one_refused() {
+    // KDB-X 5: `key `.m.mymod` is ``` ``helper`f`g`export ```, names the
+    // module's file assigns and none of q's (#2666).
+    let dir = tempfile::tempdir().unwrap();
+    let module = "helper:{[hh] hh+1}\nf:{helper x}\ng:{[a] a*2}\nexport:([f;g])\n";
+    let main = "m:use`mymod\nr:m.f 2\ns:.m.mymod.helper 3\n";
+    let mut server = Server::start(dir.path(), &[("main.q", main)]);
+    let uri = server.open(dir.path(), "mymod/init.q", module);
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "helper:",
+        0,
+        json!({"newName": "hp"}),
+    );
+    assert_eq!(
+        edits(&reply["result"]),
+        [
+            edit("init.q", 0, 0, 6, "hp"),
+            edit("init.q", 1, 3, 9, "hp"),
+            edit("main.q", 2, 11, 17, "hp"),
+        ],
+        "{reply}"
+    );
+    // `([f;g])` keys what `use` returns by `f`, and main.q reads `m.f`.
+    let reply = server.ask(
+        "textDocument/rename",
+        &uri,
+        module,
+        "f:",
+        0,
+        json!({"newName": "ff"}),
+    );
+    assert!(refused(&reply).contains("exports"), "{reply}");
+}
+
+#[test]
 fn a_global_is_renamed_in_every_file_that_names_it_under_its_context() {
     let dir = tempfile::tempdir().unwrap();
     let mut server = Server::start(dir.path(), &[("lib.q", LIB)]);
@@ -2085,6 +2539,34 @@ fn a_global_rename_is_refused_where_it_would_change_what_the_code_means() {
     );
     let why = refused(&reply);
     assert!(why.contains("qSQL") && why.contains("query.q:2"), "{why}");
+    // In parentheses or the brackets of `select[>a]` it is a column too:
+    // KDB-X `select from t where (af>1),b>2` over a function `af` is 'type
+    // (#2823).
+    for (n, phrase) in [
+        "select from t where (a>1),b>2",
+        "select[>a] from t",
+        "select from t where b in (a;b)",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("paren{n}.q");
+        let text = format!("a:{{x}}\nt:([]a:1 2;b:3 4)\nr7:{phrase}\nr8:a 1\n");
+        let puri = server.open(dir.path(), &name, &text);
+        let reply = server.ask(
+            "textDocument/rename",
+            &puri,
+            &text,
+            "a:{",
+            0,
+            json!({"newName": "af"}),
+        );
+        let why = refused(&reply);
+        assert!(
+            why.contains("qSQL") && why.contains(":3"),
+            "{phrase}: {why}"
+        );
+    }
     let reply = server.ask(
         "textDocument/rename",
         &quri,
@@ -2303,6 +2785,77 @@ fn a_global_named_by_a_symbol_is_renamed_where_q_takes_the_name() {
         places(&reply["result"]),
         [place("a.q", 0, 0, 2), place("a.q", 14, 1, 3)]
     );
+}
+
+#[test]
+fn a_string_run_as_q_that_names_the_global_refuses_the_rename() {
+    // #3005. KDB-X 5 calls `myf` for `value "myf 1"`, `eval parse "myf 1"`,
+    // `eval -5!"myf 1"`, `0 "myf 1"` and a trapped `value`, and `get "myf"`
+    // is the function: a rename that changed the definition and left the
+    // string made each of them signal 'myf. No edit rewrites a string, so
+    // the rename is refused and names the line.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let rename = |server: &mut Server, uri: &str, text: &str, name: &str| {
+        server.ask(
+            "textDocument/rename",
+            uri,
+            text,
+            &format!("{name}:"),
+            0,
+            json!({"newName": "renamed"}),
+        )
+    };
+    // Each case has a name of its own, `N` here: the files stay open.
+    for (i, ran) in [
+        "r:value \"N 1\"",
+        "r:eval parse \"N 1\"",
+        "r:eval -5!\"N 1\"",
+        "r:0 \"N 1\"",
+        "r:@[value;\"N 1\";{x}]",
+        "r:get \"N\"",
+        "r:value \"1+\",\"N 1\"",
+        // In a lambda under a `\d`, where the name is looked up at the call.
+        "\\d .o\nf:{value \"N 1\"}",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (file, name) = (format!("a{i}.q"), format!("ma{i}"));
+        let text = format!("N:{{x+1}}\nt:N 2\n{ran}\n").replace('N', &name);
+        let uri = server.open(dir.path(), &file, &text);
+        let why = refused(&rename(&mut server, &uri, &text, &name));
+        let line = text.lines().count();
+        assert!(
+            why.contains(&format!("`{name}`")) && why.contains(&format!("{file}:{line}")),
+            "{ran}: {why}"
+        );
+    }
+    // Not a string nothing runs here, one sent to another process, a local
+    // of the string's own lambda, a longer name, or a name in a namespace.
+    for (i, kept) in [
+        "s:\"N 1\"",
+        "h:hopen 5000\nr:h \"N 1\"",
+        "r:value \"{[N] N+1} 2\"",
+        "r:value \"Ns 1\"",
+        "r:value \".o.N 1\"",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (file, name) = (format!("b{i}.q"), format!("mb{i}"));
+        let text = format!("N:{{x+1}}\nt:N 2\n{kept}\n").replace('N', &name);
+        let uri = server.open(dir.path(), &file, &text);
+        let reply = rename(&mut server, &uri, &text, &name);
+        assert_eq!(
+            edits(&reply["result"]),
+            [
+                edit(&file, 0, 0, 3, "renamed"),
+                edit(&file, 1, 2, 5, "renamed")
+            ],
+            "{kept}: {reply}"
+        );
+    }
 }
 
 #[test]
@@ -2601,6 +3154,49 @@ fn a_context_switched_on_a_k_line_is_followed() {
 }
 
 #[test]
+fn a_context_switched_in_each_spelling_q_runs_is_followed_by_the_outline() {
+    // #2967. KDB-X 5 defines `.qux.d` after each of these lines and `d:1`:
+    // `@[system;"d .x";::]` then `g:{x}` leaves `key `.x` as `` ``g ``. The
+    // loads written these ways were followed and the switches were not, so
+    // the outline, workspace/symbol and Go to Definition put `d` at the root.
+    for switch in [
+        "system[\"d .qux\"]",
+        "system@\"d .qux\"",
+        "system (\"d .qux\")",
+        "@[system;\"d .qux\";::]",
+        "value \"\\\\d .qux\"",
+        "q)system \"d .qux\"",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let a = format!("{switch}\nd:1\n\\d .\ngg:2\n");
+        let b = "\\l a.q\nr:.qux.d+gg\n";
+        let mut server = Server::start(dir.path(), &[("a.q", &a), ("b.q", b)]);
+        let reply = server.request("workspace/symbol", json!({"query": ""}));
+        let mut names: Vec<&str> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{switch}: {reply}"))
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".qux.d", "gg", "r"], "{switch}: {reply}");
+        let defined: Vec<String> = mentions(&a)
+            .iter()
+            .filter(|m| m.definition.is_some())
+            .map(|m| m.name.clone())
+            .collect();
+        assert_eq!(defined, [".qux.d", "gg"], "{switch}");
+        let uri = server.open(dir.path(), "b.q", b);
+        let reply = server.ask("textDocument/definition", &uri, b, ".qux.d", 2, Value::Null);
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1)],
+            "{switch}: {reply}"
+        );
+    }
+}
+
+#[test]
 fn a_context_switched_after_several_language_prefixes_is_followed() {
     // #2194. q reads any run of `q)` and `k)` before a command as the
     // command: on KDB-X 5, each of these lines then `d:1` and `\d .` leaves
@@ -2686,6 +3282,23 @@ fn a_block_comment_after_a_k_line_is_no_k() {
     assert_eq!(
         edits(&reply["result"]),
         [edit("a.q", 0, 0, 2, "fz"), edit("a.q", 5, 5, 7, "fz")]
+    );
+}
+
+#[test]
+fn a_block_comment_inside_a_k_statement_is_no_k_and_does_not_end_it() {
+    // #3010. KDB-X 5 loads `k)gk:{[zz] zz+`, `/`, ` zz in a comment`, `\`,
+    // `  zz}` as one k lambda: the block comment folds into the statement
+    // the indented line continues. So the `zz` after it is the lambda's
+    // parameter, as the one before it is, and no use of the global.
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "zz:1\nk)gk:{[zz] zz+\n/\n zz in a comment\n\\\n  zz}\nshow zz\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let reply = server.ask("textDocument/references", &uri, text, "zz:", 0, json!({}));
+    assert_eq!(
+        places(&reply["result"]),
+        [place("a.q", 0, 0, 2), place("a.q", 6, 5, 7)]
     );
 }
 

@@ -17,9 +17,24 @@ test("only Redefine assigns on the process, and only by the one set it was asked
     assert.ok(!/\bset\b/.test(code), code);
     assert.ok(code.startsWith("{[") && code.endsWith("}"), code);
   }
-  assert.strictEqual(fs.REDEFINE.match(/\bset\b/g).length, 1);
+  // The name is assigned once. A KDB-X module's function is assigned in
+  // what the module exports too - its `export`, and the globals holding
+  // it - or its `use` handles would go on calling the old one (#2972):
+  // two more, both past the test that the name is `.m.<module>.<name>` and
+  // that the module exports what the name held.
+  assert.strictEqual(fs.REDEFINE.match(/\bnm set\b/g).length, 1);
+  assert.strictEqual(fs.REDEFINE.match(/\bset\b/g).length, 3);
+  const exported = fs.REDEFINE.indexOf("if[0=count i;:(::)]");
+  assert.ok(fs.REDEFINE.indexOf("if[not(3<count p)&`m~p 1;:(::)]") > 0 && exported > 0);
+  assert.deepStrictEqual([...fs.REDEFINE.matchAll(/\bset\b/g)].map((m) => m.index > exported), [false, true, true]);
   // The process's own context is put back before the assignment.
   assert.ok(fs.REDEFINE.indexOf('system"d ",string d') < fs.REDEFINE.indexOf("nm set"));
+  // And the question says what else is assigned, for a module's function alone.
+  const process = { label: "rdb", host: "h", port: 1, tags: ["dev"] };
+  assert.match(fs.redefineConfirmation(".m.mymod.f", process).detail, /replaced in the module's export too, and in the globals holding what the module exported/);
+  assert.match(fs.redefineConfirmation("g and .m.pkg.0sub.k", process).detail, /the module's export too/);
+  assert.ok(!/module/.test(fs.redefineConfirmation(".ns.m.f", process).detail));
+  assert.ok(!/module/.test(fs.redefineConfirmation("f", process).detail));
 });
 
 test("a source and callers are read, and anything else is refused", () => {
@@ -39,6 +54,25 @@ test("the name under the cursor, dots and all", () => {
   assert.strictEqual(fs.nameAt("x:1.5", 3), undefined);
   // A trailing dot is not part of the name.
   assert.strictEqual(fs.nameAt(".ns.", 2), ".ns");
+});
+
+// `[.\w]*` backwards took the drop and the number before it with the name:
+// `1_f` is no name, so the command asked for one instead of opening f.
+test("a name after a drop is the name under the cursor (#2986)", () => {
+  assert.strictEqual(fs.nameAt("-1_f x", 3), "f");
+  assert.strictEqual(fs.nameAt("-1_f x", 4), "f");
+  assert.strictEqual(fs.nameAt("count 2_g", 8), "g");
+  assert.strictEqual(fs.nameAt("x _f", 3), "f");
+  assert.strictEqual(fs.nameAt("2_.ns.h y", 5), ".ns.h");
+  assert.strictEqual(fs.nameAt("1e2_f_g", 6), "f_g");
+  assert.strictEqual(fs.nameAt("2000.01.01_days", 12), "days");
+  // On the number or the drop itself there is no name.
+  assert.strictEqual(fs.nameAt("-1_f x", 2), undefined);
+  assert.strictEqual(fs.nameAt("x _f", 2), undefined);
+  // An underscore inside a name is the name's.
+  assert.strictEqual(fs.nameAt("r:a_b 1", 3), "a_b");
+  assert.strictEqual(fs.nameAt("r:.ns.f_1[1]", 8), ".ns.f_1");
+  assert.strictEqual(fs.nameAt("x1_f", 3), "x1_f");
 });
 
 test("where a caller uses a name: as code, not in a string or a comment, or by its short name", () => {
@@ -86,6 +120,13 @@ const INFO = {
   fkeys: ["", "ref", ""],
   attrs: ["u", "g", ""],
 };
+
+test("a column name or foreign key holding a line break stays in its row of the table hover (#2665)", () => {
+  const info = readTableInfo({ ...INFO, cols: ["id", "note\n# HEADING\r\nx", "c"], fkeys: ["", "a\rb", ""] });
+  const md = tableMarkdown("t", "p", info);
+  assert.match(md, /^\| note \\# HEADING x \| `s` \| `g` grouped \| a b \|$/m);
+  assert.doesNotMatch(md, /^\\# HEADING/m);
+});
 
 test("a table's details become a short hover, every name escaped", () => {
   const info = readTableInfo(INFO);

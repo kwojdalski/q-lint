@@ -45,7 +45,7 @@
     "code": "QE007",
     "name": "qsql-missing-from",
     "category": "syntax",
-    "summary": "select, exec, update or delete with no from before the statement ends, nothing after its from or its where, or a phrase q refuses: a trailing comma, an empty row limit, a second by",
+    "summary": "select, exec, update or delete with no from before the statement ends, nothing after its from or its where, or a phrase q refuses: a trailing comma, an empty row limit, a second by, an update with no column",
     "scope": "builtin"
   },
   {
@@ -80,7 +80,7 @@
     "code": "QE012",
     "name": "non-ascii-character",
     "category": "syntax",
-    "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char",
+    "summary": "A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - or an ASCII control character there, which q refuses with 'char",
     "scope": "builtin"
   },
   {
@@ -731,7 +731,7 @@
     "code": "QT016",
     "name": "symbol-math-argument",
     "category": "types-and-shapes",
-    "summary": "Numeric math applied to a symbol literal",
+    "summary": "Numeric math applied to a symbol literal or to the guid null",
     "scope": "builtin"
   },
   {

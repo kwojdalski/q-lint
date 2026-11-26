@@ -1,4 +1,4 @@
-// Logpoints (#984): **Add Logpoint** wraps the function under the cursor (or
+// Logpoints (#984): **Add Logpoint** instruments the function under the cursor (or
 // one named) on the active process so each call's arguments are printed
 // there with `0N!` and kept; **Remove Logpoint** and **Remove All
 // Logpoints** put the functions back; **Show Logpoint Hits** reads the calls
@@ -17,19 +17,27 @@ import {
   workspace,
   type ExtensionContext,
   type OutputChannel,
+  type TextDocument,
   type TextEditor,
   type TextEditorDecorationType,
 } from "vscode";
-import { definitions } from "./definitions";
+import { definitions, modulePathOf, type Definition } from "./definitions";
+import { unquotedName } from "./funcsource";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
-import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, hitLines, readLogpoints } from "./logpoint";
+import { LOGPOINT_COMMANDS, LOG_ADD, LOG_LIST, LOG_REMOVE, addLogpoint, hitLines, readLogpoints } from "./logpoint";
 import { plainMessage } from "./history";
 
 const on = (): boolean => editorFeatureOn((key, fallback) => workspace.getConfiguration("q-lint").get(key, fallback), "logpoints");
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/// What `document` defines, a KDB-X module's functions named where the
+/// process holds them (#2917).
+function defined(document: TextDocument): Definition[] {
+  return definitions(document.getText(), modulePathOf(document.uri.fsPath, workspace.asRelativePath?.(document.uri, false)));
+}
 
 /// The name of the function whose definition holds the cursor.
 function nameAtCursor(editor: TextEditor | undefined): string | undefined {
@@ -37,7 +45,7 @@ function nameAtCursor(editor: TextEditor | undefined): string | undefined {
     return undefined;
   }
   const line = editor.selection.active.line;
-  return definitions(editor.document.getText()).find((d) => d.line <= line && line <= d.endLine)?.name;
+  return defined(editor.document).find((d) => d.line <= line && line <= d.endLine)?.name;
 }
 
 export function registerLogpoints(
@@ -61,7 +69,7 @@ export function registerLogpoints(
     const lines =
       names === undefined || editor.document.languageId !== "q"
         ? []
-        : definitions(editor.document.getText())
+        : defined(editor.document)
             .filter((d) => names.has(d.name))
             .map((d) => d.line);
     marked = lines;
@@ -138,10 +146,11 @@ export function registerLogpoints(
     if (target === undefined || target.trim() === "") {
       return;
     }
-    const fn = target.trim();
+    // `` `.ns.f ``, as q code names it, is .ns.f (#2649).
+    const fn = unquotedName(target);
     try {
-      // Turned off at the name box, the pick or the guard: nothing is wrapped (#1453).
-      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))), "ask", undefined, undefined, true);
+      // Turned off at the name box, the pick or the guard: nothing is changed (#1453).
+      const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : await addLogpoint((code, ...args) => connection.call(code, ...args), fn)), "ask", undefined, undefined, true);
       if (done === undefined || done.value === undefined) {
         return;
       }
@@ -181,7 +190,8 @@ export function registerLogpoints(
       void window.showInformationMessage(plainMessage(`q-lint: no function on ${held.process} has a logpoint.`));
       return;
     }
-    const wanted = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
+    const given = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
+    const wanted = given === undefined ? undefined : unquotedName(given);
     const fn =
       wanted !== undefined && held.names.includes(wanted)
         ? wanted

@@ -149,7 +149,9 @@ fn file_graph(params: &Value, sources: &Sources) -> Value {
 /// cannot be followed: a client says so, where a list that looked complete
 /// would not. `dynamic` is each test file not listed that loads by a path
 /// computed at run time, `system "l ",p`: it has no edge to follow, so it
-/// may run a changed file all the same (#1364). What is not a `.q` file is
+/// may run a changed file all the same (#1364) - and each that reaches a
+/// file loading so, a helper it `\l`s, since what the helper may run the
+/// test runs (#2810). What is not a `.q` file is
 /// passed over, a change to it being nothing this server reads.
 fn affected_tests(params: &Value, sources: &Sources) -> Value {
     let graph = graph_of(sources);
@@ -178,15 +180,16 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
         .collect();
     let reached = graph::reaching(&graph, &changed);
     let is_test = |file: &Path| graph::is_test(&in_workspace(&roots, file));
+    let loading = loading_unseen(&graph);
     let dynamic: Vec<String> = graph
-        .iter()
-        .filter(|(file, node)| {
+        .keys()
+        .filter(|file| {
             !(spelled.is_empty() && unindexed.is_empty())
                 && !reached.contains_key(*file)
-                && node.dynamic.iter().any(|d| d.kind == "load")
+                && loading.contains(file.as_path())
                 && is_test(file)
         })
-        .map(|(file, _)| uri_of(sources, file))
+        .map(|file| uri_of(sources, file))
         .collect();
     let tests: Vec<Value> = reached
         .iter()
@@ -200,6 +203,32 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
         })
         .collect();
     json!({"tests": tests, "changed": spelled, "unindexed": unindexed, "dynamic": dynamic})
+}
+
+/// Each file of `graph` that may run one the graph has no edge to: one that
+/// loads by a path computed at run time, and every file reaching one of
+/// those along the edges, each walked once.
+fn loading_unseen(graph: &BTreeMap<PathBuf, Node>) -> HashSet<&Path> {
+    let mut dependents: HashMap<&Path, Vec<&Path>> = HashMap::new();
+    for (file, node) in graph {
+        for dependency in &node.dependencies {
+            dependents.entry(dependency).or_default().push(file);
+        }
+    }
+    let mut pending: Vec<&Path> = graph
+        .iter()
+        .filter(|(_, node)| node.dynamic.iter().any(|d| d.kind == "load"))
+        .map(|(file, _)| file.as_path())
+        .collect();
+    let mut seen: HashSet<&Path> = pending.iter().copied().collect();
+    while let Some(file) = pending.pop() {
+        for &dependent in dependents.get(file).into_iter().flatten() {
+            if seen.insert(dependent) {
+                pending.push(dependent);
+            }
+        }
+    }
+    seen
 }
 
 /// `file` as `graph::is_test` wants it: below the workspace folder it is in,
@@ -222,6 +251,7 @@ struct Read<'a> {
     mentions: Vec<Mention>,
     placement: Placement,
     holders: Vec<Holder>,
+    chains: HashMap<usize, Vec<usize>>,
 }
 
 /// A top-level definition that carries its statement, for `Read::home`: the
@@ -279,6 +309,38 @@ fn holders(mentions: &[Mention]) -> Vec<Holder> {
     out
 }
 
+/// The names one statement gives one value, `a:b:{f[]}`: each holder that
+/// is all another is assigned, by its place in `mentions`, with every name
+/// of its chain in the order written. What the lambda reads is read by `a`
+/// as much as by `b` - they are one function (#2954) - where two names a
+/// statement assigns apart, `if[c; a:{f[]}; b:{g[]}]`, each read their own.
+fn chains(holders: &[Holder], mentions: &[Mention], text: &str) -> HashMap<usize, Vec<usize>> {
+    let mut out: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut chain: Vec<&Holder> = vec![];
+    let mut close = |chain: &mut Vec<&Holder>| {
+        if chain.len() > 1 {
+            let all: Vec<usize> = chain.iter().map(|h| h.mention).collect();
+            out.extend(all.iter().map(|&i| (i, all.clone())));
+        }
+        chain.clear();
+    };
+    let mut named: Vec<&Holder> = holders.iter().collect();
+    named.sort_by_key(|h| (h.at, h.mention));
+    for h in named {
+        let follows = chain.last().is_some_and(|last| {
+            let between = text.get(last.at + mentions[last.mention].len..h.at);
+            (last.start, last.end) == (h.start, h.end)
+                && between.is_some_and(|between| matches!(between.trim(), ":" | "::"))
+        });
+        if !follows {
+            close(&mut chain);
+        }
+        chain.push(h);
+    }
+    close(&mut chain);
+    out
+}
+
 impl<'a> Read<'a> {
     /// The indexed file `key`, when `wanted` of its text - which is how a
     /// file that does not spell a name at all is left unparsed.
@@ -291,8 +353,10 @@ impl<'a> Read<'a> {
             return None;
         }
         let mentions = mentions(&text);
+        let holders = holders(&mentions);
         Some(Read {
-            holders: holders(&mentions),
+            chains: chains(&holders, &mentions, &text),
+            holders,
             mentions,
             placement: sources.placement(key),
             uri,
@@ -318,6 +382,14 @@ impl<'a> Read<'a> {
     /// falls to `at`.
     fn home(&self, at: usize) -> Option<usize> {
         home(&self.holders, at)
+    }
+
+    /// Every definition that is the one at `mentions[i]` under another
+    /// name, itself among them: both names of `a:b:{f[]}` for either.
+    fn peers<'s>(&'s self, i: &'s usize) -> &'s [usize] {
+        self.chains
+            .get(i)
+            .map_or(std::slice::from_ref(i), Vec::as_slice)
     }
 
     /// Each read of a global, with the definition it belongs to.
@@ -409,11 +481,12 @@ fn of_item<'a>(sources: &Sources<'a>, item: &Value) -> Option<(Read<'a>, Option<
     Some((read, Some(i)))
 }
 
-/// Each place a file assigns a lambda to one of `names`, once a name and
-/// file, where it first does, as the outline lists them. Only the files the
-/// index has defining one as a function are read. `each` gets the file, its
-/// lines, the definition's place in `Read::mentions` and the names it
-/// answers to.
+/// Each place a file assigns a lambda to one of `names` - every one, a
+/// second assignment in a file as much as one in a second file: q keeps
+/// the last to run, and reading does not say which that is (#2953). Only
+/// the files the index has defining one as a function are read. `each` gets
+/// the file, its lines, the definition's place in `Read::mentions` and the
+/// names it answers to.
 fn functions(
     sources: &Sources,
     names: &HashSet<&str>,
@@ -428,9 +501,8 @@ fn functions(
             continue;
         };
         let lines = Lines::new(&file.text);
-        let mut listed = HashSet::new();
         for (i, m) in file.mentions.iter().enumerate() {
-            if !m.definition.as_ref().is_some_and(|d| d.function) || !listed.insert(&m.name) {
+            if !m.definition.as_ref().is_some_and(|d| d.function) {
                 continue;
             }
             let answers = file.names(sources, m);
@@ -442,9 +514,11 @@ fn functions(
 }
 
 /// `textDocument/prepareCallHierarchy`: the function under the cursor, as
-/// each file that assigns the name a lambda - every one, since which
-/// assignment ran last is not something reading says. `null` for a local,
-/// and for a global no indexed file defines as a function.
+/// each place a file assigns the name a lambda - every one, since which
+/// assignment ran last is not something reading says. With the cursor on
+/// one of those assignments, that one comes first: it is the one asked
+/// about, and a client that shows a single item shows the first. `null` for
+/// a local, and for a global no indexed file defines as a function.
 fn prepare(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
@@ -457,7 +531,14 @@ fn prepare(params: &Value, sources: &Sources) -> Value {
     functions(
         sources,
         &targets.iter().map(String::as_str).collect(),
-        |file, lines, i, _| items.push(file.item(sources, lines, i)),
+        |file, lines, i, _| {
+            let item = file.item(sources, lines, i);
+            if file.mentions[i].at == at && file_key(&path_of(&file.uri)) == cursor.key {
+                items.insert(0, item);
+            } else {
+                items.push(item);
+            }
+        },
     );
     if items.is_empty() {
         Value::Null
@@ -504,10 +585,17 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
                 continue;
             }
             let place = range(&lines, m.at, m.len);
-            let slot = *seen.entry(home).or_insert(callers.len());
-            match callers.get_mut(slot) {
-                Some((_, places)) => places.push(place),
-                None => callers.push((home, vec![place])),
+            // Each name of `a:b:{f[]}` is a caller: one lambda, held twice.
+            let homes: Vec<Option<usize>> = match &home {
+                Some(i) => file.peers(i).iter().copied().map(Some).collect(),
+                None => vec![None],
+            };
+            for home in homes {
+                let slot = *seen.entry(home).or_insert(callers.len());
+                match callers.get_mut(slot) {
+                    Some((_, places)) => places.push(place.clone()),
+                    None => callers.push((home, vec![place.clone()])),
+                }
             }
         }
         for (caller, places) in callers {
@@ -523,28 +611,49 @@ fn incoming(params: &Value, sources: &Sources) -> Value {
 
 /// `callHierarchy/outgoingCalls`: each workspace function the item's
 /// statement names - or, for the item of a file, each one the file names
-/// outside every definition - with the places it is named there.
+/// outside every definition - with the places it is named there. Of two
+/// names one statement gives one value, `a:b:{f[]}`, either names what the
+/// value does.
 fn outgoing(params: &Value, sources: &Sources) -> Value {
     let Some((read, which)) = of_item(sources, &params["item"]) else {
         return Value::Null;
     };
     let lines = Lines::new(&read.text);
+    let held = |home: &Option<usize>| match (home, &which) {
+        (Some(home), Some(which)) => read.peers(which).contains(home),
+        _ => *home == which,
+    };
     let named: Vec<(Value, Vec<String>)> = read
         .reads()
-        .filter(|(_, home)| *home == which)
+        .filter(|(_, home)| held(home))
         .map(|(m, _)| (range(&lines, m.at, m.len), read.names(sources, m)))
         .collect();
     let wanted: HashSet<&str> = named
         .iter()
         .flat_map(|(_, names)| names.iter().map(String::as_str))
         .collect();
+    // Where each name is read, by the name: asked of every read for every
+    // function they lead to, a script of N one-line functions that calls
+    // each once was N^2 comparisons, 4 s at 32,000 (#2955).
+    let mut by_name: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, (_, names)) in named.iter().enumerate() {
+        for name in names {
+            by_name.entry(name).or_default().push(i);
+        }
+    }
     let mut out = vec![];
     functions(sources, &wanted, |file, target_lines, i, answers| {
-        let places: Vec<&Value> = named
+        // In the order read, each place once though two of the names a
+        // definition answers to are read there.
+        let mut reads: Vec<usize> = answers
             .iter()
-            .filter(|(_, names)| names.iter().any(|name| answers.contains(name)))
-            .map(|(place, _)| place)
+            .filter_map(|name| by_name.get(name.as_str()))
+            .flatten()
+            .copied()
             .collect();
+        reads.sort_unstable();
+        reads.dedup();
+        let places: Vec<&Value> = reads.iter().map(|&read| &named[read].0).collect();
         if !places.is_empty() {
             out.push(json!({"to": file.item(sources, target_lines, i), "fromRanges": places}));
         }

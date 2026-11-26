@@ -39,6 +39,9 @@ or an object with a `processes` list.
 An import replaces processes of the same label and adds the rest. It asks
 before an entry would remove a process's TLS, SSH tunnel or a guarded tag. A
 process that moves to another host, port or user forgets its stored password.
+An export never writes a password, and asks before writing a connect
+script, credential command or launch definition, any of which may hold a
+secret; it can leave those out.
 
 A discovery server's list never brings `init`, `initFile`, `ssh`, `launch`
 or `credentialCommand`: those run something on your machine or your
@@ -54,7 +57,9 @@ are fetched again every `q-lint.discovery.refreshInterval` minutes and on
 **Reload Discovery Server**. **Download Processes** saves them to your list.
 
 A fetch waits at most 10 seconds and accepts a 2xx `application/json` answer
-of up to 5 MB. A failure is shown under the server's row.
+of up to 5 MB. A failure is shown under the server's row. A server that
+fails after it has listed keeps the processes it last listed, under the
+failure, until a fetch answers again.
 
 A discovered process is `server/label` once connected, so it is never
 confused with a saved process of the same label.
@@ -101,7 +106,11 @@ password is imported.
 - `q-lint.connection.heartbeat.enable` sends `::` every
   `q-lint.connection.heartbeatInterval` seconds and shows the round trip.
   `q-lint.connection.autoReconnect.enable` reconnects a dropped connection
-  with back-off. Both are off by default.
+  with back-off. Both are off by default. While a heartbeat stays
+  unanswered, q-lint dials the host: one that takes no connection (a VPN
+  down) closes the connection as dropped, where a busy process keeps it.
+  Every connection also has TCP keepalive on, so one idle on a dead network
+  closes on its own.
 
 ### SSH tunnels
 

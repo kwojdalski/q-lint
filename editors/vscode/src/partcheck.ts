@@ -4,7 +4,11 @@
 // file, a column or type that differs from the table's other partitions, a
 // symbol column enumerated against a domain the root does not hold or past
 // its end, and partitions whose rows are far from the rest - as a report
-// naming each problem's partitions. A column enumerated against one domain
+// naming each problem's partitions. The tables are every table directory
+// the checked partitions hold, not q's own list (`.Q.pt`), which it takes
+// from the newest partition alone: a table that one lacks - or every table,
+// when a failed end of day left it empty - is not loaded at all, a query of
+// it fails, and that is the problem to name (#3050). A column enumerated against one domain
 // in some partitions and another in the rest is one too (#2139). Free of
 // any `vscode` import, so node tests it; `dbtoolsview.ts` asks the process
 // and opens the report.
@@ -31,6 +35,8 @@ export const PARTITION_CHECK = [
   " if[not@[{0<count .Q.pv};::;0b];:`hdb`root!(0b;system\"cd\")];",
   " r:hsym`$system\"cd\";av:@[get;`.Q.PV;{.Q.pv}];pv:(neg\"j\"$lim)sublist av;pt:(),.Q.pt;",
   ` pd:${PARTITION_DIRS}[r;(neg count pv)sublist@[get;\`.Q.PD;()];pv];`,
+  " qt:pt;ot:(distinct raze{k:key x;$[11h=type k;k;`$()]}each pd)except pt;",
+  " pt,:asc ot where{[pd;t]any{$[11h=type k:key x;0<count k;0b]}each` sv'pd,\\:t}[pd]each ot;",
   " fs:((key r)except`$string av)except`par.txt;",
   " dom:fs!{@[{$[11h=type v:get x;count v;0N]};x;0N]}each` sv'r,/:fs;dom:(where not null dom)#dom;",
   " one:{[b;deep;t;p] d:` sv b,t;k:key d;",
@@ -46,7 +52,7 @@ export const PARTITION_CHECK = [
   "  nh:{`$string[x],\"#\"}each have;nh:nh where(not nh in k)&(ty>=77h)|null ty;",
   "  @[e;`dir`dotd`cols`missing`types`enums`maxidx`rows;:;(1b;1b;string cs;string(cs except have),nh;\"h\"$ty;string en;mx;n)]};",
   " rows:raze{[one;deep;pt;p;b]one[b;deep;;p]each pt}[one;deep;pt]'[pv;pd];",
-  " `hdb`pf`root`all`checked`tables`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string av;\"f\"$count pv;string pt;",
+  " `hdb`pf`root`all`checked`tables`loaded`domains`domainsizes`rows!(1b;string .Q.pf;system\"cd\";string av;\"f\"$count pv;string pt;string qt;",
   "  string key dom;\"f\"$value dom;$[count rows;flip rows;()])}",
 ].join("\n");
 
@@ -70,7 +76,19 @@ export interface PartRow {
 
 export type PartAnswer =
   | { hdb: false; root: string }
-  | { hdb: true; field: string; root: string; all: string[]; checked: number; tables: string[]; domains: Map<string, number | null>; rows: PartRow[] };
+  | {
+      hdb: true;
+      field: string;
+      root: string;
+      all: string[];
+      checked: number;
+      /// Every table a checked partition has a directory of.
+      tables: string[];
+      /// Those q loaded (`.Q.pt`): the newest partition's.
+      loaded?: string[];
+      domains: Map<string, number | null>;
+      rows: PartRow[];
+    };
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map((s) => (s === null || s === undefined ? "" : String(s))) : typeof v === "string" ? [v] : []);
 const number = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -112,6 +130,7 @@ export function readPartitions(raw: unknown): PartAnswer {
     all: strings(r.all),
     checked: number(r.checked) ?? 0,
     tables: strings(r.tables),
+    ...(r.loaded === undefined ? {} : { loaded: strings(r.loaded) }),
     domains: new Map(names.map((d, i) => [d, number(sizes[i])])),
     rows: tbl.map((table, i) => ({
       table,
@@ -174,10 +193,22 @@ export function partitionProblems(a: Extract<PartAnswer, { hdb: true }>): Proble
     const gaps = missingWeekdays(a.all);
     if (gaps.length > 0) out.push({ kind: "missing dates", table: "", what: `${gaps.length} weekday${gaps.length === 1 ? "" : "s"} between ${a.all[0]} and ${a.all[a.all.length - 1]} with no partition`, partitions: gaps });
   }
+  const newest = a.all[a.all.length - 1] ?? "";
+  if (a.tables.length === 0 && newest !== "") {
+    out.push({ kind: "missing table", table: "", what: "no table directory in any partition checked, so q has loaded no table", partitions: [newest] });
+  }
   for (const table of a.tables) {
     const rows = a.rows.filter((r) => r.table === table);
     const add = (kind: Problem["kind"], what: string, partitions: string[]) => partitions.length > 0 && out.push({ kind, table, what, partitions });
-    add("missing table", `no ${table} directory`, rows.filter((r) => !r.dir).map((r) => r.partition));
+    const absent = rows.filter((r) => !r.dir).map((r) => r.partition);
+    if (a.loaded !== undefined && !a.loaded.includes(table)) {
+      // q's tables are the newest partition's: one it lacks is in no
+      // `.Q.pt`, and `select from` it fails with the table's name (#3050).
+      const why = absent.includes(newest) ? `q takes its tables from the newest partition, so it has not loaded ${table}` : `q has not loaded ${table} (it is not in .Q.pt)`;
+      add("missing table", `no ${table} directory; ${why} and a query of it fails`, absent.length > 0 ? absent : [newest]);
+    } else {
+      add("missing table", `no ${table} directory`, absent);
+    }
     add("missing .d", `${table} has no .d file`, rows.filter((r) => r.dir && !r.dotd).map((r) => r.partition));
     const good = rows.filter((r) => r.dotd);
     for (const col of [...new Set(good.flatMap((r) => r.missing))]) {

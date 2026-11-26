@@ -17,7 +17,7 @@ const settings = () => readAdmin((key, fallback) => workspace.getConfiguration("
 export class ProcessTimeouts {
   constructor(
     context: ExtensionContext,
-    private readonly live: Pick<Live, "pick" | "processes" | "saveProcesses" | "activeProcess" | "isBusy">,
+    private readonly live: Pick<Live, "pick" | "processes" | "saveProcesses" | "activeProcess" | "queryRunning">,
     private readonly launcher: Pick<Launcher, "interrupt">,
   ) {
     context.subscriptions.push(
@@ -86,7 +86,9 @@ export class ProcessTimeouts {
       return undefined;
     }
     const process = this.live.activeProcess();
-    if (process === undefined || !this.live.isBusy()) {
+    // A background read is not a query: interrupting it would signal a
+    // process that runs nothing of the user's, and fail the read (#3034).
+    if (process === undefined || !this.live.queryRunning()) {
       void window.showInformationMessage("q-lint: no query is running.");
       return undefined;
     }

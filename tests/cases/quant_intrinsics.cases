@@ -193,6 +193,15 @@ within[1;1]
 === clean profile: general | good: within[1;1 2]
 within[1;1 2]
 
+=== QT019 profile: general | bad: the empty list is no pair of bounds (#2901; q 5: each 'length)
+r1:5 within ()
+r2:1 2 within ()
+r3:within[5;( )]
+r4:{x within ()}
+
+=== clean profile: general | good: a general list of two is (#2901; q 5: 0b)
+r:5 within (1;2)
+
 === QT014 profile: general | bad: rotate[1.5;"abc"]
 rotate[1.5;"abc"]
 

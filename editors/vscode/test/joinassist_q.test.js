@@ -109,3 +109,85 @@ test("every join suggested with a partitioned table on the left runs", { skip },
   }
   assert.ok(ran >= 4, `${ran} joins run`);
 });
+
+// q joins no table where it lies on disk, on either side: a splayed one
+// signalled 'splay, or 'type under xkey (#3044); a partitioned one on the
+// right 'date or 'splay (#3045).
+test("every join suggested with a splayed table on either side, or a partitioned one on the right, runs", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "{[r;d] .Q.dd[r;d,`quote`] set .Q.en[r] ([] sym:`p#`a`a`b; time:08:59 09:01:30 09:00:30t; bid:10 11 12f; ex:`x`y`x)}[r] each 2026.01.05 2026.01.06;",
+    ".Q.dd[r;`sref`] set .Q.en[r] ([] sym:`a`b; time:09:00 09:01t; lvl:1 2f; nm:`x`y);",
+    "\\l $DIR/hdb",
+    "trade:([] sym:`a`b`a; time:09:00 09:01 09:02t; px:1 2 3f)",
+    "ks:([sym:`a`b] sector:`x`y)",
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const [trade, sref, quote, ks] = [await shape("trade"), await shape("sref"), await shape("quote"), await shape("ks")];
+  assert.deepStrictEqual([sref.where, quote.where], ["splayed", "partitioned"]);
+  const runs = async (l, r) => {
+    const joins = suggestJoins(l, r);
+    for (const s of joins) {
+      const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+      assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+    }
+    return joins;
+  };
+  let ran = 0;
+  for (const [l, r] of [[sref, trade], [sref, ks], [trade, sref], [sref, quote], [quote, sref]]) {
+    const joins = await runs(l, r);
+    joins.forEach((s) => assert.match(s.why, /sref is splayed, which q joins only once it is selected from/, s.join));
+    ran += joins.length;
+  }
+  const parted = await runs(trade, quote);
+  assert.deepStrictEqual(parted.map((s) => s.join), ["lj", "ij", "aj", "wj"]);
+  parted.forEach((s) => assert.match(s.why, /quote is partitioned, which q joins only one partition of at a time/, s.join));
+  // One partition's rows, and not its date as a column to join.
+  const lj = await connection.evaluate(`{r:value x;(cols r;r\`bid)}${JSON.stringify(parted[0].expression)}`);
+  assert.deepStrictEqual(lj.value, [["sym", "time", "px", "bid", "ex"], [10, 12, 10]]);
+  assert.ok(ran >= 20, `${ran} joins run`);
+});
+
+// Indexed by a column's name a keyed table is looked up by key, and wj
+// takes no keyed table: its wj signalled 'type.
+test("every join suggested with a keyed left table runs, wj on it unkeyed (#3046)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER + "orders:([id:1 2 3] sym:`a`b`a; time:09:00 09:01 09:02t; qty:10 20 30)\n");
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const joins = suggestJoins(await shape("orders"), await shape("quote"));
+  assert.deepStrictEqual(joins.map((s) => s.join), ["lj", "ij", "aj", "wj"]);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+  const wj = await connection.evaluate(`{r:value x;(cols r;\`float$r\`id;r\`bid_max)}${JSON.stringify(joins[3].expression)}`);
+  assert.deepStrictEqual(wj.value, [["id", "sym", "time", "qty", "bid_max", "bid_min"], [1, 2, 3], [10, 12, 11]]);
+});
+
+// `value` reads past a comment, so the shape is read; bracketed with it,
+// the join was refused with '(.
+test("a join of an expression that ends in a comment runs (#3047)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER);
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const left = await shape("select from trade where sym=`a  / the one name");
+  const joins = [...suggestJoins(left, await shape("ref")), ...suggestJoins(await shape("ref / sectors"), left)];
+  assert.ok(joins.length >= 2, `${joins.length} joins`);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+});
+
+// Keyed on every column it shares with none of its own, the right table
+// is keys alone, which q refuses to lj or ij with 'type.
+test("every join suggested for two tables of the same columns runs (#3048)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t1:([] sym:`a`b; qty:1 2; px:1 2f)\nt2:([] sym:`c`d; qty:3 4; px:3 4f)\n");
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const joins = suggestJoins(await shape("t1"), await shape("t2"));
+  assert.deepStrictEqual(joins.map((s) => s.join), ["uj"]);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+});

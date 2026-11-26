@@ -58,6 +58,9 @@ pub(super) struct Client {
     /// `null` understood as no active parameter (LSP 3.18).
     no_active_parameter: bool,
     completion_markdown: bool,
+    /// A completion's edit given both ways, to insert at the cursor and to
+    /// replace the name it is in, for the editor to choose between.
+    insert_replace: bool,
 }
 
 impl Client {
@@ -80,6 +83,9 @@ impl Client {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             completion_markdown: markdown("completion/completionItem/documentationFormat"),
+            insert_replace: at("completion/completionItem/insertReplaceSupport")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 }
@@ -206,16 +212,24 @@ fn defined(sources: &Sources, names: &HashSet<String>, from: &str) -> Vec<Define
 }
 
 /// A file as a hover names it: under the workspace folder that holds it,
-/// or by its name alone.
+/// or by its name alone. With more than one folder the folder's own name
+/// leads, as an editor's does in a multi-root workspace: `A/lib.q` and
+/// `B/lib.q` were both `lib.q`, and nothing said which project a signature
+/// came from (#2963).
 pub(super) fn shown(sources: &Sources, key: &str) -> String {
     let path = std::path::Path::new(key);
-    sources
-        .idx
-        .roots
-        .iter()
-        .find_map(|root| path.strip_prefix(file_key(root)).ok())
-        .or_else(|| path.file_name().map(std::path::Path::new))
-        .unwrap_or(path)
+    let roots = &sources.idx.roots;
+    let under = roots.iter().find_map(|root| {
+        let root = std::path::PathBuf::from(file_key(root));
+        let rest = path.strip_prefix(&root).ok()?;
+        Some(match root.file_name() {
+            Some(folder) if roots.len() > 1 => std::path::Path::new(folder).join(rest),
+            _ => rest.to_path_buf(),
+        })
+    });
+    under
+        .or_else(|| path.file_name().map(std::path::PathBuf::from))
+        .unwrap_or_else(|| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/")
 }
@@ -502,6 +516,15 @@ struct Signature {
     open: bool,
 }
 
+impl Signature {
+    /// How many arguments a call may write. One where no parameter is
+    /// named: KDB-X 5 runs `f[]` and `f[1]` for `f:{[] 1}`, and refuses
+    /// `f[1;2]` with 'rank (#2949).
+    fn rank(&self) -> usize {
+        self.params.len().max(1)
+    }
+}
+
 /// The signatures of the name called at `at..at + len` of the cursor's
 /// document: the workspace's functions of that name, one for each list of
 /// parameters, or q's own.
@@ -656,9 +679,9 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
     // has several definitions.
     let active = found
         .iter()
-        .position(|s| s.open || call.argument < s.params.len())
+        .position(|s| s.open || call.argument < s.rank())
         .unwrap_or(0);
-    let over = |s: &Signature| !s.open && call.argument >= s.params.len();
+    let over = |s: &Signature| !s.open && call.argument >= s.rank();
     let parameter = |s: &Signature| {
         if s.open {
             json!(call.argument.min(s.params.len() - 1))
@@ -694,7 +717,7 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
                 "activeParameter": parameter(s),
             });
             let said = if over(s) {
-                let takes = match s.params.len() {
+                let takes = match s.rank() {
                     1 => "1 argument".to_string(),
                     n => format!("{n} arguments"),
                 };
@@ -751,6 +774,18 @@ fn completion(params: &Value, sources: &Sources, client: Client, more: More) -> 
     let stem = typed.rfind('.').map_or("", |dot| &typed[..=dot]);
     let lines = Lines::new(cursor.text);
     let span = json!({"start": lines.json(typing.start), "end": lines.json(cursor.offset)});
+    // The rest of the name the cursor is in, which an editor set to replace
+    // takes with what is typed: accepting `fooBaz` at `fo|oBa` left
+    // `fooBazoBa` (#2678). Only for a client that reads both ranges.
+    let rest = cursor.text[cursor.offset..]
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.'))
+        .count();
+    let rest = cursor.text[cursor.offset..cursor.offset + rest]
+        .trim_end_matches('.')
+        .len();
+    let whole = json!({"start": lines.json(typing.start),
+                       "end": lines.json(cursor.offset + rest)});
     // By (group, spelling), so the first to claim a spelling keeps it.
     let mut items: BTreeMap<String, (u8, Value)> = BTreeMap::new();
     let mut offer = |group: u8, spelling: &str, kind: u8, builtin: Option<&Builtin>| {
@@ -766,7 +801,11 @@ fn completion(params: &Value, sources: &Sources, client: Client, more: More) -> 
             "kind": kind,
             "sortText": format!("{group}{spelling}"),
             "filterText": spelling,
-            "textEdit": {"range": span, "newText": spelling},
+            "textEdit": if client.insert_replace {
+                json!({"insert": span, "replace": whole, "newText": spelling})
+            } else {
+                json!({"range": span, "newText": spelling})
+            },
         });
         if let Some(builtin) = builtin {
             item["detail"] = json!(builtin.syntax);
@@ -868,12 +907,17 @@ impl Loads {
         }
         let mut definers: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
+        // What each file defines where the new load would run it, which is
+        // where this file runs before its first `\d`, and not where its
+        // loaders have put it: lib.q's `fancy`, loaded elsewhere under
+        // `\d .a`, is `.a.fancy` there and `fancy` after a load here (#2820).
+        let placement = sources.placement(&cursor.key);
         for key in sources.keys() {
-            for name in &sources.idx.files[key].placed.defined {
-                definers
-                    .entry(name.clone())
-                    .or_default()
-                    .push(key.to_string());
+            let file = &sources.idx.files[key];
+            let mut loaded = file.own.clone();
+            placement.apply(&mut loaded, &file.read);
+            for name in loaded.defined {
+                definers.entry(name).or_default().push(key.to_string());
             }
         }
         Loads {
@@ -981,7 +1025,9 @@ fn load_path(sources: &Sources, from: &str, file: &str) -> Option<String> {
 /// read in the root context before the line that needs it; with none, at
 /// the start, past a leading `#!` line and comment block. As a byte offset,
 /// and whether the line before ends the file with no newline. Nothing when
-/// that place is not before the cursor's line.
+/// that place is not before the cursor's line. A context opened any other
+/// way - `system "d .x"`, `q)\d .x`, `k)\d .x` - ends the search as `\d .x`
+/// does (#2670).
 fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
     let cursor_line = text[..offset.min(text.len())]
         .rfind('\n')
@@ -989,6 +1035,7 @@ fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
     // Read with comments blanked: a `\l` in a block comment loads nothing,
     // and a block comment, all of it, is part of the header (#1208).
     let code = q_lint_rs::code_view(text);
+    let contexts = q_lint_rs::contexts(text);
     let mut after_header = 0;
     let mut header = true;
     let mut last_load: Option<usize> = None;
@@ -1000,7 +1047,10 @@ fn load_line(text: &str, offset: usize) -> Option<(usize, bool)> {
         }
         let commented = line.trim_end();
         let trimmed = code[start..end].trim_end();
-        if trimmed.starts_with("\\d") {
+        let switched = contexts
+            .iter()
+            .any(|(at, ns)| (start..end).contains(at) && !ns.is_empty());
+        if trimmed.starts_with("\\d") || switched {
             break;
         }
         if header

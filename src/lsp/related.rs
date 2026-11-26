@@ -56,8 +56,8 @@ fn parameters<'a>(finding: &'a Finding, text: &str, at: usize) -> Vec<(usize, &'
     let Some(close) = closer(text, open) else {
         return vec![];
     };
-    // The message lists the names as `["x", "y"]`.
-    let names = finding.detail.split('"').skip(1).step_by(2);
+    // The message lists the names as `` `x`, `y` ``.
+    let names = finding.detail.split('`').skip(1).step_by(2);
     let mut out = vec![];
     for name in names {
         for (i, start) in words(text, open + 1, close, name).into_iter().enumerate() {

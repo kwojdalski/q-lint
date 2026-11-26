@@ -263,7 +263,7 @@ In grid or chart mode, results open beside the editor or in the
 most `q-lint.query.gridLimit` rows.
 
 - **Grid**: sort, filter, heatmap (**Toggle Result Heatmap**), column
-  formats by name suffix (`_PCT`, `_BPS`, `_CCY` ...),
+  formats by an upper-case name suffix (`_PCT`, `_BPS`, `_CCY` ...),
   **Add Conditional Format...**, data bars and sparklines, and a column
   layout you can move, hide and freeze. **Load More Result Rows** pages
   through a cut result (off by default: `q-lint.results.paging.enable`).

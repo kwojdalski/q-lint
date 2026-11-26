@@ -142,15 +142,23 @@ export const PLOTS = new PlotStore();
 /// `>`: `<image x=">" onerror="..."/>` is refused (#1738), and an
 /// unclosed quote holds the rest. A handler may have space before its `=`,
 /// and `<set>` or `<animate>` may write one: both are refused (#2450).
+/// chartSvg names no namespace but the root's, so a prefixed element
+/// (`<h:script>`, `<s:foreignObject>`) or a second `xmlns` - which could
+/// put an XHTML `<iframe>` in the page - is refused too (#2652).
 export function plainSvg(svg: unknown): svg is string {
   return (
     typeof svg === "string" &&
     svg.length < 20_000_000 &&
-    svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"') &&
+    svg.startsWith(SVG_ROOT) &&
     svg.trimEnd().endsWith("</svg>") &&
-    !/<script|<foreignObject|<set\b|<animate|\son[a-z]+\s*=|javascript:|href\s*=/i.test(decodeReferences((svg.match(/<(?:[^>"']|"[^"]*"?|'[^']*'?)*>?/g) ?? []).join("")))
+    !/<script|<foreignObject|<set\b|<animate|<iframe|<embed|<object|<\/?[\w.-]+:|xmlns|\son[a-z]+\s*=|javascript:|href\s*=/i.test(
+      decodeReferences((svg.match(/<(?:[^>"']|"[^"]*"?|'[^']*'?)*>?/g) ?? []).join("").slice(SVG_ROOT.length)),
+    )
   );
 }
+
+/// How chartSvg's markup starts: its one namespace.
+const SVG_ROOT = '<svg xmlns="http://www.w3.org/2000/svg"';
 
 /// Markup with its character references read, so `jav&#x61;script:` is
 /// looked for as the browser reads it (#2450).
@@ -161,8 +169,12 @@ function decodeReferences(markup: string): string {
   });
 }
 
-/// A file name for a plot: its kind and when it was drawn.
+/// A file name for a plot: its kind and when it was drawn, in local time
+/// as the q Plots view shows it - in UTC, a plot of the evening was named
+/// for the next day (#3140).
 export function plotFileName(plot: Plot, format: "svg" | "png"): string {
-  const stamp = new Date(plot.at).toISOString().replace(/[-:]/g, "").replace(/\..*$/, "");
+  const at = new Date(plot.at);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  const stamp = `${at.getFullYear()}${two(at.getMonth() + 1)}${two(at.getDate())}T${two(at.getHours())}${two(at.getMinutes())}${two(at.getSeconds())}`;
   return `q-plot-${plot.kind}-${stamp}.${format}`;
 }

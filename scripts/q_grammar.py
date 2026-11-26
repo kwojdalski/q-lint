@@ -16,8 +16,9 @@ use, so this is generated rather than written by hand:
 What it gets right is the lexical shape q shares with the linter's own views
 in src/lib.rs: a `/` opens a comment only at the start of a line or after
 whitespace, a line holding a lone `/` opens a block that a lone `\\` closes,
-a lone `\\` outside a block ends the script, a line opening with `\\` is a
-system command, and `p)` / `k)` lines are another language.
+a lone `\\` outside a block ends the script and so does an exit, `\\\\`, a line
+opening with `\\` is a system command, and `p)` / `k)` lines are another
+language.
 """
 
 import json
@@ -54,6 +55,11 @@ TEMPORAL_END = r"(?![A-Za-z0-9.:])"
 MINUTES = r":[0-5]\d(?::[0-5]\d(?:\.\d*)?)?"
 HOURS = r"\d+(?:\.\d*)?"
 CLOCK = r"(?:\d{2}" + MINUTES + r"|" + HOURS + r")"
+# What q trims from a line before it asks whether a lone `/` or `\\` is all
+# of it: spaces, tabs and a carriage return. Not `\s`, which also takes a
+# no-break space, a form feed and a vertical tab: `/` and one of those is a
+# line comment to q, and `\\` and one a system command (#2279, #2903).
+BLANKS = r"[ \t\r]*"
 NAME = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
 # A dotted name split in two: the namespace `.ns.sub` and the member `.f`.
 # The first group is empty for a name with no leading dot, so `a.b` and `f`
@@ -140,16 +146,17 @@ def grammar():
                 "and only the \\ that closes the outermost ends it. The nested include keeps the inner "
                 "\\ from closing the outer comment and the outer \\ from reading as end-of-script.",
                 "name": "comment.block.q",
-                "begin": r"^/\s*$",
-                "end": r"^\\\s*$",
+                "begin": r"^/" + BLANKS + r"$",
+                "end": r"^\\" + BLANKS + r"$",
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
                 "endCaptures": {"0": {"name": "punctuation.definition.comment.end.q"}},
                 "patterns": [{"include": "#block-comment"}, {"include": "#qdoc"}],
             },
             "end-of-script": {
-                "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
+                "comment": "A lone backslash outside a block ends the script, and so does an exit, \\\\ - "
+                "after a q) prompt or before a comment too; q reads nothing after either (#2786).",
                 "name": "comment.block.end-of-script.q",
-                "begin": r"^\\\s*$",
+                "begin": r"^(?:\\" + BLANKS + r"|(?:q\))?\\\\(?:[ \t].*)?)$",
                 "end": r"(?=A)(?!A)",
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
             },

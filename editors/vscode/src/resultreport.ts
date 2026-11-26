@@ -33,9 +33,13 @@ export function markdownText(text: string): string {
 }
 
 /// A fence that `code` cannot close: three backticks, or more than the
-/// longest run of them in it.
+/// longest run of them in it. Counted in a loop: spread into Math.max, a
+/// generated list of 120k symbols overflows the stack (#1915, #2663).
 export function fenceFor(code: string): string {
-  const longest = Math.max(0, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+  let longest = 0;
+  for (const m of code.matchAll(/`+/g)) {
+    longest = Math.max(longest, m[0].length);
+  }
   return "`".repeat(Math.max(3, longest + 1));
 }
 

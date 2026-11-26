@@ -104,6 +104,33 @@ test("off, nothing is sent; on, the expressions are timed and shown", async (t) 
   assert.strictEqual(feature.panelOpen(), false);
 });
 
+// The second expression's box took `/ old version`, which went as
+// `\ts:N / old version` and came back a row with a time and a space.
+test("a comment is not an expression to time, in either place (#2987)", async (t) => {
+  assert.match(expressionProblem("/ old version"), /not a comment/);
+  assert.match(expressionProblem("  / old version"), /not a comment/);
+  assert.match(expressionProblem("/"), /not a comment/);
+  // A comment after an expression, and an over that follows a term, are the expression's.
+  assert.strictEqual(expressionProblem("sum til 10 / slow"), undefined);
+  assert.strictEqual(expressionProblem("0 +/ til 10"), undefined);
+  const made = panels();
+  const { q, live } = await setUp(t, { answer, register: registerBenchmark });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("sum til 10", "/ old version", "100 3"), /the benchmark times a q expression, not a comment/);
+  assert.match(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("/ sum til 10", "", "100 3"), /not a comment/);
+  assert.strictEqual(q.sent.length, before);
+  assert.strictEqual(made.length, 0);
+  // The box says so as it is typed.
+  let box;
+  const ask = vscode.window.showInputBox;
+  t.after(() => (vscode.window.showInputBox = ask));
+  vscode.window.showInputBox = async (options) => ((box ??= options), undefined);
+  assert.strictEqual(await stub.commands.get(PROCESS_TOOL_COMMANDS.benchmark)("sum til 10"), "cancelled");
+  assert.match(box.validateInput("/ old version"), /not a comment/);
+  assert.strictEqual(box.validateInput(""), undefined);
+});
+
 test("on a guarded process an expression that writes is held unless confirmed", async (t) => {
   panels();
   const { q, live } = await setUp(t, { tags: ["prod"], answer, register: registerBenchmark });

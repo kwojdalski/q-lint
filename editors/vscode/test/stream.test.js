@@ -551,3 +551,60 @@ test("Abort, Disconnect and Cancel stop a connection apart that waits in its con
   vscode.window.withProgress = async (options, task) => (options.cancellable ? task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: (f) => (cancel = f) }) : progress(options, task));
   assert.ok((await ended(() => cancel())) < 2000);
 });
+
+// Once connected, the notification closed, and the table list and `.u.sub`
+// were waited for with no bound: a tickerplant that never answered held the
+// command for ever, and Abort and Disconnect said there was nothing to stop.
+test("Cancel, Abort, Disconnect and a timeout end a Stream Table whose tickerplant does not answer the table list or .u.sub (#3023)", async (t) => {
+  const { fakeQ, SILENT } = require("./fakeq.js");
+  const vscode = require("vscode");
+  const { SUBSCRIBE, TABLES } = require("../out/stream.js");
+  // Neither the table list nor .u.sub is ever answered.
+  const q = await fakeQ(() => SILENT);
+  t.after(() => q.close());
+  const tp = { label: "tp", host: "127.0.0.1", port: q.port, tags: [] };
+  const { streams } = await setUp(t, [tp, { ...tp, label: "bounded", timeout: 0.2 }]);
+  stub.config.user["tickerplant.stream.enable"] = true;
+  const progress = vscode.window.withProgress;
+  t.after(() => (vscode.window.withProgress = progress));
+  const titles = [];
+  let cancel;
+  vscode.window.withProgress = async (options, task) => {
+    if (!options.cancellable) {
+      return progress(options, task);
+    }
+    titles.push(options.title);
+    return task({ report() {} }, { isCancellationRequested: false, onCancellationRequested: (f) => (cancel = f) });
+  };
+  /// The command stopped by `stop` once `sent` has reached the process; how long it took.
+  const ended = async (sent, stop, label = "tp") => {
+    const table = sent === SUBSCRIBE ? "trade" : undefined;
+    const started = Date.now();
+    const before = q.sent.length;
+    const streaming = stub.commands.get(STREAM_COMMANDS.start)(label, table);
+    for (let i = 0; i < 200 && !q.sent.slice(before).some((m) => (Array.isArray(m) ? m[0] : m) === sent); i++) await sleep(10);
+    assert.ok(q.sent.slice(before).some((m) => (Array.isArray(m) ? m[0] : m) === sent), "it was asked");
+    stub.messages.length = 0;
+    await stop();
+    assert.ok(await Promise.race([streaming.then(() => true), sleep(2000).then(() => false)]), "the command ended");
+    assert.deepStrictEqual(streams.state(), []);
+    return Date.now() - started;
+  };
+  // The notification's Cancel, of .u.sub and of the table list: nothing more is said.
+  assert.ok((await ended(SUBSCRIBE, () => cancel())) < 2000);
+  assert.deepStrictEqual(stub.messages, []);
+  assert.strictEqual(titles.at(-1), "q-lint: subscribing to trade on tp");
+  assert.ok((await ended(TABLES, () => cancel())) < 2000);
+  assert.deepStrictEqual(stub.messages, []);
+  assert.strictEqual(titles.at(-1), "q-lint: asking tp for its tables");
+  // Abort and Disconnect, which said "no query is running" and "not connected".
+  assert.ok((await ended(SUBSCRIBE, () => stub.commands.get("q-lint.abortQuery")())) < 2000);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the subscription to tp on a connection of its own."]]);
+  assert.ok((await ended(SUBSCRIBE, () => stub.commands.get("q-lint.disconnectProcess")())) < 2000);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: stopped the subscription to tp on a connection of its own."]]);
+  // The process's own timeout, with nobody stopping it.
+  assert.ok((await ended(SUBSCRIBE, () => {}, "bounded")) < 2000);
+  assert.deepStrictEqual(stub.messages, [["error", "q-lint: could not subscribe to trade on bounded: timed out after 0.2 s"]]);
+  assert.ok((await ended(TABLES, () => {}, "bounded")) < 2000);
+  assert.deepStrictEqual(stub.messages, [["error", "q-lint: could not subscribe to the table on bounded: timed out after 0.2 s"]]);
+});

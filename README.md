@@ -126,7 +126,7 @@ still listed is not taken for one to run `--fix` on again. Batch fixing handles 
 `*=` (QE004), a leading UTF-8 BOM (QE005), an invalid string escape (`"C:\data"` →
 `"C:\\data"`, QE002), `true`/`false`/`None`/`return x` → `1b`/`0b`/`(::)`/`:x` (QF015),
 a table literal of scalars, each column enlisted (QT005), a symbol used as a `like`
-pattern (`` `a* `` → `"a*"`, QB007), `f . ()` → `f[]` (QA004), `til 5.0` → `til 5` (QT008,
+pattern (`` `a* `` → `"a*"`, QB007), `f . ()` → `f[]` for a lambda that takes no argument (QA004), `til 5.0` → `til 5` (QT008,
 and `2.0 rotate` QT014, `3.0 mavg` QT017), a number signalled → a string (QT025),
 `where a:1` → `where a=1` (QT028), what q 5 refuses and q 4 read another way →
 the q 5 spelling of that reading (`-x` → `neg x` QE008, `+/x` → `(+/)x` QE009,
@@ -142,7 +142,8 @@ to replace code that could only fail.
 
 Some rewrites change behaviour or guess at intent, so they remain editor Quick
 Fixes that you choose individually: `&&` → `&`, `||` → `|` (QE004), `reverse asc` →
-`desc` (QR001: they differ on a dictionary's tied keys), `distinct asc distinct` →
+`desc` (QR001: they differ on a dictionary's tied keys, and `asc` for `reverse desc`
+marks its result as sorted, `` `s# ``, where `reverse desc` leaves it plain), `distinct asc distinct` →
 `asc distinct` (QR003: the attribute differs on a table), a symbol given to
 `ss`/`ssr` → a string (QT007), dropping a lambda's trailing `;` so it returns its last
 value (QB012), `a -1` → `a - 1` (QB010), a string compared with `=` in a filter → `like`
@@ -160,7 +161,8 @@ a filter (QB005), `x` → the one declared parameter (QF010), deleting a comment
 definition (QL002), passing an outer local into a nested lambda that reads it
 (`{a+x}` → `{[x;a] a+x}[;a]`, QF005), dropping the trailing `;` of `$[c;a;b;]` (QA007),
 `$[c;a]` → `if[c;a]` where nothing takes its value (QA006), `10/2` → `10%2` (QB014),
-removing `a:a` (QB017), renaming a parameter
+removing `a:a` (QB017), `f . ()` → `f[]` for anything else (QA004: `count[]` is 1 and a
+two-argument lambda's `[]` a projection, where `. ()` was 'type), renaming a parameter
 that shadows a builtin (QF001), a column one typo from the table's (QF020),
 `` hopen `host:5000 `` → `` hopen `:host:5000 `` (QT029), removing a `noqa` comment
 that suppresses nothing (QL003), and (uqf)
@@ -232,7 +234,11 @@ the one the run would give without it, and messages still go to standard
 error. Text written to a file is never coloured. A file the run reads is
 never the one it writes: one reached through a symlink or a hard link, or by
 another case of its name on a disk that ignores case, and the file
-`--stdin-filename` names, are refused with exit 2 and left as they were.
+`--stdin-filename` names, are refused with exit 2 and left as they were, and
+so are the configuration the run reads, a file that one extends and the
+baseline in force. So is a name that ends `.q`, `.k` or `.qnb`, read or not:
+`--output-file a.q b.q` is a path to lint taken for the flag's value far more
+often than a report meant for `a.q`.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -257,6 +263,8 @@ A file depends on another when:
   local or parameter of the same name is not a read, and neither is a name
   in a string or comment. A name no file defines is tried without its last
   segment, so `.cfg.opts.port` reaches the file defining `.cfg.opts`. A
+  namespace no file assigns whole, `.cfg` read as a dictionary, reaches each
+  file assigning a name in it. A
   symbol handed straight to `get` or `value`, `` get`.ns.x `` or
   `` get[`.ns.x] ``, is a read too, and so is a name on a `k)` line, which
   reads q's globals as k has its names;
@@ -270,14 +278,19 @@ A file depends on another when:
   runs - tried against the current directory only. A script loaded under `\d .a`
   runs in `.a`, so what it defines at its root is `.a.name` as well as
   `name`, and so is what the scripts it loads at its root define; a name it
-  reads there is looked up in `.a` as well;
+  reads there is looked up in `.a` as well. A file symbol handed to
+  `hcount`, `hdel`, `hopen`, `key`, `read0` or `read1` is an edge and no
+  load - nothing of the file runs, so it is put in no context - unless the
+  text read is evaluated, `` value each read0`:x.q ``;
 - it loads the other as a KDB-X module, `` use`name ``: `name.q` or
   `name/init.q` (`` use`a.b `` is `a/b.q` or `a/b/init.q`) where a `\l` is
   tried, the module's search path not being in the source, and `` use`.b ``
   in a module beside it. A module is a file that assigns `export` at its top
-  level, and its names are where KDB-X puts them, `.m.name` (`.m.a.0b` for
-  `` use`a.b ``), never at the root: a root `helper` reads nothing a module
-  defines, `.m.mymod.helper` reads mymod's.
+  level and that some `use` reaches, and its names are where KDB-X puts
+  them, `.m.name` (`.m.a.0b` for `` use`a.b ``), never at the root: a root
+  `helper` reads nothing a module defines, `.m.mymod.helper` reads mymod's.
+  A file no `use` reaches is a script whatever it assigns, its names at the
+  root, where `q file.q` and `\l file.q` put them.
 
 A name several files define gives an edge to each of them - which one wins is
 load order, and load order is not in the source. With `--detail` each file's
@@ -286,8 +299,11 @@ entry is `{"dependencies" (or "dependents"): [...], "ambiguous": {name:
 each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
-`set` into a computed name, and a
-concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
+`set` into a computed name (an amend, `insert` or functional delete of one
+too), a `system "d ",ns` switching to a context joined at run time, listed as
+`namespace`, and a
+concatenated `system "l ",path` or a `value "\\l lib.q"`, both listed as
+`load`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument
 is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
 scope assigns `nm` nothing but a symbol atom - because `value` of a
@@ -322,9 +338,10 @@ are not in it, says on standard error how many it passed over, and exits 0
 when nothing is new. Name the file in a configuration, `baseline =
 "qlinter-baseline.json"`, and every run under it - the language server's
 included - uses it without the flag; `--write-baseline` reads no baseline, so
-it always writes everything. It never writes over a file the run lints, nor
-to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
-lints the tree, is refused with exit 2 and leaves `o.q` as it was. Nor
+it always writes everything. It never writes over a file the run lints or a
+configuration it reads, nor to a name ending `.q`, `.k`, `.qnb` or `.toml`:
+`qlinter --write-baseline o.q`, which lints the tree, is refused with exit 2
+and leaves `o.q` as it was, and so is `--write-baseline pyproject.toml`. Nor
 does a run that could not read one of its inputs write anything: it exits 2
 and keeps the baseline there, which a partial one would replace.
 
@@ -336,7 +353,15 @@ new. A line that is edited is new, which is the point. Paths are written
 relative to the baseline file, so it means the same in every checkout. A
 baseline that is missing or is not one is an error (exit 2), not a run that
 silently reports everything; the language server says so once and shows
-every finding.
+every finding. A finding from qls (`--backend qls` or `all`) is written and
+passed over as a built-in rule's is.
+
+A file whose brackets do not balance reports its first QE001 and nothing
+else. A baseline that holds that QE001 accepts it as a `noqa` on its line
+would: the file's next QE001 reports, and behind the last of them every other
+rule, so what is new in the file is new. `--write-baseline` therefore writes
+what stands behind such a file's QE001 as well, more than the run without it
+prints, and reading the baseline back reports nothing.
 
 ### The q version check: `--target-version`
 
@@ -425,7 +450,8 @@ QS006 = "warning"    # except this one
 The text, `json`, `sarif` and `github` reports and the language server all
 show it, and only an `error` or a `warning` fails the run (exit 1). It changes
 how a finding is reported, never whether: that is `select` and `ignore`. An
-editor's own `lint.severity` overrides it again, for that user.
+editor's own `lint.severity` overrides it again, for that user. `QLS001` sets
+every qls finding, whatever severity qls gave it.
 
 `[rules.<CODE>]` holds a rule's own options, for the few rules with a
 threshold or a word list of their own:
@@ -454,7 +480,13 @@ which the VS Code extension hands Even Better TOML for completion and
 validation; a test keeps it equal to what qlinter reads.
 
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
-are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
+are globs read the way Ruff reads them, and with the crate Ruff reads them
+with: `*` and `?` match any text and any one character, a `/` included;
+`[ab]` and `[a-z]` match one character of those and `[!a]` or `[^a]` one that
+is not; `{gen,vendor}` matches either name; and a `\` before any of these
+makes it a literal character (except on Windows, where `\` separates
+directories - write `[*]` there). A pattern that does not parse - `[bad`,
+`{gen,vendor` - is a configuration error. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
 configuration's directory (the current directory for `--exclude` and the
 user-level file), so `lib/` excludes the root's `lib` and not `tests/lib`. A
@@ -484,7 +516,8 @@ directory below that root - the configuration's directory, or the current
 one without a configuration (in the language server, the workspace folder
 holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
-`--select` naming one of them reports it regardless.
+`--select` or `--extend-select` naming one of them by its own code reports it
+regardless; a prefix such as `QP` leaves the exemption standing, as `ALL` does.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
@@ -499,7 +532,8 @@ The command line wins over the file: `--profile`, then `--select`,
 `--extend-select` and `--ignore` (comma-separated or repeated) applied after
 it, and `--exclude` added to it. `--config FILE` uses one file for everything,
 `--isolated` ignores them all, and `--show-settings PATH` prints which file
-governs a path and the rules it turns on. Exclusions apply before a file is
+governs a path, the `target-version` in force and the rules that report there.
+Exclusions apply before a file is
 read or sent to qls, to the files a directory walk finds: a file named on the
 command line is linted whatever `exclude` says, as in Ruff, unless
 `--force-exclude` is given - which pre-commit hooks and scripts that pass every
@@ -661,7 +695,9 @@ running it: `textDocument/documentSymbol` (the outline; nested or flat, as
 the client declares), `workspace/symbol`, `textDocument/definition`,
 `textDocument/references`, `textDocument/documentHighlight` (a write told
 from a read - an assignment, an amend, and a table changed in place by its
-name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]`), and `textDocument/prepareRename`/`textDocument/rename`.
+name, `` update .. from `t ``, `` `c xasc `t ``, `@[`t;..]` - and a symbol
+that may be the name, which the references list too, marked as text), and
+`textDocument/prepareRename`/`textDocument/rename`.
 
 The nested outline puts each name under the namespace it is in, the whole of
 the name before its last dot: `.qetl.io.read` is `read` under `.qetl.io`,
@@ -821,14 +857,16 @@ lens on the name of each function a statement at column 0 defines, and a
 as qUnit's do. Each runs the command
 `q-lint.runDefinition` with two arguments: the code to send and the
 document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
-when it is written under `\d .ns`; Run test's is that, then a call of the
+when it is written under `\d .ns` - or before the first `\d` of a file that
+runs in `.ns` alone, one loaded only under `\d .ns` or a KDB-X module
+(`.m.<name>`); Run test's is that, then a call of the
 function by its full name with no argument (`.ns.test_x[]`). It is off by
 default because only a client that registers that command - the VS Code
 extension, which sends the code to the connected q process - can run it.
 
 With `referenceLens.enable`, the same functions get a lens counting the
 places the indexed files read them - what Find All References lists without
-the assignments: `1 reference`, `3 references`, `0 references`. It runs the
+the assignments, a symbol that may be the name included: `1 reference`, `3 references`, `0 references`. It runs the
 command `q-lint.showReferences` with the document's URI and the name's
 position, which the VS Code extension opens as the references list. It is
 off by default for the same reason as Run. One request reads each workspace
@@ -905,7 +943,9 @@ process defines. What it offers, in this order: the parameters and locals of
 the lambda being written; the names the workspace defines, spelled as the
 `\d` context in force reads them; q's words; and every name by its full
 path. Nothing is offered in a string, a comment, a symbol, a number or a
-system command.
+system command. An item's edit replaces what is typed so far; a client that
+declares `completionItem.insertReplaceSupport` is given that range to insert
+over and the whole name under the cursor to replace, to choose between.
 
 With `autoLoad.enable` too, a workspace name that one other file defines,
 and that nothing the document can already see defines, comes with the `\l`
@@ -980,7 +1020,8 @@ and `dynamic` counts the places a name is reached by a value computed at run
 time, which make the list a list of candidates. `testsReaching` compares the
 document's top-level function statements with `previous`, and answers the
 ones that changed, are new or are gone, and every test whose body names one of
-them, or names a function that does, and so on.
+them, or names a global whose statement does - a function, or an `al:f` or
+`h:f each` that holds one - and so on.
 
 `affectedTests` lists the test files that reach a changed file along the
 graph, a changed test among them. Which files changed is the client's to
@@ -990,8 +1031,8 @@ in the answer is the sent files the index holds, each once; `unindexed` is
 the sent `.q` files it does not hold - deleted, excluded, outside the
 workspace - whose dependents cannot be followed, so a client can say the
 list is short; `dynamic` is the test files not listed that load by a path
-computed at run time (`system "l ",p`), which may run a changed file all the
-same. A test file is a `.q` file named `test_*` or `*_test`, or
+computed at run time (`system "l ",p`) or from a string (`value "\\l lib.q"`),
+or reach a file that does, which may run a changed file all the same. A test file is a `.q` file named `test_*` or `*_test`, or
 under a directory named `test` or `tests` below its workspace folder, which
 is wide on purpose: a helper listed with the tests costs a glance, a test
 left out costs a regression. The limits are the graph's: an edge through a
@@ -1286,7 +1327,8 @@ lenses are on, and the second also when a definition's parameters change, as
 `.q`/`.k` files and folders, and answers it with the edits that keep each
 load naming what it named - written from the workspace folder or from the
 loading file's directory, whichever it was written from - including the
-loads of a file that moves. A load the new path cannot be written in (a
+loads of a file that moves, and the name in a `` use`name `` that reaches a
+renamed module (`mod2` for `mymod` once mymod/ is mod2/). A load the new path cannot be written in (a
 blank after `\l` or in `system "l ..."`, which q has no spelling for, or
 anything a file symbol cannot hold) gets no edit, and one
 `window/showMessage` lists those lines. `loadPathCompletion.enable: true` completes the
@@ -1318,7 +1360,8 @@ default used.
 not hide diagnostics on a document the editor opens. They do decide which
 closed files the workspace index reads, as they decide which files
 `qlinter .` visits, so a name only an excluded file defines is undefined in
-the editor as it is in the terminal. Everything else a configuration says is
+the editor as it is in the terminal, and a file an excluded one loads under
+a `\d` stays where the others put it. Everything else a configuration says is
 read too: the server finds `qlinter.toml` or `pyproject.toml` above each
 document as the command line does, and `--config FILE` replaces that search with the one file,
 whose per-file-ignores are then read relative to the directory the server was

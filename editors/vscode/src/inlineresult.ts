@@ -25,9 +25,13 @@ export function shortForm(answer: GridAnswer, width = INLINE_WIDTH): string {
   if (!answer.ok) {
     text = `'${answer.error}`;
   } else {
+    // A table's rule, a keyed table's `k| v` one too, is its second line;
+    // a line of dashes elsewhere is data: a string "---" (#2715).
+    const tabular = answer.type === 98 || answer.type === 99;
     const joined = answer.text
+      .filter((l, i) => !(tabular && i === 1 && /^-+(\| -+)?\s*$/.test(l)))
       .map((l) => l.trim())
-      .filter((l) => l !== "" && !/^-+$/.test(l))
+      .filter((l) => l !== "")
       .join("  ");
     text = joined !== "" ? joined : answer.grid !== undefined ? `${answer.grid.count} row${answer.grid.count === 1 ? "" : "s"}` : "::";
   }

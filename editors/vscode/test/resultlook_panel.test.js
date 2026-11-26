@@ -407,6 +407,23 @@ test("Send to... keeps to the result it was asked from when another comes in dur
   assert.notStrictEqual(last(fake).control?.action, "image");
 });
 
+test("Append Result to Markdown Report writes no chart image that would run (#2653)", async () => {
+  const fake = fakeVscode();
+  const modes = loadModes(fake);
+  modes.show(result(), live);
+  const report = new fake.vscode.Uri("/w/daily.md");
+  fake.files["/w/daily.md"] = "# Daily\nnotes";
+  fake.answers.warnings.push("Append");
+  const sending = fake.vscode.commands["q-lint.appendResultToReport"](report, true);
+  await tick();
+  const ask = last(fake).control;
+  fake.pages[0].receive({ type: "image", id: last(fake).id, format: "svg", data: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', key: ask.key });
+  await sending;
+  assert.match(fake.files["/w/daily.md"], /^# Daily\nnotes\n\n\*\*Result\*\* from p/);
+  assert.doesNotMatch(fake.files["/w/daily.md"], /!\[chart\]/);
+  assert.deepStrictEqual(Object.keys(fake.files).filter((f) => f.endsWith(".svg")), []);
+});
+
 test("Append Result to Markdown Report shows what it writes, appends after the text, and never writes over an image (#1021)", async () => {
   const fake = fakeVscode();
   const modes = loadModes(fake);
@@ -424,13 +441,13 @@ test("Append Result to Markdown Report shows what it writes, appends after the t
   await tick();
   const ask = last(fake).control;
   assert.strictEqual(ask.format, "svg");
-  fake.pages[0].receive({ type: "image", id: last(fake).id, format: "svg", data: "<svg>chart</svg>", key: ask.key });
+  fake.pages[0].receive({ type: "image", id: last(fake).id, format: "svg", data: '<svg xmlns="http://www.w3.org/2000/svg">chart</svg>', key: ask.key });
   await sending;
   const text = fake.files["/w/daily.md"];
   assert.match(text, /^# Daily\nnotes\n\n\*\*Result\*\* from p/);
   const link = /!\[chart\]\((daily-images\/chart-\d{8}-\d{6}\.svg)\)/.exec(text);
   assert.ok(link, text);
-  assert.strictEqual(fake.files[`/w/${link[1]}`], "<svg>chart</svg>");
+  assert.strictEqual(fake.files[`/w/${link[1]}`], '<svg xmlns="http://www.w3.org/2000/svg">chart</svg>');
   assert.strictEqual(fake.files["/w/daily-images/old.svg"], "<svg/>");
   // The next time, the last report is offered first; a new file is created, after asking.
   fake.answers.picks.push((i) => i.label === "Append to daily.md", "Table");

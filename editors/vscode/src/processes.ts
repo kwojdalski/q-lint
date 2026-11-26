@@ -3,6 +3,7 @@
 // here talks to a process or to VS Code, so all of it is tested with node.
 
 import { isIPv6 } from "net";
+import { domainToASCII } from "url";
 
 export interface Process {
   /// Unique among the processes; what the view and the status bar show.
@@ -87,10 +88,17 @@ export function portProblem(port: string): string | undefined {
 }
 
 /// `host` as it is connected to: an IPv6 address written in brackets, as a
-/// URL writes one (`[::1]`), without them.
+/// URL writes one (`[::1]`), without them; and a name with letters outside
+/// ASCII (`münchen.example`) as it is looked up, in its `xn--` spelling,
+/// which was the only one of the two that could be added (#3120).
 export function plainHost(host: string): string {
   const h = host.trim();
-  return /^\[[^\]]*:[^\]]*\]$/.test(h) ? h.slice(1, -1) : h;
+  if (/^\[[^\]]*:[^\]]*\]$/.test(h)) {
+    return h.slice(1, -1);
+  }
+  // A name only: of anything else domainToASCII reads the part it takes for
+  // a host (`ü/x` is `xn--tda`), and the rest would be gone unsaid.
+  return /[^\x00-\x7f]/.test(h) && /^[\p{L}\p{M}\p{N}_.-]+$/u.test(h) ? domainToASCII(h) || h : h;
 }
 
 /// Why `host` is not a host, or undefined when it is: a name or an address,
@@ -154,12 +162,14 @@ export function processTooltip(process: Process, from?: string): string {
 }
 
 /// Tags as written in an input box: comma or space separated, lower case,
-/// each once.
+/// each once. A `;` or a `|` separates them too, as Add Many says its tags
+/// column does: `prod; eu` was the tags `prod;` and `eu`, neither of them
+/// the `prod` the read-only guard and the colours go by (#3097).
 export function parseTags(text: string): string[] {
   return [
     ...new Set(
       text
-        .split(/[\s,]+/)
+        .split(/[\s,;|]+/)
         .map((t) => t.trim().toLowerCase())
         .filter((t) => t !== ""),
     ),
@@ -216,11 +226,29 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       problems.push(`${where} (${label}): tls is ${JSON.stringify(e.tls)}, not true or false, so it was skipped rather than connected to without TLS.`);
       return;
     }
+    // Nor is an `ssh` that is no destination read as no tunnel: the process
+    // was dialled directly, and its password sent there (#3095).
+    if (scripts && written(e.ssh) && tunnelOf(e.ssh, stored) === undefined) {
+      problems.push(`${where} (${label}): ssh is ${JSON.stringify(e.ssh)}, not a destination ssh takes, so it was skipped rather than connected to without its tunnel.`);
+      return;
+    }
     if (seen.has(label)) {
       problems.push(`${where} (${label}) repeats a label, and was skipped.`);
       return;
     }
     seen.add(label);
+    // A key written but not as it is read is said, not left out in silence:
+    // the process then ran with no timeout, or no user and so no password,
+    // and the import counted it as read (#3110).
+    const unread = (key: string, expected: string, instead = "it was not read"): void => {
+      problems.push(`${where} (${label}): ${key} is ${JSON.stringify(e[key])}, not ${expected}, so ${instead}.`);
+    };
+    if (written(e.user) && typeof e.user !== "string") {
+      unread("user", "text");
+    }
+    if (written(e.tags) && !Array.isArray(e.tags) && typeof e.tags !== "string") {
+      unread("tags", "a list or text");
+    }
     const tags = Array.isArray(e.tags)
       ? parseTags(e.tags.filter((t): t is string => typeof t === "string").join(","))
       : typeof e.tags === "string"
@@ -238,7 +266,7 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       ...(scripts && typeof e.initFile === "string" && e.initFile.trim() !== "" && !(typeof e.init === "string" && e.init.trim() !== "")
         ? { initFile: e.initFile.trim() }
         : {}),
-      ...extrasOf(e, scripts),
+      ...extrasOf(e, scripts, unread, stored),
     });
     if (scripts && typeof e.init === "string" && e.init.trim() !== "" && typeof e.initFile === "string" && e.initFile.trim() !== "") {
       problems.push(`${where} (${label}) has both init and initFile: its init code was kept.`);
@@ -247,14 +275,65 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
   return { processes, problems };
 }
 
-/// An SSH destination as written, or undefined when it is none. A leading
-/// `-` would be read by ssh as an option, and a space as two arguments.
-export function sshDestination(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+/// Whether a key of an entry was given a value: neither left out, null, nor
+/// a blank string, each of which is how a file writes "none".
+function written(value: unknown): boolean {
+  return value !== undefined && value !== null && !(typeof value === "string" && value.trim() === "");
+}
+
+/// Why `text` is not a destination ssh takes, or undefined when it is one:
+/// `host` or `user@host`, either with `:port` after it, an IPv6 host in
+/// brackets before a port. A leading `-` would be read by ssh as an option,
+/// and a space as two arguments. The user is all before the last `@`, as
+/// ssh reads it, and may hold what OpenSSH lets one hold - the `\` of
+/// `CORP\me` and the `$` of a service account, refused here though ssh is
+/// run by no shell (#3117). A host is needed, and a port is one: `:2222`,
+/// `me@`, `b:` and `me@b:99999` were taken, for ssh to fail on at connect
+/// (#3116). Each refusal names what it refuses.
+export function sshProblem(text: string): string | undefined {
+  const d = text.trim();
+  if (d === "") {
+    return "A destination is needed.";
   }
-  const d = value.trim();
-  return d !== "" && !d.startsWith("-") && !/[\s'"`$;|&<>\\]/.test(d) ? d : undefined;
+  if (d.startsWith("-")) {
+    return "A destination does not start with -: ssh would read it as an option.";
+  }
+  const shown = (c: string): string => (/\s/.test(c) ? "space" : c);
+  const at = d.lastIndexOf("@");
+  const user = at < 0 ? undefined : d.slice(0, at);
+  const rest = d.slice(at + 1);
+  if (user !== undefined) {
+    const bad = /[\s'"`;|&<>(){}]/.exec(user);
+    if (user === "" || bad !== null || user.endsWith("\\")) {
+      return user === "" ? "A user is needed before the @." : bad !== null ? `A user ssh takes has no ${shown(bad[0])}.` : "A user ssh takes does not end with a \\.";
+    }
+  }
+  const bracketed = /^\[([^\]]*)\](?::(.*))?$/.exec(rest);
+  const parts = rest.split(":");
+  const [host, port] = bracketed !== null ? [bracketed[1], bracketed[2]] : parts.length === 2 ? parts : [rest, undefined];
+  if (host === "") {
+    return user === undefined ? "A host is needed before the port." : "A host is needed after the @.";
+  }
+  const bad = /[\s'"`$;|&<>\\(){}]/.exec(host);
+  if (bad !== null || host.startsWith("-")) {
+    return bad !== null ? `A host ssh takes has no ${shown(bad[0])}.` : "A host does not start with -.";
+  }
+  if (bracketed === null && parts.length > 2 && !isIPv6(host)) {
+    return "One port only, after one colon: an IPv6 address goes in brackets before it.";
+  }
+  return port !== undefined && portProblem(port) !== undefined ? "The port after the colon is a whole number between 1 and 65535." : undefined;
+}
+
+/// An SSH destination as written, or undefined when it is none (`sshProblem`).
+export function sshDestination(value: unknown): string | undefined {
+  return typeof value === "string" && sshProblem(value) === undefined ? value.trim() : undefined;
+}
+
+/// The tunnel a list entry's `ssh` names. In the list saved here (`stored`)
+/// text that is no destination is kept as written, for ssh to refuse and
+/// Set SSH Tunnel to change: left out, the process was dialled directly.
+function tunnelOf(value: unknown, stored: boolean): string | undefined {
+  return sshDestination(value) ?? (stored && typeof value === "string" && value.trim() !== "" ? value.trim() : undefined);
 }
 
 /// What a command was handed as server types: a string or a list, or
@@ -293,7 +372,10 @@ export function launchOf(value: unknown): Launch | undefined {
   if (typeof v.env === "object" && v.env !== null && !Array.isArray(v.env)) {
     for (const [k, x] of Object.entries(v.env as Record<string, unknown>)) {
       const value = argText(x);
-      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && value !== undefined) {
+      // Any name the system takes - one with no `=` and no NUL - not a
+      // shell's identifiers only: `ProgramFiles(x86)`, `A.B` and `my-var`
+      // were left out, and the q started without them (#3112).
+      if (k !== "" && !/[=\0]/.test(k) && value !== undefined) {
         Object.defineProperty(env, k, { value, enumerable: true, writable: true, configurable: true });
       }
     }
@@ -310,8 +392,10 @@ export function launchOf(value: unknown): Launch | undefined {
 
 /// Arguments as typed in one box: split at spaces, a pair of double quotes
 /// keeping what is between them together, as a shell does: anywhere in a
-/// word (`-name="a b"` is `-name=a b`, #1695), and taken off. A quote with
-/// no pair is kept as it is.
+/// word (`-name="a b"` is `-name=a b`, #1695), and taken off. A pair of
+/// single quotes does the same, a double quote between them kept: `-load
+/// 'my dir/rdb.q'` was three arguments, quotes and all (#3111). A quote
+/// with no pair is kept as it is.
 export function splitArgs(text: string): string[] {
   const words: string[] = [];
   let word: string | undefined;
@@ -322,8 +406,8 @@ export function splitArgs(text: string): string[] {
         words.push(word);
         word = undefined;
       }
-    } else if (c === '"' && text.indexOf('"', i + 1) !== -1) {
-      const end = text.indexOf('"', i + 1);
+    } else if ((c === '"' || c === "'") && text.indexOf(c, i + 1) !== -1) {
+      const end = text.indexOf(c, i + 1);
       word = (word ?? "") + text.slice(i + 1, end);
       i = end;
     } else {
@@ -360,13 +444,32 @@ type Extras = Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" |
 /// command, timeout and evaluation of a process entry. `trusted`: from a
 /// source whose code may run (the saved list, an import, a trusted
 /// workspace), which alone may name an SSH host or a program to run.
-function extrasOf(e: Record<string, unknown>, trusted: boolean): Extras {
-  const ssh = trusted ? sshDestination(e.ssh) : undefined;
+/// `unread` is told each key that was written and could not be read
+/// (#3110), and a timeout over the day it is read as.
+function extrasOf(e: Record<string, unknown>, trusted: boolean, unread: (key: string, expected: string, instead?: string) => void, stored = false): Extras {
+  const ssh = trusted ? tunnelOf(e.ssh, stored) : undefined;
   const gateway = serverTypes(e.gateway);
   const launch = trusted ? launchOf(e.launch) : undefined;
   const credentialCommand = trusted ? credentialCommandOf(e.credentialCommand) : undefined;
   const timeout = timeoutOf(e.timeout);
   const evaluation = evaluationOf(e.evaluation);
+  if (gateway === undefined && written(e.gateway) && !(Array.isArray(e.gateway) && e.gateway.length === 0)) {
+    unread("gateway", "server types, a list or a string of names");
+  }
+  if (trusted && launch === undefined && written(e.launch)) {
+    unread("launch", "a launch definition, an object");
+  }
+  if (trusted && credentialCommand === undefined && written(e.credentialCommand)) {
+    unread("credentialCommand", "a command, as text");
+  }
+  if (timeout === undefined && written(e.timeout)) {
+    unread("timeout", "a number of seconds above 0");
+  } else if (timeout !== undefined && timeout !== e.timeout) {
+    unread("timeout", "a day or less", `${timeout} was read`);
+  }
+  if (evaluation === undefined && written(e.evaluation)) {
+    unread("evaluation", '"wrapped" or "direct"');
+  }
   return {
     ...(ssh !== undefined ? { ssh } : {}),
     ...(gateway !== undefined ? { gateway } : {}),
@@ -417,11 +520,35 @@ export function readProcessFile(text: string): { processes: Process[]; problems:
   return parseProcesses(JSON.parse(text.replace(/^\uFEFF/, "")), true);
 }
 
-/// `processes` merged with `incoming`: an incoming process replaces the one
-/// of its label, and the rest are added after.
+/// `next` with what `old`, the process it takes the place of, holds and it
+/// does not name: a connect script, gateway server types, a launch
+/// definition, a credential command, a timeout, an evaluation.
+function withUnnamed(next: Process, old: Process): Process {
+  const scripted = next.init !== undefined || next.initFile !== undefined;
+  return {
+    ...next,
+    ...(!scripted && old.init !== undefined ? { init: old.init } : {}),
+    ...(!scripted && old.initFile !== undefined ? { initFile: old.initFile } : {}),
+    ...(next.gateway === undefined && old.gateway !== undefined ? { gateway: old.gateway } : {}),
+    ...(next.launch === undefined && old.launch !== undefined ? { launch: old.launch } : {}),
+    ...(next.credentialCommand === undefined && old.credentialCommand !== undefined ? { credentialCommand: old.credentialCommand } : {}),
+    ...(next.timeout === undefined && old.timeout !== undefined ? { timeout: old.timeout } : {}),
+    ...(next.evaluation === undefined && old.evaluation !== undefined ? { evaluation: old.evaluation } : {}),
+  };
+}
+
+/// `processes` merged with `incoming`: an incoming process takes the place
+/// of the one of its label, and the rest are added after. What the old one
+/// holds that the incoming one does not name it keeps, as Edit Process keeps
+/// it: a list naming a process by its address only took away its connect
+/// script, launch definition, credential command, timeout and gateway types,
+/// unasked (#3093). Its TLS, SSH tunnel and tags are the import's to ask of.
 export function merge(processes: Process[], incoming: Process[]): Process[] {
   const byLabel = new Map(incoming.map((p) => [p.label, p]));
-  const kept = processes.map((p) => byLabel.get(p.label) ?? p);
+  const kept = processes.map((p) => {
+    const next = byLabel.get(p.label);
+    return next === undefined ? p : withUnnamed(next, p);
+  });
   const known = new Set(processes.map((p) => p.label));
   return [...kept, ...incoming.filter((p) => !known.has(p.label))];
 }
@@ -429,15 +556,18 @@ export function merge(processes: Process[], incoming: Process[]): Process[] {
 /// The labels of the processes `merge` replaces with one at another host,
 /// port or user, or reached another way - TLS or an SSH tunnel added or
 /// taken away (#1269): their stored password was given for the old one, and
-/// is not to be sent to the new.
+/// is not to be sent to the new. A host name is one host in any letter
+/// case, and with or without the root's dot after it: a list writing
+/// `rdb1.corp` for `RDB1.corp` had the password deleted (#3109).
 export function passwordsToForget(processes: Process[], incoming: Process[]): string[] {
+  const named = (host: string): string => host.trim().toLowerCase().replace(/\.$/, "");
   const byLabel = new Map(incoming.map((p) => [p.label, p]));
   return processes
     .filter((p) => {
       const next = byLabel.get(p.label);
       return (
         next !== undefined &&
-        (next.host !== p.host || next.port !== p.port || next.user !== p.user || (next.tls === true) !== (p.tls === true) || next.ssh !== p.ssh)
+        (named(next.host) !== named(p.host) || next.port !== p.port || next.user !== p.user || (next.tls === true) !== (p.tls === true) || next.ssh !== p.ssh)
       );
     })
     .map((p) => p.label);

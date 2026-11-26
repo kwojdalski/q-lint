@@ -140,7 +140,7 @@ export class QueryAcross {
   private async runEach(processes: Process[], code: string, title: string, serverTypes?: string[]): Promise<{ outcomes: Outcome[]; millis: number }> {
     const started = Date.now();
     const outcomes = await window.withProgress(
-      { location: ProgressLocation.Notification, title, cancellable: true },
+      { location: ProgressLocation.Notification, title: plainMessage(title), cancellable: true },
       async (progress, token) => {
         const stop = new AbortController();
         const cancelled = token.onCancellationRequested(() => stop.abort());
@@ -158,7 +158,7 @@ export class QueryAcross {
               sent = !(error instanceof NotSent);
               outcome = { process: process.label, error: sent ? message(error) : "cancelled" };
             }
-            progress.report({ message: `${++done} of ${processes.length}`, increment: 100 / processes.length });
+            progress.report({ message: plainMessage(`${++done} of ${processes.length}`), increment: 100 / processes.length });
             if (!sent) {
               return outcome;
             }

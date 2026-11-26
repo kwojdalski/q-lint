@@ -12,7 +12,7 @@ const { LANGUAGE_SETTINGS, LANGUAGE_COMMANDS, languageOn, languageOff, NAMESPACE
 const { registerQsqlTools, leadBefore, REWRITE_TITLES } = require("../out/qsqltools.js");
 const { ERRORS, errorName, explainError, errorInMessage, failedAt } = require("../out/errorexplain.js");
 const { registerErrorExplainer } = require("../out/errorexplainview.js");
-const { tomlWithBaseline, writtenCount, rebased, absolutePaths, registerBaseline, pyprojectWithBaseline, governingConfiguration } = require("../out/baselineview.js");
+const { tomlWithBaseline, writtenCount, rebased, absolutePaths, registerBaseline, pyprojectWithBaseline, governingConfiguration, namedBaseline } = require("../out/baselineview.js");
 const { readDeadCode, deadCodeReport, registerDeadCode, DEAD_CODE } = require("../out/deadcodeview.js");
 const { readDefinitions, byNamespace, registerNamespaces, DEFINITIONS } = require("../out/namespaceview.js");
 const { affectedIds, registerAffectedOnSave, TESTS_REACHING } = require("../out/affectedonsave.js");
@@ -407,7 +407,7 @@ test("Write Lint Baseline writes nothing when qlinter could not read a file: exi
     stub.picks.push("Replace");
     assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
     assert.strictEqual(stub.messages.at(-1)[0], "warning");
-    assert.match(stub.messages.at(-1)[1], /could not read every file; no baseline was written: qlinter: \.\/b\.q: Permission denied/);
+    assert.match(stub.messages.at(-1)[1], /qlinter failed \(exit 2\); no baseline was written: qlinter: \.\/b\.q: Permission denied/);
     assert.strictEqual(readFileSync(join(ws, "qlinter-baseline.json"), "utf8"), "good");
     stub.picks.length = 0;
     assert.ok(existsSync(ws));
@@ -1214,6 +1214,91 @@ test("Write Lint Baseline under --isolated or --config=FILE shows the line and e
       stub.picks.length = 0;
     }
   } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Write Lint Baseline finds a baseline key or qlinter table in any spelling TOML allows, and never writes it twice (#2747)", () => {
+  assert.strictEqual(tomlWithBaseline('"baseline" = "old.json"\n'), undefined);
+  assert.strictEqual(tomlWithBaseline("'baseline' = \"old.json\"\n"), undefined);
+  assert.strictEqual(pyprojectWithBaseline("[tool.'qlinter']\nignore = [\"QF004\"]\n"), "[tool.'qlinter']\nbaseline = \"qlinter-baseline.json\"\nignore = [\"QF004\"]\n");
+  assert.strictEqual(pyprojectWithBaseline('[tool."q-lint"]\n"baseline" = "b.json"\n'), undefined);
+  assert.strictEqual(pyprojectWithBaseline("[tool]\n'qlinter'.'baseline' = \"b.json\"\n"), undefined);
+  // Dotted keys at the top of the file: a [tool.qlinter] after them would be the table twice.
+  assert.strictEqual(pyprojectWithBaseline('tool.qlinter.ignore = ["QF004"]\n\n[project]\nname = "x"\n'), null);
+  assert.strictEqual(pyprojectWithBaseline('tool.qlinter.baseline = "b.json"\n'), undefined);
+  assert.strictEqual(namedBaseline('"baseline" = "ci/b.json"\n[lint]\nx = 1\n', false), "ci/b.json");
+  assert.strictEqual(namedBaseline("[project]\n[tool.'qlinter']\nbaseline = 'c\\d.json'\n", true), "c\\d.json");
+  assert.strictEqual(namedBaseline('[tool]\nqlinter.baseline = "e.json"\n', true), "e.json");
+  assert.strictEqual(namedBaseline('tool.qlinter.baseline = "f.json"\n', true), "f.json");
+  assert.strictEqual(namedBaseline('[tool.qlinter.lint]\nbaseline = "g.json"\n', true), undefined);
+});
+
+test("Write Lint Baseline writes the baseline the configuration names, its paths relative to it, not a new one nothing reads (#2765)", { skip: noQlinter }, async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-named-")));
+  const { context, restore } = setUp();
+  try {
+    mkdirSync(join(root, "ci"));
+    writeFileSync(join(root, "qlinter.toml"), 'baseline = "ci/qlinter-baseline.json"\n');
+    writeFileSync(join(root, "ci", "qlinter-baseline.json"), '{"qlinter-baseline": 1, "findings": []}');
+    writeFileSync(join(root, "a.q"), "f:{[count] count}\nsum:1\n");
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: root }, name: "ws" }];
+    registerBaseline(context, () => ({ command: QLINTER, args: [] }));
+    stub.messages.length = 0;
+    stub.picks.push((options) => (assert.match(String(options.message ?? options), /Replace ci\/qlinter-baseline\.json in ws\?/), "Replace"), "Add");
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), join(root, "ci", "qlinter-baseline.json"));
+    assert.strictEqual(existsSync(join(root, "qlinter-baseline.json")), false);
+    assert.ok(JSON.parse(readFileSync(join(root, "ci", "qlinter-baseline.json"), "utf8")).findings.every((f) => f.path === "../a.q"));
+    assert.ok(stub.messages.some(([, text]) => /the baseline .*qlinter\.toml names/.test(text)), JSON.stringify(stub.messages));
+    const out = require("node:child_process").spawnSync(QLINTER, ["."], { cwd: root, encoding: "utf8" });
+    assert.strictEqual(out.status, 0, out.stdout + out.stderr);
+    // One outside the folder holds more than its findings: not written.
+    writeFileSync(join(root, "qlinter.toml"), 'baseline = "../elsewhere.json"\n');
+    stub.picks.push("Write");
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), undefined);
+    assert.match(stub.messages.at(-1)[1], /names the baseline .*elsewhere\.json, outside ws/);
+    stub.picks.length = 0;
+  } finally {
+    vscode.workspace.workspaceFolders = undefined;
+    restore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Write Lint Baseline does not name one project's baseline in the user-level configuration (#2745)", { skip: noQlinter }, async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, realpathSync } = require("node:fs");
+  const { join } = require("node:path");
+  const { tmpdir } = require("node:os");
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "qlint-bl-user-")));
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const { context, restore } = setUp();
+  try {
+    mkdirSync(join(root, "xdg", "qlinter"), { recursive: true });
+    const user = join(root, "xdg", "qlinter", "qlinter.toml");
+    writeFileSync(user, 'profile = "style"\n');
+    process.env.XDG_CONFIG_HOME = join(root, "xdg");
+    const proj = join(root, "projA");
+    mkdirSync(proj);
+    writeFileSync(join(proj, "a.q"), "f:{[count] count}\nsum:1\n");
+    const shown = require("node:child_process").spawnSync(QLINTER, ["--show-settings", "."], { cwd: proj, encoding: "utf8" });
+    assert.match(shown.stdout, /configuration: .*xdg\/qlinter\/qlinter\.toml/, "this qlinter reads the user-level configuration");
+    vscode.workspace.workspaceFolders = [{ uri: { scheme: "file", fsPath: proj }, name: "projA" }];
+    registerBaseline(context, () => ({ command: QLINTER, args: [] }));
+    stub.messages.length = 0;
+    stub.picks.push("Write", "Add");
+    assert.strictEqual(await stub.commands.get(LANGUAGE_COMMANDS.writeBaseline)(), join(proj, "qlinter-baseline.json"));
+    assert.strictEqual(readFileSync(user, "utf8"), 'profile = "style"\n');
+    assert.strictEqual(existsSync(join(proj, "qlinter.toml")), false);
+    assert.ok(stub.messages.some(([, text]) => /governs this folder from outside it, and other projects too, so it is not changed/.test(text)), JSON.stringify(stub.messages));
+    stub.picks.length = 0;
+  } finally {
+    if (xdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = xdg;
     vscode.workspace.workspaceFolders = undefined;
     restore();
     rmSync(root, { recursive: true, force: true });

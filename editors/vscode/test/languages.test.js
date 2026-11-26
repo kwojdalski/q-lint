@@ -239,6 +239,27 @@ cases("source.q-console", [
   ["the caret", OUT, "^", "invalid.illegal.caret.q-console", 0],
 ]);
 
+test("source.q-console: a line starting with ' is an error only in a failed answer (#2717)", async () => {
+  const out = ["# rdb (1 ms)", "'tis the season", "x", "# hdb (2 ms) - 'type", "'type", "# rdb (1 ms)", "'again"].join("\n");
+  assert.deepStrictEqual(await innermost("source.q-console", out, "'tis the season"), ["source.q-console"], "a string item");
+  assert.deepStrictEqual(await innermost("source.q-console", out, "'type"), ["invalid.illegal.error.q-console", "invalid.illegal.error.q-console"]);
+  assert.deepStrictEqual(await innermost("source.q-console", out, "'again"), ["source.q-console"], "the next answer's");
+});
+
+test("source.q-console: a month as q prints it before a vector's m is a temporal, not a float (#2716)", async () => {
+  assert.deepStrictEqual(await innermost("source.q-console", "2000.01 2000.02m", "2000.01"), ["constant.numeric.temporal.q-console"]);
+  assert.deepStrictEqual(await innermost("source.q-console", "2000.123 1.5", "2000.123"), ["constant.numeric.q-console"]);
+});
+
+test("source.q-console: a printed symbol takes any letter and a slash (#2718)", async () => {
+  const g = await registry.loadGrammar("source.q-console");
+  for (const [printed, symbols] of [["`caf\u00e9`x", ["`caf\u00e9", "`x"]], ["`a/b", ["`a/b"]], ["a| `\u0436\u0436 1", ["`\u0436\u0436"]]]) {
+    const { tokens: line } = g.tokenizeLine(printed, tm.INITIAL);
+    const found = line.filter((t) => t.scopes.includes("constant.other.symbol.q-console")).map((t) => printed.slice(t.startIndex, t.endIndex));
+    assert.deepStrictEqual(found.join("").match(/`[^`]*/g), symbols, printed);
+  }
+});
+
 // A string cell as .Q.S prints it: the escapes q takes (#1972), so a slash
 // is one and \\400 is not.
 test("source.q-console: a printed string's escapes are the ones q takes", async () => {

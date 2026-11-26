@@ -61,7 +61,7 @@ use crate::baseline::Baseline;
 use q_lint_rs::{
     Finding, Profile, RULES, Target, Workspace, lint_every_rule,
     options::{self, OptionsScope, RuleOptions},
-    version_reported_for,
+    structure_findings, version_reported_for,
 };
 use std::{
     cell::RefCell,
@@ -177,7 +177,7 @@ pub struct Overrides {
     /// `--baseline FILE`, over the configuration's.
     pub baseline: Option<PathBuf>,
     /// Use no baseline at all: `--write-baseline`, which writes every
-    /// finding, and an editor that turned baselines off.
+    /// finding - those behind a file's QE001 too, see `Policy::lint`.
     pub no_baseline: bool,
 }
 
@@ -262,6 +262,22 @@ impl Policy {
         }
     }
 
+    /// `project_root`, for `--force-exclude`. With no configuration and no
+    /// root, the top of the checkout the file is in comes before the current
+    /// directory: that is the same from wherever the run starts, so one file
+    /// gets one answer (#2875). Only a file in no checkout is left to the
+    /// current directory.
+    fn checkout_root(&self, settings: &Settings, full: &Path) -> Result<PathBuf, String> {
+        let dir = full.parent().unwrap_or(full);
+        if settings.root.is_none()
+            && !self.roots.borrow().iter().any(|root| dir.starts_with(root))
+            && let Some(top) = dir.ancestors().find(|top| top.join(".git").exists())
+        {
+            return Ok(top.to_path_buf());
+        }
+        self.project_root(settings, full)
+    }
+
     /// Where a file in `dir` is rooted when no configuration governs it:
     /// the deepest root holding it, or the current directory.
     fn base_dir(&self, dir: &Path) -> Result<PathBuf, String> {
@@ -274,9 +290,7 @@ impl Policy {
             .max_by_key(|root| root.components().count())
         {
             Some(root) => Ok(root.clone()),
-            None => Ok(absolute(
-                &std::env::current_dir().map_err(|e| e.to_string())?,
-            )),
+            None => Ok(absolute(&working_dir(Some(&dir))?)),
         }
     }
 
@@ -405,6 +419,24 @@ impl Policy {
         (files, dirs)
     }
 
+    /// The files a run over `inputs` reads besides them: the configuration
+    /// that governs each, with those it extends, and the baseline in force
+    /// for it. No flag of the run may write over one, any more than over a
+    /// source (#2751). A configuration that does not read names none here:
+    /// linting under it is what says so.
+    pub fn reads(&self, inputs: &[PathBuf]) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = self.overrides.config.iter().map(|c| absolute(c)).collect();
+        for input in inputs {
+            if let Ok(settings) = self.settings(input) {
+                files.extend(settings.sources.iter().cloned());
+                files.extend(self.baseline_file(&settings));
+            }
+        }
+        files.sort();
+        files.dedup();
+        files
+    }
+
     /// The settings for `path`, a file or a directory: the configuration
     /// nearest to it, searching from the directory that contains it.
     pub fn settings(&self, path: &Path) -> Result<Rc<Settings>, String> {
@@ -432,7 +464,7 @@ impl Policy {
             // Ruff resolves the patterns of a file named by `--config`
             // against the current directory, as it does a user-level one:
             // the file is chosen for this run, not found beside the source.
-            let cwd = absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+            let cwd = absolute(&working_dir(None)?);
             let settings = Rc::new(
                 load(&key.0, &[], Some(&cwd))?
                     .ok_or_else(|| format!("{}: no [tool.qlinter] table", explicit.display()))?,
@@ -489,22 +521,28 @@ impl Policy {
     /// Whether `path` is excluded, by its configuration or by `--exclude`.
     pub fn excluded(&self, path: &Path) -> Result<bool, String> {
         let settings = self.settings(path)?;
-        let full = absolute(path);
+        Ok(self.excluded_as(&settings, &absolute(path), true))
+    }
+
+    /// `excluded`, for the file `full` under `settings`; `named` is whether
+    /// the default list is asked about its own name.
+    fn excluded_as(&self, settings: &Settings, full: &Path, named: bool) -> bool {
         // The defaults match the path's own name only, not a directory above
         // it: `qlinter ~/dist/proj` lints proj, and a walk is what skips a
         // `dist` below it.
-        let default = settings.exclude.is_none()
+        let default = named
+            && settings.exclude.is_none()
             && full
                 .file_name()
                 .is_some_and(|n| DEFAULT_EXCLUDE.iter().any(|d| n == *d));
-        Ok(default
+        default
             || settings
                 .exclude
                 .iter()
                 .flatten()
                 .chain(&settings.extend_exclude)
                 .chain(&self.overrides.exclude)
-                .any(|glob| matches(&full, glob)))
+                .any(|glob| matches(full, glob))
     }
 
     /// `excluded`, for a path named on the command line with
@@ -514,12 +552,15 @@ impl Policy {
     /// skips it, as the walk would (#415), from whatever directory it runs
     /// in (#801).
     pub fn force_excluded(&self, path: &Path) -> Result<bool, String> {
-        if self.excluded(path)? {
-            return Ok(true);
-        }
         let settings = self.settings(path)?;
         let full = absolute(path);
-        let root = self.project_root(&settings, &full)?;
+        let root = self.checkout_root(&settings, &full)?;
+        // The project's top is not a directory of the project, whatever it
+        // is called: `qlinter --force-exclude .` in a checkout named
+        // `target` linted nothing, and passed (#2874).
+        if self.excluded_as(&settings, &full, full != root) {
+            return Ok(true);
+        }
         // A name pattern names a directory at any depth, and the walk asks
         // about each directory before entering it - so `gen` skips
         // `../other/gen/f.q` in a walk of `../other`. `matches` sees a
@@ -553,19 +594,13 @@ impl Policy {
         }))
     }
 
-    /// Whether the rule `code` reports on `path`.
-    pub fn enabled(&self, code: &str, path: &Path) -> Result<bool, String> {
-        let settings = self.settings(path)?;
-        Ok(self.selected(&settings, code) && !per_file_ignored(&settings, code, path))
-    }
-
     fn selected(&self, settings: &Settings, code: &str) -> bool {
         self.configured(settings, code)
             && self
                 .narrowing
                 .borrow()
                 .iter()
-                .all(|layer| apply(layer, code, true))
+                .all(|layer| resolve(layer, code, true, false))
     }
 
     /// Whether the configuration and flags select `code`, before the
@@ -594,31 +629,71 @@ impl Policy {
         let structure =
             self.configured(&settings, "QE001") && !per_file_ignored(&settings, "QE001", file);
         // A language server must not stop linting over it: it says so once
-        // and keeps the forward rules, which are the profile's.
-        let conflict = match self.conflict(&settings, file) {
-            Err(e) if self.lenient => {
-                self.warn(format!("{e}; reporting {} only", UNDOES.join(" and ")), &e);
+        // and keeps the forward rules, which are the profile's. Once for a
+        // configuration and the rules at odds under it, not once for each
+        // file it governs - a popup an open file - and naming the forward
+        // rules that are on, where it named QP007 selected or not (#2767).
+        let conflict = match self.opposed(&settings, file) {
+            Some((reverse, forward)) if self.lenient => {
+                let governs = settings.file.as_deref().unwrap_or(file);
+                let said = Self::refusal(governs, reverse, forward[0]);
+                let forward = forward.join(" and ");
+                self.warn(
+                    format!("{said}; reporting {forward} only"),
+                    &format!("{}\n{reverse}\n{forward}", governs.display()),
+                );
                 true
             }
-            other => other.map(|()| false)?,
+            Some((reverse, forward)) => return Err(Self::refusal(file, reverse, forward[0])),
+            None => false,
         };
         let target = self.target(&settings);
-        let mut found = {
-            let _options = OptionsScope::install(settings.options.clone());
-            let _target = q_lint_rs::TargetScope::install(target);
-            lint_every_rule(source, path, ws, structure)
-        };
-        found.retain(|f| {
+        let kept = |f: &Finding| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
                 && version_reported_for(&f.code, target)
                 && self.selected(&settings, &f.code)
                 && !per_file_ignored(&settings, &f.code, file)
                 && !self.test_exempt(&settings, &f.code, file)
-        });
+        };
+        let run = |structure: bool| {
+            let _options = OptionsScope::install(settings.options.clone());
+            let _target = q_lint_rs::TargetScope::install(target);
+            let mut found = lint_every_rule(source, path, ws, structure);
+            found.retain(kept);
+            found
+        };
+        let mut found = run(structure);
+        // A file whose brackets do not balance reports its first QE001 and
+        // nothing else, until a `noqa` accepts that one: then the next, and
+        // behind the last every other rule. A baseline accepts it as a
+        // `noqa` does. It passed over the QE001 and left it at that, so the
+        // file reported nothing at all, whatever was added to it (#2750).
+        let stopped = structure && matches!(&found[..], [only] if only.code == "QE001");
+        let unbalanced = || {
+            let mut every = structure_findings(source, path);
+            every.retain(kept);
+            every
+        };
+        // And a baseline being written holds what stands behind it, or the
+        // run that reads it back would report as new what was there all
+        // along.
+        if stopped && self.overrides.no_baseline {
+            found = unbalanced();
+            found.extend(run(false));
+        }
         if let Some(file) = self.baseline_file(&settings) {
             match &*self.baseline(&file) {
                 Ok(b) => {
-                    let n = b.filter(path, source, &mut found);
+                    let mut n = b.filter(path, source, &mut found);
+                    if stopped && found.is_empty() {
+                        found = unbalanced();
+                        n = b.filter(path, source, &mut found);
+                        found.truncate(1);
+                        if found.is_empty() {
+                            found = run(false);
+                            n += b.filter(path, source, &mut found);
+                        }
+                    }
                     self.baselined.set(self.baselined.get() + n);
                 }
                 // A missing or broken baseline is the run's error: reporting
@@ -638,36 +713,85 @@ impl Policy {
         Ok(found)
     }
 
+    /// The configuration's say over the findings another backend made for
+    /// one file - qls's - as `lint` has it over its own: which are selected
+    /// there, which the baseline in force passes over, and what severity
+    /// each reports with. They joined the run after the last two, so
+    /// `--write-baseline` wrote them and `--baseline` never took them back
+    /// (#2754), and a `[severity]` for QLS001 was read and did nothing
+    /// (#2755).
+    pub fn adopt(&self, source: &str, path: &str, found: &mut Vec<Finding>) -> Result<(), String> {
+        let file = Path::new(path);
+        let settings = self.settings(file)?;
+        found.retain(|f| {
+            self.selected(&settings, &f.code) && !per_file_ignored(&settings, &f.code, file)
+        });
+        if let Some(file) = self.baseline_file(&settings) {
+            match &*self.baseline(&file) {
+                Ok(b) => {
+                    let n = b.filter(path, source, found);
+                    self.baselined.set(self.baselined.get() + n);
+                }
+                Err(e) if self.lenient => {
+                    self.warn(format!("{e}; reporting every finding"), e);
+                }
+                Err(e) => return Err(e.clone()),
+            }
+        }
+        for f in found {
+            if let Some(level) = severity_of(&settings, &f.code) {
+                f.severity = level.to_string();
+            }
+        }
+        Ok(())
+    }
+
     /// Refuses a selection with QP008 and QP005 or QP007 both on for
     /// `path`: opposite conventions, so `--fix` would undo itself. Only where
     /// both would report - a per-file ignore or the tests exemption settles
     /// it - and before any rule runs, so nothing is reported or rewritten.
     /// Under a language server, see `lint`.
     fn conflict(&self, settings: &Settings, path: &Path) -> Result<(), String> {
+        match self.opposed(settings, path) {
+            Some((reverse, forward)) => Err(Self::refusal(path, reverse, forward[0])),
+            None => Ok(()),
+        }
+    }
+
+    /// The opposite conventions both on for `path`, if any are: the reverse
+    /// rule, and each forward rule it undoes that would report there.
+    fn opposed(
+        &self,
+        settings: &Settings,
+        path: &Path,
+    ) -> Option<(&'static str, Vec<&'static str>)> {
         let on = |code: &str| {
             self.configured(settings, code)
                 && !per_file_ignored(settings, code, path)
                 && !self.test_exempt(settings, code, path)
         };
+        let reverse = OPPOSITE.into_iter().find(|code| on(code))?;
+        let forward: Vec<_> = UNDOES.into_iter().filter(|code| on(code)).collect();
+        (!forward.is_empty()).then_some((reverse, forward))
+    }
+
+    /// What refuses `reverse` beside `forward`, said of `at`: the file, or
+    /// the configuration that selects them both.
+    fn refusal(at: &Path, reverse: &str, forward: &str) -> String {
         let name = |code: &str| {
             RULES
                 .iter()
                 .find(|r| r.code == code)
                 .map_or(String::new(), |r| format!(" ({})", r.name))
         };
-        for reverse in OPPOSITE.into_iter().filter(|code| on(code)) {
-            if let Some(forward) = UNDOES.into_iter().find(|code| on(code)) {
-                return Err(format!(
-                    "{}: {reverse}{} and {forward}{} are opposite conventions - one removes the \
-                     parentheses the other adds, so --fix would undo itself; select one \
-                     (`--ignore {forward}`, or drop {reverse})",
-                    path.display(),
-                    name(reverse),
-                    name(forward)
-                ));
-            }
-        }
-        Ok(())
+        format!(
+            "{}: {reverse}{} and {forward}{} are opposite conventions - one removes the \
+             parentheses the other adds, so --fix would undo itself; select one \
+             (`--ignore {forward}`, or drop {reverse})",
+            at.display(),
+            name(reverse),
+            name(forward)
+        )
     }
 
     /// A test may build a legacy datetime, read the local clock or mix infix
@@ -677,7 +801,9 @@ impl Policy {
     /// there is none - in a language server, the workspace folder holding
     /// the file. A `tests` above the root - a checkout under `~/tests` -
     /// exempts nothing, and a rule the command line selects by code reports
-    /// regardless (#800, #416).
+    /// regardless (#800, #416). By its own code: `Q` and `QP` name every one
+    /// of them as `ALL` does, and lifted the exemption where `ALL` did not
+    /// (#2757).
     fn test_exempt(&self, settings: &Settings, code: &str, path: &Path) -> bool {
         if !["QP002", "QP003", "QP005", "QP007"].contains(&code) {
             return false;
@@ -688,7 +814,7 @@ impl Policy {
             .iter()
             .flatten()
             .chain(&cli.extend_select)
-            .any(|s| s != "ALL" && names(s, code))
+            .any(|s| s == code)
         {
             return false;
         }
@@ -706,39 +832,67 @@ impl Policy {
     /// What `--show-settings` prints: which file governs `path`, and what it
     /// turns on there - only rules that can report under `backend`. A
     /// `python-hook` rule runs in another tool, never in this binary, and
-    /// QLS001 comes only from qls.
-    pub fn describe(&self, path: &Path, backend: &str) -> Result<String, String> {
+    /// QLS001 comes only from qls. Nor one the `target-version` in force
+    /// keeps from reporting, as `lint` keeps it: a QK rule with no target, or
+    /// QE008 under a 4.x one, listed as on and then finding nothing (#2748).
+    pub fn describe(&self, path: &Path, backend: &str) -> Result<Described, String> {
         let settings = self.settings(path)?;
         self.conflict(&settings, path)?;
+        let target = self.target(&settings);
         let runs = |scope: &str| match scope {
             "python-hook" => false,
             "qls" => backend != "builtin",
             _ => backend != "qls",
         };
-        let mut codes: Vec<&str> = RULES
+        let mut codes: Vec<&'static str> = RULES
             .iter()
             .filter(|r| runs(&r.scope))
             .map(|r| r.code.as_str())
             .filter(|code| {
                 self.selected(&settings, code)
+                    && version_reported_for(code, target)
                     && !per_file_ignored(&settings, code, path)
                     && !self.test_exempt(&settings, code, path)
             })
             .collect();
         codes.sort_unstable();
-        Ok(format!(
-            "file: {}\nconfiguration: {}\nprofile: {}\nrules ({}): {}",
-            absolute(path).display(),
-            settings
-                .file
-                .as_ref()
-                .map_or("none - built-in defaults".into(), |f| f
-                    .display()
-                    .to_string()),
-            self.profile(&settings),
-            codes.len(),
-            codes.join(" ")
-        ))
+        Ok(Described {
+            file: absolute(path).display().to_string(),
+            configuration: settings.file.as_ref().map(|f| f.display().to_string()),
+            profile: self.profile(&settings),
+            target: target.map(Target::name),
+            rules: codes,
+        })
+    }
+}
+
+/// What `--show-settings` says of one path: its keys under `--format json`,
+/// in this order, and its lines as text.
+#[derive(serde::Serialize)]
+pub struct Described {
+    file: String,
+    /// The file that governs it; none where the built-in defaults do.
+    configuration: Option<String>,
+    profile: String,
+    #[serde(rename = "target-version")]
+    target: Option<&'static str>,
+    rules: Vec<&'static str>,
+}
+
+impl std::fmt::Display for Described {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "file: {}\nconfiguration: {}\nprofile: {}\ntarget-version: {}\nrules ({}): {}",
+            self.file,
+            self.configuration
+                .as_deref()
+                .unwrap_or("none - built-in defaults"),
+            self.profile,
+            self.target.unwrap_or("none - the QK rules report nothing"),
+            self.rules.len(),
+            self.rules.join(" ")
+        )
     }
 }
 
@@ -746,6 +900,14 @@ impl Policy {
 /// decides, an ignore winning a tie; a `select` that does not name it turns
 /// it off; and a layer that does not mention it leaves it as it was.
 fn apply(layer: &Layer, code: &str, on: bool) -> bool {
+    resolve(layer, code, on, true)
+}
+
+/// `apply`, for a layer that turns rules on (`widens`) or for an editor's
+/// narrowing one, which only hides what the configuration already selects:
+/// there `ALL` or a prefix keeps QP008 as it keeps any rule it names, where
+/// it hid the QP008 a configuration had selected by code (#2756).
+fn resolve(layer: &Layer, code: &str, on: bool, widens: bool) -> bool {
     let longest = |selectors: &mut dyn Iterator<Item = &String>| {
         selectors
             .filter(|s| names(s, code))
@@ -760,7 +922,7 @@ fn apply(layer: &Layer, code: &str, on: bool) -> bool {
             .iter()
             .flatten()
             .chain(&layer.extend_select)
-            .filter(|s| !OPPOSITE.contains(&code) || *s == code),
+            .filter(|s| !widens || !OPPOSITE.contains(&code) || *s == code),
     );
     let disable = longest(&mut layer.ignore.iter());
     match (enable, disable) {
@@ -789,8 +951,22 @@ fn severity_of<'a>(settings: &'a Settings, code: &str) -> Option<&'a str> {
 const OPPOSITE: [&str; 1] = ["QP008"];
 const UNDOES: [&str; 2] = ["QP005", "QP007"];
 
-fn names(selector: &str, code: &str) -> bool {
-    selector == "ALL" || code.starts_with(selector)
+/// Whether `selector` names `code`: `ALL`, the code itself, or a prefix of
+/// it. A prefix that is the letters of a family names that family alone:
+/// `QL` is the leftovers, QL001 to QL003, and not qls's QLS001, which a
+/// plain prefix took with them (#2740). One that is no family's own - `Q`,
+/// `QT03` - still names every code that starts with it.
+pub(crate) fn names(selector: &str, code: &str) -> bool {
+    static FAMILIES: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| {
+        RULES
+            .iter()
+            .map(|r| r.code.trim_end_matches(|c: char| c.is_ascii_digit()))
+            .collect()
+    });
+    selector == "ALL"
+        || code.strip_prefix(selector).is_some_and(|rest| {
+            !rest.starts_with(|c: char| c.is_ascii_alphabetic()) || !FAMILIES.contains(selector)
+        })
 }
 
 fn per_file_ignored(settings: &Settings, code: &str, path: &Path) -> bool {
@@ -824,7 +1000,7 @@ fn matches(full: &Path, glob: &Glob) -> bool {
     if anywhere
         && full
             .file_name()
-            .is_some_and(|n| pattern.matches(&n.to_string_lossy()))
+            .is_some_and(|n| pattern.is_match(&*n.to_string_lossy()))
     {
         return true;
     }
@@ -832,17 +1008,17 @@ fn matches(full: &Path, glob: &Glob) -> bool {
         return false;
     };
     // An absolute pattern with no glob in it names its root itself.
-    if pattern.as_str().is_empty() {
+    if pattern.glob().glob().is_empty() {
         return true;
     }
     relative
         .ancestors()
         .filter(|p| !p.as_os_str().is_empty())
         .any(|p| {
-            pattern.matches(&p.to_string_lossy().replace('\\', "/"))
+            pattern.is_match(p.to_string_lossy().replace('\\', "/"))
                 || anywhere
                     && p.file_name()
-                        .is_some_and(|n| pattern.matches(&n.to_string_lossy()))
+                        .is_some_and(|n| pattern.is_match(&*n.to_string_lossy()))
         })
 }
 
@@ -1239,12 +1415,24 @@ pub fn pattern(text: &str) -> Result<glob::Pattern, String> {
     glob::Pattern::new(text.trim().trim_end_matches('/')).map_err(|e| format!("{text}: {e}"))
 }
 
+/// An `exclude` or `per-file-ignores` pattern as Ruff reads one, with the
+/// crate Ruff reads it with: `{a,b}` is either, `[!x]` and `[^x]` are any
+/// character but `x`, `a**.q` is `a*.q`, and a `\` makes the character after
+/// it a literal one (on Windows it separates, as `/` does). `*` and `?`
+/// cross a `/`, as before. `glob::Pattern` read `{gen,vendor}` as that one
+/// name, `[^x]` as `^` or `x`, and refused `a**.q` (#2746).
+fn ruff_glob(text: &str) -> Result<globset::GlobMatcher, String> {
+    globset::Glob::new(text.trim().trim_end_matches('/'))
+        .map(|glob| glob.compile_matcher())
+        .map_err(|e| format!("{text}: {}", e.kind()))
+}
+
 /// An `exclude` or `per-file-ignores` pattern, with the directory it is
 /// relative to: a configuration's own, or the current one for `--exclude`.
 #[derive(Clone, Debug)]
 pub struct Glob {
     root: PathBuf,
-    pattern: glob::Pattern,
+    pattern: globset::GlobMatcher,
     /// A bare name, `generated`, which matches a file or directory of that
     /// name anywhere below the root, not only at it.
     anywhere: bool,
@@ -1262,7 +1450,7 @@ pub struct Glob {
 /// and pass, as an empty one would, so it is refused like one (#803).
 pub fn excluding(root: &Path, text: &str) -> Result<Glob, String> {
     let glob = rooted(root, text)?;
-    if glob.pattern.as_str().is_empty() && absolute(root).starts_with(&glob.root) {
+    if glob.pattern.glob().glob().is_empty() && absolute(root).starts_with(&glob.root) {
         return Err(format!(
             "{}: the pattern names the whole tree, so it would exclude every file",
             text.trim()
@@ -1286,13 +1474,13 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
             .components()
             // Only a name can hold a glob: Windows' `\\?\C:` prefix has a `?`.
             .take_while(|c| {
-                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[']))
+                !matches!(c, std::path::Component::Normal(n) if n.to_string_lossy().contains(['*', '?', '[', '{']))
             })
             .collect();
         let tail = written.strip_prefix(&literal).unwrap_or(Path::new(""));
         return Ok(Glob {
             root: absolute(&literal),
-            pattern: pattern(&tail.to_string_lossy().replace('\\', "/"))?,
+            pattern: ruff_glob(&tail.to_string_lossy().replace('\\', "/"))?,
             anywhere: false,
             negated: false,
         });
@@ -1320,7 +1508,7 @@ pub fn rooted(root: &Path, text: &str) -> Result<Glob, String> {
     }
     Ok(Glob {
         root,
-        pattern: pattern(rest)?,
+        pattern: ruff_glob(rest)?,
         // Any `/` anchors, a trailing one included (#117): `lib/` is the
         // root's `lib`, not `tests/lib` - Ruff adds the basename match only
         // for a pattern with no separator in it at all.
@@ -1351,6 +1539,29 @@ pub fn parse_profile(name: &str) -> Profile {
     }
 }
 
+/// The current directory. One removed from under the run - a worktree or a
+/// build directory an editor or an agent was started in - is said to be so,
+/// where the system's "No such file or directory" named nothing; and where
+/// `within` is an absolute path, its directory stands in, so a file named in
+/// full is still linted (#2873).
+pub fn working_dir(within: Option<&Path>) -> Result<PathBuf, String> {
+    match std::env::current_dir() {
+        Ok(cwd) => Ok(cwd),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => within
+            .filter(|path| path.is_absolute())
+            .map(|path| match path.is_dir() {
+                true => path.to_path_buf(),
+                false => path.parent().unwrap_or(path).to_path_buf(),
+            })
+            .ok_or_else(|| {
+                "the current directory no longer exists; name each file by its absolute path, \
+                 or run from a directory that does"
+                    .to_string()
+            }),
+        Err(e) => Err(format!("the current directory: {e}")),
+    }
+}
+
 /// `path` made absolute and resolved through symlinks. A path that does not
 /// exist - an editor buffer never saved - is resolved through its nearest
 /// existing ancestor, so `/var/...` on macOS still matches patterns rooted at
@@ -1359,28 +1570,61 @@ pub fn parse_profile(name: &str) -> Profile {
 /// A symlink itself is not resolved, only the directories it sits in: a link
 /// is governed, excluded and reported where it is and by its own name, as
 /// Ruff matches a path as walked, not by wherever its target happens to be.
+/// Nor is a directory it sits in that is a link out of the directory holding
+/// it - a shared tree linked into a project: what is under that link is in
+/// the project, where it was resolved out to the target, which the
+/// project's configuration does not govern and its excludes cannot name
+/// (#2857). A link to somewhere under the directory holding it is resolved
+/// as before: `/var` on macOS, or a second name for a directory the walk
+/// reaches anyway, which stays the one path.
 pub fn absolute(path: &Path) -> PathBuf {
-    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    if is_link(path)
         && let Some(name) = path.file_name()
     {
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        return absolute(parent).join(name);
+        return absolute(holder(path)).join(name);
+    }
+    if let Some(kept) = under_link(path) {
+        return kept;
     }
     if let Ok(p) = fs::canonicalize(path) {
         return p;
     }
     let lexical = lexical(path);
     for ancestor in lexical.ancestors().skip(1) {
-        if let Ok(real) = fs::canonicalize(ancestor)
+        if ancestor.exists()
             && let Ok(rest) = lexical.strip_prefix(ancestor)
         {
-            return real.join(rest);
+            return absolute(ancestor).join(rest);
         }
     }
     lexical
+}
+
+fn is_link(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// The directory `path` is in, `.` for a bare name.
+fn holder(path: &Path) -> &Path {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// `path` under the nearest directory above it that is a link out of the
+/// directory holding it, with that link kept and only the rest resolved.
+/// None when there is no such link, or `path` leaves it again by a `..`.
+fn under_link(path: &Path) -> Option<PathBuf> {
+    let (link, target) = path.ancestors().skip(1).find_map(|dir| {
+        if !is_link(dir) {
+            return None;
+        }
+        let target = fs::canonicalize(dir).ok()?;
+        let outside = !target.starts_with(fs::canonicalize(holder(dir)).ok()?);
+        outside.then_some((dir, target))
+    })?;
+    let real = fs::canonicalize(path).ok()?;
+    Some(absolute(link).join(real.strip_prefix(target).ok()?))
 }
 
 fn lexical(path: &Path) -> PathBuf {
@@ -1404,7 +1648,7 @@ fn lexical(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, version_matches};
+    use super::{LINT_KEYS, PROFILES, SEVERITIES, TOP_KEYS, names, version_matches};
     use q_lint_rs::{
         Target,
         options::{Kind, OPTIONS},
@@ -1424,6 +1668,16 @@ mod tests {
 
     fn set(words: &[&str]) -> BTreeSet<String> {
         words.iter().map(|w| w.to_string()).collect()
+    }
+
+    /// A severity is given by the same selectors a selection is, so
+    /// `QL = "hint"` no longer demotes qls's QLS001 (#2740).
+    #[test]
+    fn a_family_selector_stops_at_the_end_of_its_letters() {
+        assert!(names("QL", "QL001") && !names("QL", "QLS001"));
+        assert!(names("QLS", "QLS001") && names("QLS001", "QLS001"));
+        assert!(names("Q", "QLS001") && names("ALL", "QLS001"));
+        assert!(names("QT03", "QT036") && !names("QT03", "QT001"));
     }
 
     /// The editor's schema for `.qlinter.toml` (#1178) names exactly the keys

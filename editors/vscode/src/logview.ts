@@ -264,15 +264,45 @@ export class LogViewer {
     if (view === undefined) {
       return undefined;
     }
+    const seen = this.seen(view);
     return {
       files: view.files,
       filter: view.filter,
       follow: view.follow,
       text: view.text,
-      processes: [...view.processes.keys()].sort(),
-      levels: LEVELS.filter((l) => view.levels.has(l)),
-      entries: Math.min(view.entries.length, view.max),
+      processes: [...seen.processes.keys()].sort(),
+      levels: LEVELS.filter((l) => seen.levels.has(l)),
+      entries: this.count(view),
     };
+  }
+
+  /// The entries of `view` not yet done, each file's in turn: its open one
+  /// and what its last line, not yet ended, adds to or starts (#3041).
+  private pending(view: View): Entry[] {
+    return view.files.flatMap((f) => view.builders.get(f)?.pending(view.positions.get(f)?.partial ?? "").entries ?? []);
+  }
+
+  /// How many entries `view` shows: those kept and those not yet done that
+  /// pass the filter, which `render` draws too (#3042).
+  private count(view: View): number {
+    return Math.min(view.entries.length + this.pending(view).filter((e) => matches(e, view.filter)).length, view.max);
+  }
+
+  /// Every process and level seen, with how many entries: those counted as
+  /// they started, and the entry a last line not yet ended starts.
+  private seen(view: View): { processes: Map<string, number>; levels: Map<Level, number> } {
+    const processes = new Map(view.processes);
+    const levels = new Map(view.levels);
+    for (const file of view.files) {
+      const entry = view.builders.get(file)?.pending(view.positions.get(file)?.partial ?? "").started;
+      if (entry !== undefined) {
+        processes.set(entry.process, (processes.get(entry.process) ?? 0) + 1);
+        if (entry.level) {
+          levels.set(entry.level, (levels.get(entry.level) ?? 0) + 1);
+        }
+      }
+    }
+    return { processes, levels };
   }
 
   /// Read every file of `view` again from its start, under its filter.
@@ -300,7 +330,7 @@ export class LogViewer {
         }
       };
       if (big) {
-        await window.withProgress({ location: ProgressLocation.Notification, title: `q-lint: reading ${path.basename(view.files[0])}${view.files.length > 1 ? " and more" : ""}` }, read);
+        await window.withProgress({ location: ProgressLocation.Notification, title: plainMessage(`q-lint: reading ${path.basename(view.files[0])}${view.files.length > 1 ? " and more" : ""}`) }, read);
       } else {
         await read();
       }
@@ -362,7 +392,7 @@ export class LogViewer {
   /// Make `view`'s text from its entries, and the entries still open.
   private render(view: View): void {
     const many = view.files.length > 1;
-    const open = [...view.builders.values()].map((b) => b.open).filter((e): e is Entry => e !== undefined && matches(e, view.filter));
+    const open = this.pending(view).filter((e) => matches(e, view.filter));
     const lines: string[] = [];
     const infos: LineInfo[] = [];
     // `keep` trims a tenth at a time: only the last `max` are shown (#1431).
@@ -533,8 +563,9 @@ export class LogViewer {
       await this.setFilter((f) => ({ ...f, levels }), view);
       return;
     }
+    const seen = this.seen(view);
     const picked = await window.showQuickPick(
-      LEVELS.map((level) => ({ label: level, description: `${view.levels.get(level) ?? 0}`, picked: view.filter.levels.includes(level) })),
+      LEVELS.map((level) => ({ label: level, description: `${seen.levels.get(level) ?? 0}`, picked: view.filter.levels.includes(level) })),
       { canPickMany: true, title: "Show which levels? (none picked: every line)" },
     );
     if (picked !== undefined) {
@@ -557,12 +588,13 @@ export class LogViewer {
     }
     // Every line names a process, by its own field or its file's name, so
     // only a log with no line yet has none to pick from (#2262).
-    if (view.processes.size === 0) {
+    const { processes } = this.seen(view);
+    if (processes.size === 0) {
       void window.showInformationMessage("q-lint: the log has no line yet, so there is no process to filter by.");
       return;
     }
     const picked = await window.showQuickPick(
-      [...view.processes].sort(([a], [b]) => a.localeCompare(b)).map(([name, n]) => ({ label: name, description: `${n}`, picked: view.filter.processes.includes(name) })),
+      [...processes].sort(([a], [b]) => a.localeCompare(b)).map(([name, n]) => ({ label: name, description: `${n}`, picked: view.filter.processes.includes(name) })),
       { canPickMany: true, title: "Show which processes? (none picked: every process)" },
     );
     if (picked !== undefined) {
@@ -634,7 +666,7 @@ export class LogViewer {
       return;
     }
     const filter = filterText(view.filter);
-    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${Math.min(view.entries.length, view.max)} · ${view.follow ? "following" : "paused"}`;
+    this.status.text = `$(list-filter) ${iconsEscaped(filter) || "all"} · ${this.count(view)} · ${view.follow ? "following" : "paused"}`;
     this.status.tooltip = `${view.files.join("\n")}\nShowing the last ${view.max} entries that pass the filter. Click to filter by level.`;
     this.status.show();
   }

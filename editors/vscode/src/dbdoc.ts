@@ -11,12 +11,12 @@
 // the explorer counts them (`.Q.cn` for a partitioned table), and the
 // functions of the root and of every namespace that is not q's own (KDB-X's
 // SQL `.s` among them, #1576), nested ones too (#2413), at most
-// `lim` of each. Only a lambda has parameters of its own: `(value f)1` of a
+// `lim` of each, with how many there are of each (#3054). Only a lambda has parameters of its own: `(value f)1` of a
 // projection is its bound argument, of a composition a part (#1575). Works on kdb+ (KDB-X) and PeachQ; held there by
 // dbtools_q.test.js.
 import { SLOT_TEXT, slotParams } from "./paramcache";
 import { definitions } from "./definitions";
-import { blockDepth } from "./statements";
+import { blockDepth, trimBlanks } from "./statements";
 
 export const DOCUMENT = [
   "{[lim]",
@@ -28,7 +28,7 @@ export const DOCUMENT = [
   " todo:ns;ns:`$();",
   " while[count todo;n:first todo;todo:1_todo;ns,:n;d:get n;k:(key d)except`;",
   "  todo,:` sv'n,'k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
-  " ts:m sublist(tables`.),raze{@[{` sv'x,'tables x};x;`$()]}each ns;",
+  " ta:(tables`.),raze{@[{` sv'x,'tables x};x;`$()]}each ns;ts:m sublist ta;",
   " one:{[t] v:get t;p:.Q.qp v;part:1b~p;disk:part|0b~p;mt:0!meta v;",
   "  `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;",
   "   string$[part;`partitioned;disk;`splayed;99h=type v;`keyed;`table];",
@@ -39,10 +39,11 @@ export const DOCUMENT = [
   // with q's error, as SCHEMA's is, and not the end of the document (#1868).
   " bad:{[t;e] `name`kind`rows`keys`cols`types`fkeys`attrs`error!(string t;\"\";0n;();();();();();$[10h=type e;e;string e])};",
   // `\f` of a namespace that is no context signals: it has no functions (#1867).
-  " fs:m sublist(system\"f\"),raze{@[{` sv'x,/:system\"f \",string x};x;`$()]}each ns;",
-  " `pf`parts`allparts`tables`fnames`fparams`ftexts!(",
+  " fa:(system\"f\"),raze{@[{` sv'x,/:system\"f \",string x};x;`$()]}each ns;fs:m sublist fa;",
+  " `pf`parts`allparts`ntables`nfns`tables`fnames`fparams`ftexts!(",
   "  $[@[{0<count .Q.pv};::;0b];string .Q.pf;\"\"];",
   "  \"f\"$@[{count .Q.pv};::;0];\"f\"$@[{count$[`PV in key`.Q;.Q.PV;.Q.pv]};::;0];",
+  "  \"f\"$count ta;\"f\"$count fa;",
   "  {[one;bad;t] @[one;t;bad t]}[one;bad] each ts;",
   "  string fs;{@[{f:get x;$[100h=type f;string(value f)1;()]};x;()]}each fs;",
   `  {@[{f:get x;$[100h=type f;${SLOT_TEXT} f;""]};x;""]}each fs)}`,
@@ -68,6 +69,10 @@ export interface DbDoc {
   allPartitions?: number;
   tables: DocTable[];
   functions: { name: string; params: string[] }[];
+  /// Tables and functions on the process: more than those here when the
+  /// document's limit cut them (#3054).
+  allTables?: number;
+  allFunctions?: number;
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map((s) => (s === null || s === undefined ? "" : String(s))) : typeof v === "string" ? [v] : []);
@@ -106,6 +111,8 @@ export function readDoc(raw: unknown): DbDoc {
     field: strings(r.pf).join(""),
     partitions: number(r.parts) ?? 0,
     allPartitions: Math.max(number(r.allparts) ?? 0, number(r.parts) ?? 0),
+    allTables: Math.max(number(r.ntables) ?? 0, tables.length),
+    allFunctions: Math.max(number(r.nfns) ?? 0, fnames.length),
     tables,
     functions: fnames.map((name, i) => ({
       name,
@@ -116,18 +123,22 @@ export function readDoc(raw: unknown): DbDoc {
 
 /// The comment block written right above each function a q file defines,
 /// its comment characters taken off: `/// text`, `/ text`, and a `/` ...
-/// `\` block. By name, as `definitions` names them.
-export function qdocs(source: string): Map<string, string> {
+/// `\` block. By name, as `definitions` names them: a KDB-X module's in the
+/// context `path`, the file's in its workspace, gives it (#2917).
+export function qdocs(source: string, path?: string): Map<string, string> {
   const lines = source.split(/\r?\n/);
   // Each line's block comment depth before it: block comments nest (#1817).
+  // A `/` or `\` opens or closes one only at the margin: indented, as in a
+  // lambda, `/` is a comment line, and counted as an opener it hid the doc
+  // of every function below (#3001).
   const depth: number[] = [];
-  lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, line.trim())), 0);
+  lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, trimBlanks(line))), 0);
   const out = new Map<string, string>();
-  for (const def of definitions(source)) {
+  for (const def of definitions(source, path)) {
     const above: string[] = [];
     for (let i = def.line - 1; i >= 0; i--) {
       const line = lines[i].trim();
-      if (line === "\\") {
+      if (trimBlanks(lines[i]) === "\\") {
         // A block comment's close: back to the `/` that opened it, a
         // nested block and all.
         if (depth[i] !== 1) break;
@@ -172,6 +183,13 @@ const partitionsText = (doc: DbDoc): string =>
     ? `${doc.partitions.toLocaleString("en-US")} of ${(doc.allPartitions ?? 0).toLocaleString("en-US")} partitions in view (.Q.view): a partitioned table's rows are those of the viewed partitions`
     : `${doc.partitions.toLocaleString("en-US")} partitions`;
 
+/// What the document's limit left out: the list ends there, and says so
+/// (#3054). Nothing when all are in it.
+const cutText = (shown: number, all: number | undefined, what: string): string | undefined =>
+  all !== undefined && all > shown
+    ? `The first ${shown.toLocaleString("en-US")} of ${all.toLocaleString("en-US")} ${what}: the other ${(all - shown).toLocaleString("en-US")} ${all - shown === 1 ? "is" : "are"} not in this document.`
+    : undefined;
+
 /// The document as Markdown. `docs`: each function's qDoc, by name.
 export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<string, string> = new Map()): string {
   const out = [`# ${md(process)}`, "", `Documented by q-lint on ${md(at)}.`, ""];
@@ -180,6 +198,8 @@ export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<s
   }
   out.push("## Tables", "");
   if (doc.tables.length === 0) out.push("No tables.", "");
+  const tablesCut = cutText(doc.tables.length, doc.allTables, "tables");
+  if (tablesCut !== undefined) out.push(tablesCut, "");
   for (const t of doc.tables) {
     if (t.error !== undefined) {
       out.push(`### ${md(t.name)}`, "", `Not read: ${md(t.error)}.`, "");
@@ -194,6 +214,8 @@ export function docMarkdown(doc: DbDoc, process: string, at: string, docs: Map<s
   }
   out.push("## Functions", "");
   if (doc.functions.length === 0) out.push("No functions.", "");
+  const functionsCut = cutText(doc.functions.length, doc.allFunctions, "functions");
+  if (functionsCut !== undefined) out.push(functionsCut, "");
   for (const f of doc.functions) {
     out.push(`### ${md(f.name)}[${f.params.map(md).join(";")}]`, "");
     const d = docs.get(f.name);
@@ -217,6 +239,8 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   }
   out.push("<h2>Tables</h2>");
   if (doc.tables.length === 0) out.push("<p>No tables.</p>");
+  const tablesCut = cutText(doc.tables.length, doc.allTables, "tables");
+  if (tablesCut !== undefined) out.push(`<p>${html(tablesCut)}</p>`);
   for (const t of doc.tables) {
     if (t.error !== undefined) {
       out.push(`<h3 id="t-${html(t.name)}">${html(t.name)}</h3>`, `<p>Not read: ${html(t.error)}.</p>`);
@@ -231,6 +255,8 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   }
   out.push("<h2>Functions</h2>");
   if (doc.functions.length === 0) out.push("<p>No functions.</p>");
+  const functionsCut = cutText(doc.functions.length, doc.allFunctions, "functions");
+  if (functionsCut !== undefined) out.push(`<p>${html(functionsCut)}</p>`);
   for (const f of doc.functions) {
     const d = docs.get(f.name);
     out.push(`<h3>${html(f.name)}[${f.params.map(html).join(";")}]</h3>`, d === undefined ? "<p>No qDoc in the workspace.</p>" : `<pre>${html(d)}</pre>`);
@@ -239,11 +265,11 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   return out.join("\n");
 }
 
-/// The qdoc of every function in `files`, each read by `read`, the first
-/// file to document a name winning. A file that cannot be read is skipped,
+/// The qdoc of every function in `files`, each read by `read` and named as
+/// in a file at `path` (`qdocs`), the first file to document a name winning. A file that cannot be read is skipped,
 /// and only it: one unreadable file ended the reading, and every file after
 /// it went undocumented (#1542).
-export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>): Promise<Map<string, string>> {
+export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>, path?: (file: F) => string): Promise<Map<string, string>> {
   const docs = new Map<string, string>();
   for (const file of files) {
     let text: string;
@@ -252,7 +278,7 @@ export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => P
     } catch {
       continue;
     }
-    for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
+    for (const [name, doc] of qdocs(text, path?.(file))) if (!docs.has(name)) docs.set(name, doc);
   }
   return docs;
 }

@@ -9,7 +9,8 @@
 //!   as code, and - since q also reaches a function by a name it computes -
 //!   when its last part is spelled in any symbol or string literal
 //!   (`` `f ``, `value "f[]"`, `.z.ts:`f`), so a callback is not reported.
-//!   The `.z` handlers q calls itself, and tests, are never reported. Each
+//!   The `.z` handlers q calls itself, tests, and the fixtures qUnit calls
+//!   around a test are never reported. Each
 //!   answer says how many places in the workspace reach a name by a value
 //!   computed at run time, which no reading can follow.
 //!
@@ -20,7 +21,7 @@
 //!
 //! Like the rest of the server, none runs anything; the VS Code client
 //! asks them only while its view or command is on.
-use super::annotate::runnables;
+use super::annotate::{is_fixture, runnables, uses_qunit};
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
 use q_lint_rs::{Definition, Mention, mentions};
@@ -57,7 +58,10 @@ fn namespace(name: &str) -> &str {
 
 /// `q-lint/definitions`: `[{name, namespace, kind, uri, range}]`, each
 /// global once per file that assigns it, at its first assignment there,
-/// sorted by namespace and name. `kind` is `function` or `variable`.
+/// sorted by namespace and name. `kind` is `function` or `variable`: what
+/// the name holds once the file has loaded, as the outline has it - a
+/// projection, a derived function and a name holding one are functions, and
+/// a lambda assigned over is not (#2809).
 fn definitions(sources: &Sources) -> Value {
     let mut out: BTreeMap<(String, String, String), Value> = BTreeMap::new();
     for key in sources.keys() {
@@ -82,7 +86,7 @@ fn definitions(sources: &Sources) -> Value {
                     json!({
                         "name": name,
                         "namespace": namespace(&name),
-                        "kind": if d.function { "function" } else { "variable" },
+                        "kind": if d.holds_function { "function" } else { "variable" },
                         "uri": uri,
                         "range": range(&lines, m.at, m.len),
                     }),
@@ -94,8 +98,12 @@ fn definitions(sources: &Sources) -> Value {
 }
 
 /// The words spelled in a file's symbol and string literals: the names a
-/// value computed at run time could reach.
+/// value computed at run time could reach. Not those of a comment, which q
+/// does not read: `` / calls `helper `` kept `helper` from the list, and a
+/// comment with one `"` opened a string that ran to the next quote in the
+/// file, hiding every function between (#2956).
 fn spelled(text: &str, words: &mut HashSet<String>) {
+    let text = q_lint_rs::comments_view(text);
     let b = text.as_bytes();
     let mut i = 0;
     let mut in_string = false;
@@ -151,6 +159,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
     let mut read: HashSet<String> = HashSet::new();
     let mut words: HashSet<String> = HashSet::new();
     let mut tests: HashSet<String> = HashSet::new();
+    let mut fixtures: HashSet<String> = HashSet::new();
     let mut defined: Vec<(String, String, String, Value)> = vec![];
     let mut dynamic = 0;
     for key in sources.keys() {
@@ -159,11 +168,19 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
         };
         let lines = Lines::new(&text);
         let placement = sources.placement(key);
+        let qunit = uses_qunit(&text);
         for m in &mentions(&text) {
             // Each name as q has it where the file is loaded (#2046).
             let names = sources.names(&text, m, &placement);
             match &m.definition {
-                Some(d) if d.function => {
+                Some(d) if d.holds_function => {
+                    // `.qunit.runTests` calls a namespace's `setUp*`,
+                    // `tearDown*` and the rest for what they are named, as
+                    // the Run test lens does: deleted for being read
+                    // nowhere, the suite breaks (#2957).
+                    if qunit {
+                        fixtures.extend(names.iter().filter(|name| is_fixture(name)).cloned());
+                    }
                     defined.extend(names.into_iter().map(|name| {
                         (
                             key.to_string(),
@@ -186,7 +203,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             }
         }
         spelled(&text, &mut words);
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 tests.insert(text[run.at..run.at + run.len].to_string());
             }
@@ -205,6 +222,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             || words.contains(&name)
             || words.contains(leaf)
             || name.starts_with(".z.")
+            || fixtures.contains(&name)
             || tests.contains(&name)
             || tests.contains(leaf);
         if used {
@@ -217,11 +235,12 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
 
 /// The statement of the top-level function `m` defines, when it defines
 /// one. A function assigned inside a lambda, `g::{x}`, spans its name alone
-/// and is part of the statement around it (#1360).
+/// and is part of the statement around it (#1360); one named further into
+/// its statement, the `b` of `a:b:{x}`, has that statement (#2954).
 fn top_level(m: &Mention) -> Option<&Definition> {
     m.definition
         .as_ref()
-        .filter(|d| d.function && m.at == d.start && d.end > m.at + m.len)
+        .filter(|d| d.function && d.start <= m.at && d.end > m.at + m.len)
 }
 
 /// Each top-level function a text defines, by name, with its statements in
@@ -266,10 +285,12 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
         .into_iter()
         .cloned()
         .collect();
-    // Who names whom: each name read inside a top-level function's
-    // statement is an edge from that function to it, the name as q
+    // Who names whom: each name read inside a top-level definition's
+    // statement is an edge from that definition to it, the name as q
     // resolves it where the file is loaded, and as written - a bare read
-    // in a lambda is looked up at the root too.
+    // in a lambda is looked up at the root too. Any definition that
+    // carries its statement, as for the call hierarchy: `al:f` and
+    // `h:f each` run `f` whenever the names they define are called (#2811).
     let mut callers: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     let mut tests: Vec<(String, String, Vec<String>, String)> = vec![];
     for key in sources.keys() {
@@ -277,30 +298,35 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let placement = sources.placement(key);
-        let mut span: Option<(usize, Vec<String>)> = None;
+        // The statements still open at a mention: one, or each name of
+        // `a:b:f`.
+        let mut spans: Vec<(usize, Vec<String>)> = vec![];
         let all = mentions(&text);
         for m in &all {
+            spans.retain(|(end, _)| m.at < *end);
             match &m.definition {
-                Some(_) => {
-                    if let Some(d) = top_level(m) {
-                        span = Some((d.end, sources.names(&text, m, &placement)));
+                Some(d) => {
+                    if (d.start, d.end) != (m.at, m.at + m.len) {
+                        spans.push((d.end, sources.names(&text, m, &placement)));
                     }
                 }
                 None => {
-                    if let Some((end, caller)) = &span
-                        && m.at < *end
-                    {
-                        let spelled = text[m.at..m.at + m.len].to_string();
-                        let mut callees = sources.names(&text, m, &placement);
-                        callees.push(spelled);
-                        for callee in callees {
-                            callers.entry(callee).or_default().extend(caller.clone());
+                    if spans.is_empty() {
+                        continue;
+                    }
+                    let spelled = text[m.at..m.at + m.len].to_string();
+                    let mut callees = sources.names(&text, m, &placement);
+                    callees.push(spelled);
+                    for callee in callees {
+                        let into = callers.entry(callee).or_default();
+                        for (_, caller) in &spans {
+                            into.extend(caller.iter().cloned());
                         }
                     }
                 }
             }
         }
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 let spelled = text[run.at..run.at + run.len].to_string();
                 let resolved = all.iter().find(|m| m.at == run.at).map_or_else(

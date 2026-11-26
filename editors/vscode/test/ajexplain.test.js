@@ -37,6 +37,18 @@ test("a call in a comment or a string is not the call explained (#1914)", () => 
   assert.deepStrictEqual(findAj('aj[`sym`time;t;select from q where src like "a/ b"]'), { ...live, right: 'select from q where src like "a/ b"' });
 });
 
+// args() split on every top-level `;`, one in a comment on a continuation
+// line among them, so the call read as four arguments and was not found.
+test("a comment inside the call's lines is not an argument, nor its ; a separator (#2982)", () => {
+  const live = { fn: "aj", columns: "`sym`time", left: "trade", right: "quote" };
+  assert.deepStrictEqual(findAj("aj[`sym`time;\n  trade / trades; sorted\n  ;quote]"), live);
+  // Nor is a bracket in one the call's.
+  assert.deepStrictEqual(findAj("r:aj[`sym`time; / the keys]\n  trade; / left (\n  quote] / right\n"), live);
+  assert.deepStrictEqual(findAj("aj[`sym`time;trade;\n / the quotes; as of now\n select from quote\n  where sym in `a`b]").right, "select from quote\n  where sym in `a`b");
+  // A `/` that is not a comment's stays the argument's.
+  assert.deepStrictEqual(findAj("aj[`sym`time;trade;update m:sum each bid%/:1 2 from quote]").right, "update m:sum each bid%/:1 2 from quote");
+});
+
 const call = { fn: "aj", columns: "`sym`time", left: "trade", right: "quote" };
 const match = (over) => ({ row: "`sym`time!(`a;09:02)", candidates: 2, missedKey: "", missedValue: "", matched: 1, matchedRow: "`sym`time`bid!(`a;09:01;11f)", earliest: "08:59", time: "09:02", sorted: true, timeColumn: "time", rightRows: 3, ...over });
 
@@ -98,8 +110,10 @@ test("the guard reads an explanation's columns and tables as EXPLAIN_AJ values t
   const { explainGuardCode } = require("../out/ajexplain.js");
   const { writes } = require("../out/guard.js");
   const found = findAj("aj[`sym`time;t;(1;\n/\nj1:9;q)]");
-  assert.strictEqual(found.right, "(1;\n/\nj1:9;q)");
+  // Less the `/` line, a comment to `value` too (#2982).
+  assert.strictEqual(found.right, "(1;\n\nj1:9;q)");
   assert.deepStrictEqual(writes(explainGuardCode(found)), ["assigns j1"]);
+  assert.deepStrictEqual(writes(explainGuardCode({ ...found, right: "(1;\n/\nj1:9;q)" })), ["assigns j1"]);
   assert.deepStrictEqual(writes(explainGuardCode(call)), []);
 });
 

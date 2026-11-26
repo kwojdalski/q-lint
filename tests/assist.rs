@@ -187,6 +187,12 @@ const TYPED: &[(&str, i16)] = &[
     ("1 0n", 9),
     ("0N 1.5", 9),
     ("0W 1", 7),
+    // The largest of each, which is its infinity, and no limit on a float.
+    ("32767h", -5),
+    ("-2147483647i", -6),
+    ("9223372036854775807", -7),
+    ("9223372036854775808f", -9),
+    ("9223372036854775808 1.5", 9),
     ("1b", -1),
     ("101b", 1),
     ("0x01", -4),
@@ -211,6 +217,11 @@ const TYPED: &[(&str, i16)] = &[
     ("`:a/b.q", -11),
     ("`a:b/c", -11),
     ("`a`:b/c", 11),
+    // An underscore or a digit starts a symbol, but not the underscore
+    // after the first backtick (#2889).
+    ("`a`_b", 11),
+    ("`a_", -11),
+    ("`1a", -11),
     ("2024.01.01", -14),
     ("2024.02.29", -14),
     ("2024.01.01 2024.01.02", 14),
@@ -229,6 +240,7 @@ const TYPED: &[(&str, i16)] = &[
     ("{x}", 100),
     ("{[a;b] a+b}", 100),
     ("()", 0),
+    ("( )", 0),
 ];
 
 /// Text that is no literal, or one this does not read - nothing is shown.
@@ -239,6 +251,15 @@ const UNTYPED: &[&str] = &[
     "1e10",
     "2e3",
     "1.5i",
+    // Past the type's largest either way: KDB-X refuses each (#2672).
+    "32768h",
+    "-32768h",
+    "2147483648i",
+    "-2147483648i",
+    "1 2147483648i",
+    "9223372036854775808",
+    "9223372036854775808j",
+    "99999999999999999999 1",
     "1 2b",
     "0Nd",
     "2024.02.30",
@@ -255,6 +276,9 @@ const UNTYPED: &[&str] = &[
     "`a/",
     "`.a/b",
     "`a`b/",
+    // `_a is ` _ a, a drop from the null symbol: 'a in KDB-X (#2889).
+    "`_a",
+    "`_a`b",
     "`a`b!1 2",
     "\"ab\" ,\"c\"",
     "\"\\q\"",
@@ -459,6 +483,31 @@ fn a_function_has_a_lens_counting_the_places_that_read_it() {
     assert_eq!(reply["result"].as_array().unwrap().len(), 3);
 }
 
+/// A symbol that may be the name is a reference Find References lists, so
+/// the lens that opens that list counts it: `` w:`f `` here and in another
+/// file, and one of `` `f`g `` (#2679).
+#[test]
+fn a_reference_lens_counts_the_symbols_its_references_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "f:{x}\na:f 1\nw:`f\nz:`f`g\ns:`fg`.f\n";
+    let (mut server, _) = Server::over(
+        dir.path(),
+        &[("other.q", "q:`f\nk:f 3\n")],
+        client(),
+        json!({"referenceLens": {"enable": true}}),
+    );
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    let found = reference_lenses(&reply);
+    assert_eq!(found[0].1, "5 references", "{reply}");
+    let listed = server.request(
+        "textDocument/references",
+        json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0},
+               "context": {"includeDeclaration": false}}),
+    );
+    assert_eq!(listed["result"].as_array().unwrap().len(), 5, "{listed}");
+}
+
 #[test]
 fn reference_lenses_are_off_unless_asked_for() {
     let dir = tempfile::tempdir().unwrap();
@@ -542,6 +591,29 @@ fn a_name_another_file_defines_completes_with_the_load_it_needs() {
     assert!(item.get("additionalTextEdits").is_none(), "{item}");
 }
 
+/// `system "d .x"`, `q)\d .x` and `k)\d .x` open a context as `\d .x`
+/// does, and a load added inside one defines `.x.helper` (#2670).
+#[test]
+fn a_load_is_never_added_below_a_context_opened_any_other_way() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("util.q"), "helper:{[v] v+1}\n").unwrap();
+    let (mut server, _) = Server::over(dir.path(), &[], client(), auto_load());
+    for (name, open, close) in [
+        ("s.q", "system \"d .x\"", "system \"d .\""),
+        ("q.q", "q)\\d .x", "q)\\d ."),
+        ("k.q", "k)\\d .x", "k)\\d ."),
+    ] {
+        let text = format!("{open}\n\\l other.q\n{close}\nx:help");
+        let uri = server.open(dir.path(), name, &text);
+        let item = completed(&mut server, &uri, 3, 6, "helper");
+        assert_eq!(
+            item["additionalTextEdits"][0]["range"]["start"],
+            json!({"line": 0, "character": 0}),
+            "{open}"
+        );
+    }
+}
+
 #[test]
 fn a_load_is_added_at_the_top_when_there_is_none_and_never_below_a_d() {
     let dir = tempfile::tempdir().unwrap();
@@ -560,6 +632,29 @@ fn a_load_is_added_at_the_top_when_there_is_none_and_never_below_a_d() {
         item["additionalTextEdits"][0]["range"]["start"],
         json!({"line": 0, "character": 0})
     );
+}
+
+/// lib.q's `fancy` is `.a.fancy` only where main.q loads it under `\d .a`:
+/// a load added at the top of another file defines `fancy`, so it is no
+/// way to `.a.fancy` - while a file that says `\d .a` itself is (#2820).
+#[test]
+fn a_load_is_offered_only_for_a_name_it_would_define_here() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("lib.q", "fancy:{x}\n"),
+        ("main.q", "\\d .a\n\\l lib.q\n"),
+        ("own.q", "\\d .b\nfancy:{x}\n"),
+    ];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), auto_load());
+    let uri = server.open(dir.path(), "reader.q", "r:.a.fan\ns:.b.fan");
+    let item = completed(&mut server, &uri, 0, 8, ".a.fancy");
+    assert!(item.get("additionalTextEdits").is_none(), "{item}");
+    let item = completed(&mut server, &uri, 1, 8, ".b.fancy");
+    assert_eq!(item["detail"], "adds \\l own.q", "{item}");
+    // The same name written from inside the context.
+    let uri = server.open(dir.path(), "inside.q", "\\d .a\nr:fan");
+    let item = completed(&mut server, &uri, 1, 5, "fancy");
+    assert!(item.get("additionalTextEdits").is_none(), "{item}");
 }
 
 /// A block comment is header to the end of its `\`, and a `\l` in one

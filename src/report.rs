@@ -171,7 +171,7 @@ pub fn sarif(findings: &[Finding], sources: &[(String, String)], cwd: &Path) -> 
             // directory qlinter ran in, as a directory's URI ends, in `/`.
             "originalUriBaseIds": {"%SRCROOT%": {"uri": format!(
                 "{}/",
-                file_uri(&cwd.to_string_lossy().replace('\\', "/")).trim_end_matches('/')
+                file_uri(&baseline::slashed(cwd)).trim_end_matches('/')
             )}},
             // SARIF 2.1.0 requires it once there are results: a finding's
             // columns count UTF-16 units, as an editor's do.

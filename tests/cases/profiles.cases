@@ -210,6 +210,31 @@ g:{x>y}
 b:1 2 3
 r:b where g b
 
+=== QP006 profile: uqf | and is itself an argument: f where 1 0 is f[where 1 0] (#2723; q 5: 104h)
+f:{x+y}
+d:f where 1 0
+
+=== QP006 profile: uqf | a symbol or a string glued to the name is its argument (#2723; q 5: type f`a is 104h)
+f:{x+y}
+a:f`a
+b:f"s"
+
+=== QP006 profile: uqf | and so is a negative literal or a lambda after a blank (#2723; q 5: f -1 is f[-1])
+f:{x+y}
+c:f -1
+e:f {x}
+
+=== QP006 profile: uqf | a call after a lambda's brace opens that lambda's argument (#2723; q 5: {x}f 1 is {x}[f 1])
+f:{x+y}
+g:{x}f 1
+
+=== clean profile: uqf | a symbol vector's items, a minus set off on both sides, and a table before where are no calls (#2723)
+f:{x+y}
+t:([]f:1 2)
+a:`f`a
+b:f - 1
+c:select from t where f>1
+
 === QP006 profile: uqf | and so does any unary keyword's: not g a b is not g[a b] (q 5)
 g:{x>y}
 r:not g 1 2
@@ -401,8 +426,37 @@ f:`:.z.P
 g:`:log/.z.Z
 h:hopen `:.z.T
 
+=== QP003 profile: uqf | ltime of the UTC clock is the local one by another name (q 5: ltime .z.p is .z.P) (#2722)
+a:ltime .z.p
+
+=== QP003 profile: uqf | inside an expression and in brackets too (#2722)
+b:`date$ltime .z.p
+c:ltime[.z.p]
+
+=== clean profile: uqf | ltime of a value, and a name or a string that spells it, read no clock (#2722)
+f:{ltime x}
+.my.ltime:{x}
+g:.my.ltime .z.p
+h:"ltime .z.p"
+
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
+
+=== clean profile: uqf | a symbol that spells a clock is data, alone or in a vector (q 5: `a`.z.T is two symbols) (#2721)
+h:`.z.P
+i:`a`.z.T
+j:`.z.Z
+k:`a`.z.z
+m:(`.z.z;"the clock as a datetime")
+
+=== QP002 profile: uqf | but one that get or value looks up reads the clock (q 5: type value `.z.z is -15h) (#2721)
+a:value `.z.z
+
+=== QP002 profile: uqf | in brackets too (#2721)
+b:get[`.z.Z]
+
+=== QP002 QP003 profile: uqf | and a symbol leaves the clock beside it reported (#2721)
+a:(`.z.Z;.z.Z)
 
 === clean profile: uqf | a dotted name that ends in .z.z or .z.Z is a variable, not the clock (#510; q 5: .my.z.z[] is 1)
 .my.z.z:{1}
@@ -437,3 +491,49 @@ d:"zj"$(1.5;2)
 === clean profile: uqf | a timestamp, and a string merely holding a z (#501)
 a:2023.01.01D
 b:"buzz"
+
+=== QP002 profile: uqf | the null and the infinity in lower case (q 5: type 0nz and type 0wz are -15h) (#2719)
+a:0nz
+
+=== QP002 profile: uqf | and negative infinity (#2719)
+b:-0wz
+
+=== QP002 profile: uqf | eight digits and a z are that date's datetime (q 5: type 20240101z is -15h) (#2719)
+c:20240101z
+
+=== QP002 profile: uqf | and so with a fraction, seconds from 1970 (q 5: type 20240101.5z and type 1.2345678z are -15h) (#2719)
+d:20240101.5z
+e:1.2345678z
+
+=== QP002 QS004 profile: uqf | a cast whose type is in parentheses (q 5: type (15h)$2024.01.01 is -15h) (#2720)
+a:(15h)$2024.01.01
+
+=== QP002 QS004 profile: uqf | the parse in parentheses, and the type as a symbol or a string (#2720)
+b:(-15h)$"2024.01.01T00:00"
+c:(`datetime)$2024.01.01
+d:("z")$2024.01.01
+
+=== QP002 profile: uqf | the type as the first argument of $ (q 5: type $["z";2024.01.01] is -15h) (#2720)
+a:$["z";2024.01.01]
+
+=== QP002 profile: uqf | as a symbol or a short there too (#2720)
+b:$[`datetime;2024.01.01]
+c:$[15h;2024.01.01]
+
+=== clean profile: uqf | a conditional has three slots and casts nothing (q 5: $[15h;1;2] is 1), nor does a string applied to in parentheses (#2720)
+f:{x}
+a:$[15h;1;2]
+b:$["z";1;2]
+c:(f "z")$"ab"
+d:"use (15h)$x or $[`datetime;x]"
+e:$[12h;2024.01.01]
+
+=== QP002 profile: uqf | a timestamp's spelling with a z after it is a datetime (q 5: type 2024.01.01D12:00:00.000z is -15h) (#2743)
+a:2024.01.01D12:00:00.000z
+
+=== clean profile: uqf | the same digits with no z, in a symbol, in a name or in a string are no datetime (#2719)
+a:12345678
+b:1234567.5
+c:`20240101z
+x20240101z:1
+e:"20240101z"

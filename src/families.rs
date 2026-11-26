@@ -10,9 +10,10 @@ pub fn check(
     code: &str,
     comments: &str,
     foreign: &[usize],
+    ws: &crate::Workspace,
 ) -> Vec<Finding> {
     let mut out = vec![];
-    query_injection(path, source, code, comments, &mut out);
+    query_injection(path, source, code, comments, ws, &mut out);
     credentials(path, source, code, comments, &mut out);
     simplifications(path, source, code, comments, &mut out);
     leftovers(path, source, comments, foreign, &mut out);
@@ -39,6 +40,168 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
     Some((start, argument_end(code, comments, source, start)?))
 }
 
+/// What `name` at `at..after` is applied to, however the application is
+/// written: `name x` and `name[x]`, and also `name@x`, `name . enlist x`,
+/// `(name) x`, and the trap forms `@[name;x;h]` and `.[name;enlist x;h]`, which run
+/// `name x` and hand an error to `h`. KDB-X 5 defines `s` in the process for
+/// each of them given `"select from t where a=",x` and an `x` of
+/// `"1;s:42;0"` (#2992).
+fn applied(
+    code: &str,
+    comments: &str,
+    source: &str,
+    at: usize,
+    after: usize,
+) -> Option<(usize, usize)> {
+    let blank = [' ', '\t'];
+    let rest = code[after..].trim_start_matches(blank);
+    let next = code.len() - rest.len();
+    let before = code[..at].trim_end_matches(blank);
+    if rest.starts_with(';') {
+        let dot = before.ends_with(".[");
+        if !dot && !before.ends_with("@[") {
+            return None;
+        }
+        let close = matching(code, before.len() - 1, b'[', b']')?;
+        let slot = slots(code.get(next + 1..close - 1)?).into_iter().next()?;
+        let (mut start, end) = (next + 1, next + 1 + slot.len());
+        // `.` applies to a list of arguments, here a list of the one.
+        if dot {
+            start += re!(r"^\s*enlist\b").find(slot)?.end();
+        }
+        return Some((start, end));
+    }
+    // In parentheses of its own, `(value) x`.
+    if rest.starts_with(')') && before.ends_with('(') {
+        return argument(code, comments, source, next + 1);
+    }
+    let after = match re!(r"^(?:@|\.[ \t]+enlist\b)").find(rest) {
+        Some(m) => next + m.end(),
+        None => after,
+    };
+    argument(code, comments, source, after)
+}
+
+/// Each string literal the file gives q to run in this process, as the
+/// offset of its opening quote and the text q reads: one in what `value`,
+/// `get`, `parse` or `-5!` is applied to, however applied, and one sent to
+/// handle 0. KDB-X 5 calls `myf` for each of `value "myf 1"`, `eval parse
+/// "myf 1"`, `eval -5!"myf 1"` and `0 "myf 1"`, and `get "myf"` is the
+/// function (#3005). In order, each once.
+pub(crate) fn evaluated_strings(code: &str, comments: &str, source: &str) -> Vec<(usize, String)> {
+    let literal = re!(r#""((?:[^"\\]|\\.)*)""#);
+    let text = |body: &str| String::from_utf8_lossy(&crate::q_bytes(body)).into_owned();
+    let mut out = vec![];
+    for m in re!(r"\b(?:value|get|parse)\b|-5!").find_iter(code) {
+        let extent = match m.as_str() {
+            "-5!" => argument(code, comments, source, m.end()),
+            _ if !boundary(code, m.start()) => None,
+            _ => applied(code, comments, source, m.start(), m.end()),
+        };
+        let Some((start, end)) = extent.filter(|(start, end)| start < end) else {
+            continue;
+        };
+        let Some(given) = comments.get(start..end) else {
+            continue;
+        };
+        for s in literal.captures_iter(given) {
+            out.push((start + s.get(0).unwrap().start(), text(&s[1])));
+        }
+    }
+    for (_, given) in crate::semantics::handle_zero(code, source) {
+        if let Some(s) = comments
+            .get(given..)
+            .and_then(|rest| literal.captures(rest))
+            && s.get(0).unwrap().start() == 0
+        {
+            out.push((given, text(&s[1])));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Whether `start..end` builds a query: joins a string that names a qSQL
+/// statement with something that is not a string literal.
+fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) -> bool {
+    // Parentheses around the whole argument only group it: `value
+    // ("select ...",x)` runs the same query (#502).
+    loop {
+        let s = start + (code[start..end].len() - code[start..end].trim_start().len());
+        let e = start + code[start..end].trim_end().len();
+        if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
+            break;
+        }
+        (start, end) = (s + 1, e - 1);
+    }
+    let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#);
+    // A template filled by `ssr` takes its third argument into the query,
+    // and `raze` or `sv` joins the items of a list as `,` does two (#2735).
+    let whole = |open: usize, o: u8, c: u8| {
+        let last = start + code[start..end].trim_end().len();
+        (code.as_bytes().get(open) == Some(&o) && matching(code, open, o, c) == Some(last))
+            .then_some((open + 1, last - 1))
+    };
+    if let Some(m) = re!(r"^\s*ssr\s*\[").find(&code[start..end]) {
+        let Some((from, to)) = whole(start + m.end() - 1, b'[', b']') else {
+            return false;
+        };
+        let parts = slots(&code[from..to]);
+        return parts.len() == 3
+            && query.is_match(&comments[from..from + parts[0].len()])
+            && parts[2].bytes().any(|b| b.is_ascii_alphabetic());
+    }
+    let mut separator = b',';
+    if let Some(m) = re!(r#"^\s*(?:raze\b|"[^"]*"\s*sv\b)\s*\("#).find(&comments[start..end])
+        && let Some(list) = whole(start + m.end() - 1, b'(', b')')
+    {
+        (start, end) = list;
+        separator = b';';
+    }
+    let (text, masked) = (&comments[start..end], &code[start..end]);
+    // Joined at the top level of the argument, with a name in the join:
+    // the masked view has the strings blanked, so any name left in it is
+    // a value flowing into the query.
+    let mut depth = 0i32;
+    let joined = masked.bytes().any(|b| {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        b == separator && depth == 0
+    });
+    // A name outside any `$[...]`, or in one of its branches: a
+    // conditional that only chooses between string constants - KX's tick
+    // clog.q builds handler source that way - splices in no data,
+    // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
+    let mut unconditional = masked.as_bytes().to_vec();
+    let mut chosen = false;
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            unconditional[at..close].fill(b' ');
+            let parts = slots(&masked[at + 2..close - 1]);
+            let last = parts.len() - 1;
+            chosen |= parts.iter().enumerate().any(|(i, part)| {
+                (i % 2 == 1 || i == last && last > 0)
+                    && part.bytes().any(|b| b.is_ascii_alphabetic())
+            });
+        }
+    }
+    let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
+    // The query text itself has to be one of the joined pieces, not a
+    // branch of a conditional: there it is one of several constants.
+    let mut top = text.as_bytes().to_vec();
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            top[at..close].fill(b' ');
+        }
+    }
+    let top = String::from_utf8_lossy(&top);
+    query.is_match(&top) && joined && spliced
+}
+
 /// QX001. `value "select from t where sym=`",s` is how q gets injected: q has
 /// no parameterised query, so a query is built by joining strings and run by
 /// `value`, and whatever the joined value says is run with it. Verified: a
@@ -49,24 +212,35 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
 /// level) a string that names a qSQL statement with something that is not a
 /// string literal. `value "select from t"` is a constant, and `value x` says
 /// nothing about where `x` came from.
-fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
+fn query_injection(
+    path: &str,
+    source: &str,
+    code: &str,
+    comments: &str,
+    ws: &crate::Workspace,
+    out: &mut Vec<Finding>,
+) {
     // `get` of a string evaluates it as `value` does (q 5), and a string sent
     // over a handle - `h "select ...",x` - is evaluated by the remote
     // process's `.z.pg`, which is `value` by default. A name applied to a
     // query string is taken for a handle unless it is one of q's own, or a
-    // lambda this file defines, with `:` or `::`: `lg "update finished"` logs
-    // a line (#345, #654).
+    // lambda this file or another of the run defines, with `:` or `::`:
+    // `lg "update finished"` logs a line (#345, #654, #3002).
     let lambda = |name: &str| {
-        regex::Regex::new(&format!(
-            r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
-            regex::escape(name)
-        ))
-        .is_ok_and(|r| r.is_match(code))
+        ws.is_lambda(name)
+            || regex::Regex::new(&format!(
+                r"(?:^|[^A-Za-z0-9_.`]){}[ \t]*::?[ \t]*\{{",
+                regex::escape(name)
+            ))
+            .is_ok_and(|r| r.is_match(code))
     };
     // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
-    // the async `neg[h]` and `(neg h)` (#652).
+    // the async `neg[h]` and `(neg h)` (#652). What it is sent may stand in
+    // parentheses or brackets, after `@`, or in a trap whose first slot is
+    // the handle: KDB-X 5 has the remote run each of `h("..",x)`,
+    // `h["..",x]`, `(neg h)("..",x)`, `h@"..",x` and `@[h;"..",x;e]` (#3006).
     let handles: Vec<(usize, usize)> = re!(
-        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\))[ \t]*)"(?:select|exec|update|delete)\b"#
+        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\)))[ \t]*([(\[@;]?)[ \t]*"(?:select|exec|update|delete)\b"#
     )
     .captures_iter(comments)
     .filter_map(|c| {
@@ -75,7 +249,11 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         (code[handle.start()..].starts_with(handle.as_str())
             && !(name
                 && (crate::reserved_word(handle.as_str())
-                    || lambda(handle.as_str()))))
+                    || lambda(handle.as_str())))
+            && (&c[3] != ";"
+                || code[..handle.start()]
+                    .trim_end_matches([' ', '\t'])
+                    .ends_with("@[")))
         .then_some((handle.start(), handle.end()))
     })
     .collect();
@@ -94,61 +272,76 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((mut start, mut end)) = argument(code, comments, source, m.end()) else {
+        let Some((mut start, end)) = applied(code, comments, source, m.start(), m.end()) else {
             continue;
         };
-        // Parentheses around the whole argument only group it: `value
-        // ("select ...",x)` runs the same query (#502).
-        loop {
-            let s = start + (code[start..end].len() - code[start..end].trim_start().len());
-            let e = start + code[start..end].trim_end().len();
-            if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
-                break;
-            }
-            (start, end) = (s + 1, e - 1);
+        let word = &code[m.start()..m.end()];
+        let given = code[start..end].trim_start();
+        // `eval` evaluates a parse tree, and a string is its own: KDB-X 5
+        // returns `eval "select from t where a=",x` as the text it was
+        // given and runs nothing. Parsed first, the text does run (#2991).
+        if word == "eval" {
+            let Some(parsed) = re!(r"^(?:parse\b|-5!)").find(given) else {
+                continue;
+            };
+            start = end - given.len() + parsed.end();
         }
-        let (text, masked) = (&comments[start..end], &code[start..end]);
-        // Joined at the top level of the argument, with a name in the join:
-        // the masked view has the strings blanked, so any name left in it is
-        // a value flowing into the query.
-        let mut depth = 0i32;
-        let joined = masked.bytes().any(|b| {
-            match b {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                _ => {}
-            }
-            b == b',' && depth == 0
-        });
-        // A name outside any `$[...]`, or in one of its branches: a
-        // conditional that only chooses between string constants - KX's tick
-        // clog.q builds handler source that way - splices in no data,
-        // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
-        let mut unconditional = masked.as_bytes().to_vec();
-        let mut chosen = false;
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                unconditional[at..close].fill(b' ');
-                let parts = slots(&masked[at + 2..close - 1]);
-                let last = parts.len() - 1;
-                chosen |= parts.iter().enumerate().any(|(i, part)| {
-                    (i % 2 == 1 || i == last && last > 0)
-                        && part.bytes().any(|b| b.is_ascii_alphabetic())
-                });
-            }
+        // A symbol is looked up or read from disk, never evaluated: `get
+        // hsym `$"/data/update/",d` reads the file of that name, and sent
+        // over a handle it names a variable there (#3012).
+        if given.starts_with('`') || re!(r"^hsym\b").is_match(given) {
+            continue;
         }
-        let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
-        // The query text itself has to be one of the joined pieces, not a
-        // branch of a conditional: there it is one of several constants.
-        let mut top = text.as_bytes().to_vec();
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                top[at..close].fill(b' ');
-            }
+        // A name applied to text is a handle only on the evidence that the
+        // text is a query, and a query reads `from` something: `.log.info
+        // "update complete: ",string n` logs a line (#3002). The word has to
+        // be in a string, which the code view has blank.
+        let handle = !matches!(word, "value" | "eval" | "get");
+        if handle
+            && !re!(r"\bfrom\b").find_iter(&comments[start..end]).any(|f| {
+                code[start + f.start()..start + f.end()]
+                    .bytes()
+                    .all(|b| b == b' ')
+            })
+        {
+            continue;
         }
-        let top = String::from_utf8_lossy(&top);
-        let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#).is_match(&top);
-        if query && joined && spliced {
+        // Built where it is run, or into a local this lambda runs on a later
+        // statement - `q:"select ...",s; value q`, the commoner way to write
+        // it (#2735). Any assignment of the local before the call counts.
+        let built = builds_query(code, comments, start, end) || {
+            let name = code[start..end].trim();
+            re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
+                && crate::enclosing_brace(code, m.start()).is_some_and(|brace| {
+                    code[brace..m.start()].match_indices(name).any(|(i, _)| {
+                        let at = brace + i;
+                        let value = code[at + name.len()..].trim_start_matches([' ', '\t']);
+                        let from = code.len() - value.len() + 1;
+                        if !boundary(code, at)
+                            || !value.starts_with(':')
+                            || value.starts_with("::")
+                            || crate::enclosing_brace(code, at) != Some(brace)
+                        {
+                            return false;
+                        }
+                        // The assigned value runs to the statement's end.
+                        let mut depth = 0i32;
+                        let stop = code[from..m.start()]
+                            .bytes()
+                            .position(|b| {
+                                match b {
+                                    b'(' | b'[' | b'{' => depth += 1,
+                                    b')' | b']' | b'}' => depth -= 1,
+                                    _ => {}
+                                }
+                                depth < 0 || b == b';' && depth == 0
+                            })
+                            .map_or(m.start(), |p| from + p);
+                        builds_query(code, comments, from, stop)
+                    })
+                })
+        };
+        if built {
             out.push(Finding::at(
                 path,
                 source,
@@ -178,11 +371,31 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
 fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let options = crate::options::current();
     let secret = options.name_pattern.as_ref().unwrap_or(re!(
-        r"(?i)(?:password|passwd|pwd|secret|token|api_?key|credentials?)$"
+        r"(?i)(?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$"
     ));
+    // What a name says after its credential word makes it a message or a
+    // place, `passwordPrompt`, `tokenUrl` - as a whole word of the name, and
+    // only after: `profileToken` holds no `file`, and `envPassword` is a
+    // password (#2736).
     let message = re!(
-        r"(?i)prompt|msg|message|label|text|field|name|hint|key[s]?name|file|path|url|env|var|col"
+        r"(?i)^(?:prompt|msg|message|label|text|field|name|hint|file|filename|path|url|env|var|col)s?$"
     );
+    let described = |rest: &str| {
+        let b = rest.as_bytes();
+        let mut from = 0;
+        for i in 1..=b.len() {
+            if i == b.len()
+                || b[i] == b'_'
+                || b[i].is_ascii_uppercase() && !b[i - 1].is_ascii_uppercase()
+            {
+                if message.is_match(rest[from..i].trim_matches('_')) {
+                    return true;
+                }
+                from = i;
+            }
+        }
+        false
+    };
     for m in re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)\s*::?\s*\x22").captures_iter(comments) {
         let name = m.get(1).unwrap();
         // The assignment has to be code - the quote is blank there - and the
@@ -191,7 +404,10 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             continue;
         }
         let last = name.as_str().rsplit('.').next().unwrap_or("");
-        if !secret.is_match(last) || message.is_match(last) {
+        let Some(word) = secret.find_iter(last).last() else {
+            continue;
+        };
+        if described(&last[word.end()..]) {
             continue;
         }
         // A column, not a variable: `update password:"***" from users`
@@ -226,6 +442,91 @@ fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut V
             ));
         }
     }
+    // A handle that carries its password, `` `:host:5010:user:password `` -
+    // a symbol, or the same text as a string, which `hopen` takes too and a
+    // host with a `-` in it needs (q 5: `` `:prod-db:5010:svc:pw `` is no
+    // symbol, and `hopen ":localhost:5010:u:p"` dials as the symbol does):
+    // after the port, a user and a password that is not empty (#2738).
+    let symbols =
+        re!(r"`:(?:(?:tcps?://)?[A-Za-z0-9._]*:|unix://)[0-9]+:[A-Za-z0-9._/]+:[A-Za-z0-9._/:]+")
+            .find_iter(code)
+            .map(|m| m.start());
+    let strings = re!(r#"":(?:(?:tcps?://)?[A-Za-z0-9._-]*:|unix://)[0-9]+:[^\s:"]+:[^\s"]+""#)
+        .find_iter(comments)
+        // The whole of one string: its text is blank in the code view.
+        .filter(|m| code[m.start() + 1..m.end() - 1].trim().is_empty())
+        .map(|m| m.start());
+    let mut handles: Vec<usize> = symbols.chain(strings).collect();
+    handles.sort_unstable();
+    for at in handles {
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QX002",
+            "This handle carries its password: a credential in source is in every copy of \
+             it; read it from the environment or a file at startup"
+                .to_string(),
+        ));
+    }
+    // `.z.pw` checking the password it is given against a string literal,
+    // `.z.pw:{[u;p] p~"hunter2"}`: its second argument, by the name the
+    // lambda gives it, on either side of `~`, `=` or `like` (#2738).
+    for m in re!(r"\.z\.pw[ \t]*::?[ \t]*\{").find_iter(code) {
+        if !boundary(code, m.start()) {
+            continue;
+        }
+        let brace = m.end() - 1;
+        let sig = crate::signature(code, source, brace);
+        let given = match sig.slots.get(1) {
+            Some(slot) if sig.named => slot.trim(),
+            _ if sig.named => continue,
+            _ => "y",
+        };
+        if !crate::is_param_name(given) {
+            continue;
+        }
+        let end = matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        let is_given = |text: &str, at: usize| {
+            text[at..].starts_with(given)
+                && boundary(text, at)
+                && !text[at + given.len()..]
+                    .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+        };
+        for lit in re!(r#""((?:\\.|[^"\\])*)""#).captures_iter(&comments[sig.body..end]) {
+            let (start, stop) = (
+                sig.body + lit.get(0).unwrap().start(),
+                sig.body + lit.get(0).unwrap().end(),
+            );
+            let value = lit.get(1).unwrap().as_str();
+            if !value.bytes().any(|b| b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            let before = code[sig.body..start].trim_end();
+            let left = ["~", "=", "like"]
+                .iter()
+                .find_map(|op| before.strip_suffix(op))
+                .map(str::trim_end)
+                .is_some_and(|b| b.len() >= given.len() && is_given(b, b.len() - given.len()));
+            let after = code[stop..end].trim_start();
+            let right = after
+                .strip_prefix(['~', '='])
+                .map(str::trim_start)
+                .is_some_and(|a| is_given(a, 0));
+            if left || right {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    start,
+                    "QX002",
+                    "`.z.pw` checks the password against a string literal: a credential in \
+                     source is in every copy of it; read it from the environment or a file at \
+                     startup"
+                        .to_string(),
+                ));
+            }
+        }
+    }
 }
 
 /// Whether the keyword that ends at `at` is the operand of an iterator -
@@ -252,6 +553,28 @@ fn iterated(code: &str, at: usize) -> bool {
             r"*[@.]['/\\]"
         ))
         .is_match(rest)
+}
+
+/// Whether the `each` or `@'` that ends at `at` takes the function on its
+/// left and a list on its right. Not before a bracket: q reads `abs each[x]`
+/// as `abs` applied to `each[x]`, a projection of `each` - q 5 gives 'type
+/// for `abs each[-1 2]` and `abs@'[-1 2]`, and a projection for `{x}
+/// each[1 2]` (#2929). Nor under an iterator of its own: `abs each':[x]`,
+/// `null each/[x]` and `not each\[01b]` iterate `each`, 'type in q 5, and
+/// without the word they are `abs':`, `null/` and `not\` (#2930).
+fn each_of_left(code: &str, at: usize) -> bool {
+    !code[at..].starts_with(['\'', '/', '\\', ':'])
+        && !code[crate::past_blanks(code, at)..].starts_with('[')
+}
+
+/// Whether the bracket that opens at `open` is `each`'s two arguments, both
+/// given: `each[f;x]` is `f each x`, `each[f;]` a projection, and a third
+/// is 'rank.
+fn each_in_brackets(code: &str, open: usize) -> bool {
+    matching(code, open, b'[', b']').is_some_and(|close| {
+        let args = slots(&code[open + 1..close - 1]);
+        args.len() == 2 && !args[1].trim().is_empty()
+    })
 }
 
 /// Whether the word that ends at `at` is applied to the rest of its
@@ -304,7 +627,11 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     let mut add = |at: usize, code_: &str, detail: String| {
         out.push(Finding::at(path, source, at, code_, detail));
     };
-    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x`.
+    // QR001: `reverse asc x` is `desc x`, and `reverse desc x` is `asc x` -
+    // for a list or a table. Both sorts are stable, so a dictionary or keyed
+    // table with tied values gets their keys the other way round: q 5 gives
+    // 0b for `(reverse asc d)~desc d` with d:`a`b`c!1 1 2, and the message
+    // says so (#2739).
     for m in re!(concat!(r"\breverse", blank!(), r"+(asc|desc)\b")).captures_iter(code) {
         let whole = m.get(0).unwrap();
         if boundary(code, whole.start())
@@ -315,34 +642,46 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
             add(
                 whole.start(),
                 "QR001",
-                format!("`reverse {}` is `{other}`, in one pass", &m[1]),
+                format!(
+                    "`reverse {}` is `{other}`, in one pass; on a dictionary or keyed table \
+                     the two differ in the order of keys whose values tie",
+                    &m[1]
+                ),
             );
         }
     }
     // QR002: an identity lambda under each gives back what it was given.
     // The `each` has to be in the same statement: `id:{x}` and then a
-    // column-0 `'[neg;abs]` is no each at all (#727).
-    for m in re!(concat!(
-        r"\{\s*x\s*\}",
-        blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
-    ))
-    .find_iter(code)
-    {
+    // column-0 `'[neg;abs]` is no each at all (#727). `{x}@'y` is each over
+    // apply, the same each (#2928).
+    for m in re!(concat!(r"\{\s*x\s*\}", blank!(), r"*(each\b|@?')")).captures_iter(code) {
         // And applied: `({x}';1)` holds the derived function itself, a
         // general list on KDB-X, not any argument (#1299).
-        let mut end = m.end();
-        if !m.as_str().ends_with("each") && !m.as_str().ends_with('\'') {
-            end -= code[..end].chars().next_back().map_or(0, char::len_utf8);
-        }
-        if crate::operand_ends(code, comments, end) || code[end..].trim_start().starts_with("::") {
+        let end = m.get(0).unwrap().end();
+        if (&m[1] == "'" && code[end..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, end))
+            || crate::operand_ends(code, comments, end)
+            || code[end..].trim_start().starts_with("::")
+        {
             continue;
         }
         add(
-            m.start(),
+            m.get(0).unwrap().start(),
             "QR002",
             "`{x} each` returns its argument unchanged".into(),
         );
+    }
+    // And `each[{x};y]`, the same call in brackets (#2928).
+    for m in re!(r"\beach[ \t]*\[\s*\{\s*x\s*\}\s*;").find_iter(code) {
+        if boundary(code, m.start())
+            && each_in_brackets(code, m.start() + m.as_str().find('[').unwrap())
+        {
+            add(
+                m.start(),
+                "QR002",
+                "`{x} each` returns its argument unchanged".into(),
+            );
+        }
     }
     // QR003: sorting the distinct items keeps them distinct.
     for m in re!(concat!(
@@ -371,25 +710,67 @@ fn simplifications(path: &str, source: &str, code: &str, comments: &str, out: &m
     // numeric literal. `{x -1}` is not one: a `-` after a space and before a
     // digit is a negative literal, so that is x indexed at -1, and q 5 gives
     // `0N 0N` for `{x -1} each (1 2;3 4)` where `(1 2;3 4)-1` is `(0 1;2 3)`.
+    // The number may be `1e-3`, `.5` or `00:01` (#2937), and the each `@'`
+    // or `each[...;y]` (#2928).
+    const ATOMIC: &str = "Arithmetic is atomic: this applies to the whole list without `each`, \
+                          and faster";
     for m in re!(concat!(
-        r"\{\s*(?:x\s*[-+*%]\s*-?\d[A-Za-z0-9.]*|-?\d[A-Za-z0-9.]*\s*[-+*%]\s*x)\s*\}",
+        r"\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\}",
         blank!(),
-        r"*(?:each\b|'(?:[^:]|$))"
+        r"*(each\b|@?')"
     ))
-    .find_iter(code)
+    .captures_iter(code)
     {
-        if re!(r"^\{\s*x\s+-\d").is_match(m.as_str()) {
+        let whole = m.get(0).unwrap();
+        if re!(r"^\{\s*x\s+-\.?\d").is_match(whole.as_str())
+            || (&m[1] == "'" && code[whole.end()..].starts_with(':'))
+            || (&m[1] != "'" && !each_of_left(code, whole.end()))
+        {
             continue;
         }
-        add(
-            m.start(),
-            "QR004",
-            "Arithmetic is atomic: this applies to the whole list without `each`, and \
-             faster"
-                .into(),
-        );
+        add(whole.start(), "QR004", ATOMIC.into());
+    }
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*(\{\s*(?:x\s*[-+*%]\s*",
+        number!(),
+        "|",
+        number!(),
+        r"\s*[-+*%]\s*x)\s*\})\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if boundary(code, whole.start())
+            && !re!(r"^\{\s*x\s+-\.?\d").is_match(&m[1])
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), "QR004", ATOMIC.into());
+        }
     }
 }
+
+/// The words a comment labels a line of documentation with, before a colon:
+/// `/ usage: {x} 1` shows a call, and defines no `usage`.
+const DOC_LABELS: &[&str] = &[
+    "e.g",
+    "eg",
+    "example",
+    "examples",
+    "i.e",
+    "ie",
+    "note",
+    "notes",
+    "return",
+    "returns",
+    "see",
+    "signature",
+    "syntax",
+    "usage",
+];
 
 /// #11: things left in q that were never meant to ship. Both are taste rather
 /// than defects, so both are `styleq` - off in the default.
@@ -442,7 +823,14 @@ fn leftovers(path: &str, source: &str, comments: &str, foreign: &[usize], out: &
                 || re!(r"^[A-Za-z][A-Za-z'-]*(?: [A-Za-z][A-Za-z'-]*){2}")
                     .is_match(line[c..].trim())
         });
-        if in_comment(name.start()) && !prose {
+        // And a label of the documentation is no name being defined:
+        // `/ Example: {x+1} each 1 2 3`, `/ Returns: {[a;b] a+b}`,
+        // `/ e.g: {x}` (#2926). The words a comment labels its lines with,
+        // or any capitalised word with a blank after its colon.
+        let label = DOC_LABELS.contains(&name.as_str().to_ascii_lowercase().as_str())
+            || (re!(r"^[A-Z][a-z]+$").is_match(name.as_str())
+                && source[..brace].ends_with([' ', '\t']));
+        if in_comment(name.start()) && !prose && !label {
             out.push(Finding::at(
                 path,
                 source,
@@ -527,9 +915,11 @@ fn duplicate_columns(path: &str, source: &str, code: &str, out: &mut Vec<Finding
     // `select a,a from t` has columns a and a1, and so do `select max a,min a`
     // and `select a,max a`, each item named as `column_name` says. A select's
     // by list is renamed the same way - `select a by b,b` groups by b and b1 -
-    // where update's by names no column and is left alone.
+    // where update's by names no column and is left alone. An exec's list
+    // names the keys of the dictionary it returns, renamed alike: q 5
+    // `key exec a,a from t` is `a`a1 (#2701).
     let mut strings = InString::new(code);
-    for q in re!(r"\b(?:select|update)\b").find_iter(code) {
+    for q in re!(r"\b(?:select|update|exec)\b").find_iter(code) {
         if !crate::boundary(code, q.start()) || strings.at(q.start()) {
             continue;
         }
@@ -1038,12 +1428,16 @@ fn unreachable(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// its assignments in the file is - a table literal, a `flip`, a `select`,
 /// or an `update` or `delete` from something other than a symbol - and
 /// nothing `set`s it.
+///
+/// A control statement's body never yields a value, so an update there is
+/// thrown away too, wherever the statement sits: q 5
+/// `{[] if[1b; update a:0 from t]; t}[]` is `t` unchanged (#2686). So is a
+/// script's own statement ended by `;`: `update a:0 from t;` (#2687).
 fn discarded_query(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     if !re!(r"(?:update|delete)\b").is_match(code) {
         return;
     }
-    let mut verdicts: std::collections::HashMap<(Option<usize>, &str), bool> =
-        std::collections::HashMap::new();
+    let mut verdicts: Verdicts = std::collections::HashMap::new();
     for (brace, _) in code.match_indices('{') {
         let Some(end) = matching(code, brace, b'{', b'}') else {
             continue;
@@ -1052,69 +1446,125 @@ fn discarded_query(path: &str, source: &str, code: &str, out: &mut Vec<Finding>)
         if sig.body > end - 1 {
             continue;
         }
+        let params: Vec<&str> = if sig.named {
+            sig.slots
+                .iter()
+                .flat_map(|p| crate::pattern_names(p))
+                .collect()
+        } else {
+            vec!["x", "y", "z"]
+        };
+        let lambda = Some((brace, end, &params[..]));
         let body = &code[sig.body..end - 1];
         let statements = slots(body);
         // The last statement is the lambda's value, and so not discarded.
         for s in &statements[..statements.len() - 1] {
-            let t = s.trim_start();
-            let at = sig.body + (t.as_ptr() as usize - body.as_ptr() as usize);
-            let Some(kw) = re!(r"^(?:update|delete)\b").find(t) else {
-                continue;
-            };
-            let Some(from) = top_level_word(t, re!(r"\bfrom\b")) else {
-                continue;
-            };
-            let rest = &t[from.end()..];
-            let operand = top_level_word(rest, re!(r"\bwhere\b"))
-                .map_or(rest, |w| &rest[..w.start()])
-                .trim();
-            let name = if operand.starts_with("([")
-                && matching(operand, 0, b'(', b')') == Some(operand.len())
-            {
-                None
-            } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(operand) && !reserved(operand) {
-                Some(operand)
-            } else {
-                continue;
-            };
-            if let Some(name) = name {
-                let params: Vec<&str> = if sig.named {
-                    sig.slots
-                        .iter()
-                        .flat_map(|p| crate::pattern_names(p))
-                        .collect()
-                } else {
-                    vec!["x", "y", "z"]
-                };
-                if params.contains(&name) {
-                    continue;
-                }
-                let local = !name.contains('.')
-                    && assignments(code, name, brace..end)
-                        .any(|(a, _)| crate::enclosing_brace(code, a) == Some(brace));
-                let scope = local.then_some((brace, end));
-                let table = *verdicts
-                    .entry((scope.map(|s| s.0), name))
-                    .or_insert_with(|| holds_table(code, name, scope));
-                if !table {
-                    continue;
-                }
+            discarded_statement(path, source, code, s, lambda, &mut verdicts, out);
+        }
+        for s in &statements {
+            for inner in control_bodies(s) {
+                discarded_statement(path, source, code, inner, lambda, &mut verdicts, out);
             }
-            let what = name.map_or("a table literal".to_string(), |n| format!("`{n}`"));
-            out.push(Finding::at(
-                path,
-                source,
-                at,
-                "QB022",
-                format!(
-                    "This {} changes a copy of {what} and the statement's value is discarded, \
-                     so nothing changes: assign the result, or name the table as a symbol to \
-                     change it in place",
-                    kw.as_str()
-                ),
-            ));
         }
     }
+    // A script's statements: one that starts a line outside every lambda and
+    // is ended by a `;`. It runs on across indented lines, as q reads it.
+    for m in re!(r"(?m)^(?:update|delete)\b").find_iter(code) {
+        if crate::enclosing_brace(code, m.start()).is_some() {
+            continue;
+        }
+        let rest = &code[m.start()..];
+        let span = re!(r"\n\S").find(rest).map_or(rest, |n| &rest[..n.start()]);
+        let parts = slots(span);
+        if parts.len() > 1 {
+            discarded_statement(path, source, code, parts[0], None, &mut verdicts, out);
+        }
+    }
+}
+
+type Verdicts<'a> = std::collections::HashMap<(Option<usize>, &'a str), bool>;
+
+/// The statements of each `if`, `do` and `while` body in statement `s`, the
+/// condition apart, and of those nested in them.
+fn control_bodies(s: &str) -> Vec<&str> {
+    let t = s.trim_start();
+    let Some(head) = re!(r"^(?:if|do|while)[ \t]*\[").find(t) else {
+        return vec![];
+    };
+    let open = head.end() - 1;
+    let Some(close) = matching(t, open, b'[', b']') else {
+        return vec![];
+    };
+    let mut out = vec![];
+    for slot in slots(&t[open + 1..close - 1]).into_iter().skip(1) {
+        out.push(slot);
+        out.extend(control_bodies(slot));
+    }
+    out
+}
+
+/// QB022 for one statement `s`, a slice of `code` whose value nothing
+/// takes: in a lambda (its brace, end and parameters) or at the file's root.
+fn discarded_statement<'a>(
+    path: &str,
+    source: &str,
+    code: &'a str,
+    s: &'a str,
+    lambda: Option<(usize, usize, &[&str])>,
+    verdicts: &mut Verdicts<'a>,
+    out: &mut Vec<Finding>,
+) {
+    let t = s.trim_start();
+    let at = t.as_ptr() as usize - code.as_ptr() as usize;
+    let Some(kw) = re!(r"^(?:update|delete)\b").find(t) else {
+        return;
+    };
+    let Some(from) = top_level_word(t, re!(r"\bfrom\b")) else {
+        return;
+    };
+    let rest = &t[from.end()..];
+    let operand = top_level_word(rest, re!(r"\bwhere\b"))
+        .map_or(rest, |w| &rest[..w.start()])
+        .trim();
+    let name =
+        if operand.starts_with("([") && matching(operand, 0, b'(', b')') == Some(operand.len()) {
+            None
+        } else if re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*$").is_match(operand) && !reserved(operand) {
+            Some(operand)
+        } else {
+            return;
+        };
+    if let Some(name) = name {
+        let mut scope = None;
+        if let Some((brace, end, params)) = lambda {
+            if params.contains(&name) {
+                return;
+            }
+            let local = !name.contains('.')
+                && assignments(code, name, brace..end)
+                    .any(|(a, _)| crate::enclosing_brace(code, a) == Some(brace));
+            scope = local.then_some((brace, end));
+        }
+        let table = *verdicts
+            .entry((scope.map(|s| s.0), name))
+            .or_insert_with(|| holds_table(code, name, scope));
+        if !table {
+            return;
+        }
+    }
+    let what = name.map_or("a table literal".to_string(), |n| format!("`{n}`"));
+    out.push(Finding::at(
+        path,
+        source,
+        at,
+        "QB022",
+        format!(
+            "This {} changes a copy of {what} and the statement's value is discarded, \
+             so nothing changes: assign the result, or name the table as a symbol to \
+             change it in place",
+            kw.as_str()
+        ),
+    ));
 }
 
 /// Each assignment of `name` in masked code `within` a range, `name:` or `name::`, outside a
@@ -1184,13 +1634,14 @@ fn holds_table(code: &str, name: &str, scope: Option<(usize, usize)>) -> bool {
 /// Only where the other side cannot be untyped. `()~key p` is how q asks
 /// whether a path exists - `key` of a missing file is `()` - and a name
 /// set to `()` as a sentinel is rightly compared with it, so a name or an
-/// expression of unknown type is left alone. What is reported is `where`,
-/// `til`, `getenv` or `read1` - always a typed list - or a local of the
-/// lambda whose every assignment is one of those or a typed literal: a
-/// string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of an atom.
+/// expression of unknown type is left alone. What is reported is a whole
+/// call of `til`, `getenv` or `read1` - always a typed list (`typed_call`) -
+/// or a local of the lambda whose every assignment is one of those or a
+/// typed literal: a string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of
+/// an atom. Not `where`: of a dictionary it is the keys, and q 5
+/// `()~where ()!()` is 1b (#2684).
 fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let b = code.as_bytes();
-    let typed_start = re!(r"^(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.]|$)");
     for (at, _) in code.match_indices('~') {
         // `()` read in `comments` too, where a string is still there:
         // `("")~x` is no `()`. Nor is the key list of `()!()`.
@@ -1244,7 +1695,7 @@ fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 continue;
             };
         let operand = operand.trim_start();
-        let typed = typed_start.is_match(operand)
+        let typed = typed_call(operand)
             || re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(operand)
                 .filter(|n| {
@@ -1266,6 +1717,32 @@ fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 .into(),
         ));
     }
+}
+
+/// Whether `operand` is, as a whole, one call of `til`, `getenv` or `read1`.
+/// The first word alone says nothing: q 5 `()~til[x]#y` is 1b for `y` `()`,
+/// as is `()~til each ()` (#2685). So a bracket call has to end the
+/// expression, and a juxtaposed one has to be given its argument - which
+/// then runs to the end, q reading right to left - not an iterator.
+fn typed_call(operand: &str) -> bool {
+    let Some(name) = re!(r"^(?:til|getenv|read1)\b").find(operand) else {
+        return false;
+    };
+    let rest = &operand[name.end()..];
+    let arg = rest.trim_start_matches([' ', '\t']);
+    if arg.starts_with('[') {
+        let open = operand.len() - arg.len();
+        let Some(close) = matching(operand, open, b'[', b']') else {
+            return false;
+        };
+        let after = operand[close..].trim_start_matches([' ', '\t']);
+        return after.is_empty() || after.starts_with([';', ')', ']', '}', '\n', '\r']);
+    }
+    if arg.len() == rest.len() && !arg.starts_with(['(', '"', '`']) {
+        return false;
+    }
+    re!(r#"^(?:-?[0-9.]|[("`]|\.?[A-Za-z])"#).is_match(arg)
+        && !re!(r"^(?:each|peach|over|scan|prior)\b").is_match(arg)
 }
 
 /// Whether `name`, read at `at`, is a local of the lambda around it whose
@@ -1302,9 +1779,10 @@ fn typed_local(source: &str, code: &str, comments: &str, at: usize, name: &str) 
         let stop = text.find([';', '\n', '}']).unwrap_or(text.len());
         let v = text[..stop].trim();
         if !re!(
-            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*")|(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.].*)?)$"#
+            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*"))$"#
         )
         .is_match(v)
+            && !typed_call(v)
         {
             return false;
         }
@@ -1323,13 +1801,77 @@ fn past_blanks_inline(text: &str, at: usize) -> usize {
 /// `null getenv`UNSET` is `` `boolean$() ``, and `if[null getenv`X;...]` is
 /// 'type whether or not X is set. `all null` or `any null` in front reduces
 /// it to an atom, and is left alone.
+///
+/// Only where the vector is the condition, which is where q refuses it:
+/// KDB-X runs `r:null getenv`X`, `sum null getenv`X` and
+/// `$[1b;null getenv`X;2]`, and `all[null getenv`X]`, `all (null getenv`X)`
+/// and `all@null getenv`X` as it runs `all null getenv`X` (#2896, #2897).
+/// `null@getenv`X` is the same `null`, and 'type in `if` too (#2898).
+///
+/// `null e` as such a condition is reported too where `e` is a lambda's
+/// local that `getenv` alone assigns - `e:getenv`X; if[null e;...]`, the
+/// usual way to read a variable once, and the same 'type in q 5 (#2744).
+/// Only of the whole of it: `null e 0` is an atom.
 fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
-    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(][ \t]*)getenv\b").find_iter(code) {
-        let before = code[..m.start()].trim_end_matches([' ', '\t']);
-        let reduced = ["all", "any"]
-            .iter()
-            .any(|w| before.ends_with(w) && boundary(code, before.len() - w.len()));
-        if !boundary(code, m.start()) || reduced {
+    let message = "getenv gives a string, so null tests each character and gives a vector - \
+                   empty when the variable is unset - which if and $[...] refuse with 'type: \
+                   `\"\"~getenv x` or `0=count getenv x` tests an unset variable";
+    let mut held = std::collections::HashSet::new();
+    for m in re!(r"([A-Za-z][A-Za-z0-9_]*)[ \t]*:[ \t]*getenv\b[ \t]*[^ \t;\])}\r\n]")
+        .captures_iter(code)
+    {
+        let name = m.get(1).unwrap();
+        let Some(brace) = crate::enclosing_brace(code, name.start()) else {
+            continue;
+        };
+        if !boundary(code, name.start()) || !held.insert((brace, name.as_str())) {
+            continue;
+        }
+        let end = crate::matching(code, brace, b'{', b'}').unwrap_or(code.len());
+        // Occurrences of the name in this lambda and not in one inside it.
+        let own = |at: usize| {
+            boundary(code, at)
+                && !code[at + name.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+                && crate::enclosing_brace(code, at) == Some(brace)
+        };
+        let mentions: Vec<usize> = code[brace..end]
+            .match_indices(name.as_str())
+            .map(|(i, _)| brace + i)
+            .filter(|&at| own(at))
+            .collect();
+        // Anything else assigned to it and it is no longer known a string.
+        let always = mentions.iter().all(|&at| {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            match rest.strip_prefix(':') {
+                Some(value) => value.trim_start_matches([' ', '\t']).starts_with("getenv"),
+                None => !re!(r"^(?:\[[^\]]*\][ \t]*)?[-+*%&|^,#_!$?@.~=<>]?:").is_match(rest),
+            }
+        });
+        if !always {
+            continue;
+        }
+        for &at in mentions.iter().filter(|&&at| at > name.start()) {
+            let rest = code[at + name.len()..].trim_start_matches([' ', '\t']);
+            let Some(null) = code[..at]
+                .trim_end_matches([' ', '\t'])
+                .strip_suffix("null")
+                .filter(|before| boundary(code, before.len()))
+            else {
+                continue;
+            };
+            if condition(code, null.len()) && rest.starts_with([';', ']']) {
+                out.push(Finding::at(
+                    path,
+                    source,
+                    null.len(),
+                    "QT036",
+                    message.into(),
+                ));
+            }
+        }
+    }
+    for m in re!(r"null(?:[ \t]+|[ \t]*[\[(@][ \t]*)getenv\b").find_iter(code) {
+        if !boundary(code, m.start()) || !condition(code, m.start()) {
             continue;
         }
         out.push(Finding::at(
@@ -1337,16 +1879,74 @@ fn null_getenv(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             source,
             m.start(),
             "QT036",
-            "getenv gives a string, so null tests each character and gives a vector - empty \
-             when the variable is unset - which if and $[...] refuse with 'type: \
-             `\"\"~getenv x` or `0=count getenv x` tests an unset variable"
-                .into(),
+            message.into(),
         ));
     }
 }
 
+/// Whether the expression that starts at `at` is, still a vector, what an
+/// `if`, a `while`, a `do` or a `$[...]` tests: it leads a condition slot,
+/// with nothing in front but a parenthesis, `not`, or an operand joined by
+/// `and`, `or`, `&` or `|`, none of which reduces a vector (KDB-X:
+/// `if[not null getenv`X;...]` and `if[1b and null getenv`X;...]` are
+/// 'type). Any other word in front may reduce it, as `all` and `count` do.
+fn condition(code: &str, at: usize) -> bool {
+    let bytes = code.as_bytes();
+    let (mut depth, mut slot, mut later, mut i) = (0usize, None, 0usize, at);
+    // Back to the bracket around `at`, counting the slots before it.
+    let open = loop {
+        if i == 0 {
+            return false;
+        }
+        i -= 1;
+        match bytes[i] {
+            b')' | b']' | b'}' => depth += 1,
+            b'(' | b'[' | b'{' if depth > 0 => depth -= 1,
+            // An item of a list, or a statement of a lambda.
+            b'(' if slot.is_some() => return false,
+            b'{' => return false,
+            b'[' => break i,
+            b';' if depth == 0 => {
+                slot.get_or_insert(i + 1);
+                later += 1;
+            }
+            _ => {}
+        }
+    };
+    let front = &code[slot.unwrap_or(open + 1)..at];
+    if !re!(
+        r"^(?:\s|\(|not\b|(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*)[ \t]*(?:[&|]|\b(?:and|or)\b))*$"
+    )
+    .is_match(front)
+    {
+        return false;
+    }
+    let word = code[..open].trim_end_matches([' ', '\t']);
+    if ["if", "while", "do"]
+        .iter()
+        .any(|w| word.ends_with(w) && boundary(code, word.len() - w.len()))
+    {
+        return later == 0;
+    }
+    // `$[c;a;c2;b;d]` tests every other slot, and never the last.
+    word.ends_with('$')
+        && later % 2 == 0
+        && matching(code, open, b'[', b']')
+            .is_some_and(|close| later + 1 < slots(&code[open + 1..close - 1]).len())
+}
+
 /// The columns a kdb+ database is partitioned by: `.Q.pf` is one of these.
 const PARTITION_COLUMNS: [&str; 4] = ["date", "month", "year", "int"];
+/// The keywords whose answer for one row depends on the rows beside it - the
+/// aggregates, the running and moving ones, the sorts, `fby` and the row
+/// number `i` - so a where constraint using one cannot move past another.
+const OVER_ROWS: &[&str] = &[
+    "all", "any", "asc", "avg", "avgs", "cor", "count", "cov", "deltas", "desc", "dev", "differ",
+    "distinct", "ema", "fby", "fills", "first", "i", "iasc", "idesc", "last", "mavg", "max",
+    "maxs", "mcount", "mdev", "med", "min", "mins", "mmax", "mmin", "msum", "next", "prd", "prds",
+    "prev", "rank", "ratios", "reverse", "rotate", "scov", "sdev", "sum", "sums", "svar", "var",
+    "wavg", "wsum", "xprev", "xrank",
+];
 
 /// The atomic monadic builtins: each applies item by item to a list, a
 /// dictionary or a table, so `f each x` gives what `f x` gives - one call
@@ -1394,6 +1994,16 @@ fn performance(path: &str, source: &str, code: &str, comments: &str, out: &mut V
 /// Never for `update` or `delete`: q refuses both on a partitioned table
 /// (`'par` in KDB-X), so the table they filter is in memory and the order
 /// costs nothing the rule claims.
+///
+/// A constraint is read through one pair of parentheses around the whole of
+/// it, `(date=d)`, which q reads as it does the bare one. One with the
+/// column on the right, `d=date`, is reported too and says so: q narrows the
+/// partitions only for a constraint that starts with the column, so moved
+/// first as it is written it is slower still - over 12 date partitions of
+/// 300k rows, 50 runs each: `where date=d, sym=s` 6 ms, `where sym=s,
+/// d=date` 45 ms, `where d=date, sym=s` 89 ms (#2741). Not where the file
+/// has a local or a parameter of the column's name, which is then what the
+/// right of the comparison may be.
 fn partition_filter_late(
     path: &str,
     source: &str,
@@ -1404,6 +2014,8 @@ fn partition_filter_late(
     let mut strings = InString::new(code);
     // `select ... from select ... where` finds the inner where from both.
     let mut reported = std::collections::HashSet::new();
+    // Which of `PARTITION_COLUMNS` the file also has as a local, if asked.
+    let locals = std::cell::OnceCell::new();
     let mut froms = vec![];
     for q in re!(r"(?:select|exec|update|delete)\b").find_iter(code) {
         if !crate::boundary(code, q.start())
@@ -1416,6 +2028,15 @@ fn partition_filter_late(
         let Some(from) = top_level_word(rest, re!(r"\bfrom\b")) else {
             continue;
         };
+        // A table literal or a query in parentheses is a table in memory,
+        // as `update`'s is: nothing is read partition by partition (#2924).
+        let table = rest[from.end()..].trim_start();
+        if table
+            .strip_prefix('(')
+            .is_some_and(|inner| re!(r"^\s*(?:\[|(?:select|exec|update|delete)\b)").is_match(inner))
+        {
+            continue;
+        }
         froms.push(q.end() + from.end());
     }
     // Each query's phrase ends where `crate::phrase_end` says, and its where
@@ -1443,12 +2064,51 @@ fn partition_filter_late(
             None => phrase,
         };
         let constraints = items(phrase);
-        fn tests_partition(c: &str) -> Option<&str> {
-            re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)")
-                .captures(c)
-                .map(|m| m.get(1).unwrap().as_str())
-        }
-        let Some((late, column)) = constraints
+        // Each without the parentheses around the whole of it, if it has them.
+        let bare: Vec<&str> = constraints
+            .iter()
+            .map(|c| {
+                let t = c.trim();
+                let closes_last = t.starts_with('(')
+                    && t.ends_with(')')
+                    && t.bytes()
+                        .scan(0i32, |depth, b| {
+                            *depth += i32::from(b == b'(') - i32::from(b == b')');
+                            Some(*depth)
+                        })
+                        .position(|depth| depth == 0)
+                        == Some(t.len() - 1);
+                if closes_last { &t[1..t.len() - 1] } else { c }
+            })
+            .collect();
+        // The column a constraint tests, and whether from the right.
+        let tests_partition = |c: &str| -> Option<(&'static str, bool)> {
+            let column = |name: &str| PARTITION_COLUMNS.iter().position(|p| *p == name);
+            if let Some(m) =
+                re!(r"^\s*(date|month|year|int)\s*(?:=|<>|<=|>=|<|>|\bwithin\b|\bin\b)").captures(c)
+            {
+                return Some((PARTITION_COLUMNS[column(&m[1])?], false));
+            }
+            let i = column(
+                &re!(concat!(
+                    r"^\s*(?:\.?[A-Za-z][A-Za-z0-9_.]*|-?[0-9][0-9A-Za-z.:]*)\s*",
+                    r"(?:=|<>|<=|>=|<|>)\s*(date|month|year|int)\s*$"
+                ))
+                .captures(c)?[1],
+            )?;
+            let local = locals.get_or_init(|| {
+                PARTITION_COLUMNS.map(|p| {
+                    re!(r"\b(date|month|year|int)\s*:|\{\s*\[([^\]]*)\]")
+                        .captures_iter(code)
+                        .any(|m| match m.get(2) {
+                            Some(slots) => slots.as_str().split(';').any(|s| s.trim() == p),
+                            None => &m[1] == p,
+                        })
+                })
+            });
+            (!local[i]).then_some((PARTITION_COLUMNS[i], true))
+        };
+        let Some((late, (column, flipped))) = bare
             .iter()
             .enumerate()
             .skip(1)
@@ -1457,7 +2117,7 @@ fn partition_filter_late(
             continue;
         };
         let offset = |c: &str| c.as_ptr() as usize - code.as_ptr() as usize;
-        let plain = constraints[..late].iter().all(|c| {
+        let plain = bare[..late].iter().all(|c| {
             let at = offset(c);
             let kept = &comments[at..at + c.len()];
             !PARTITION_COLUMNS.iter().any(|p| {
@@ -1466,10 +2126,25 @@ fn partition_filter_late(
                     .any(|m| m.as_str() == *p)
             }) && plain_comparison(kept)
         });
-        if !plain || !reported.insert(offset(constraints[late])) {
+        // And the late one reads no more than its own row: `date=max date`
+        // after `sym=s` is the last date `s` has, and first it is the last
+        // of every row - q 5 gives one row and none for the two (#2923).
+        let row_wise = flipped || {
+            let c = bare[late];
+            let own = re!(r"^\s*[a-z]+").find(c).map_or(0, |m| m.end());
+            !re!(r"[A-Za-z][A-Za-z0-9_.]*")
+                .find_iter(&c[own..])
+                .any(|m| PARTITION_COLUMNS.contains(&m.as_str()) || OVER_ROWS.contains(&m.as_str()))
+        };
+        if !plain || !row_wise || !reported.insert(offset(constraints[late])) {
             continue;
         }
         let first = constraints[0].trim();
+        let advice = if flipped {
+            format!("write the constraint with `{column}` on the left and put it first")
+        } else {
+            format!("put the `{column}` constraint first")
+        };
         out.push(Finding::at(
             path,
             source,
@@ -1477,8 +2152,7 @@ fn partition_filter_late(
             "QV001",
             format!(
                 "`{column}` is constrained after `{first}`: on a table partitioned by {column} \
-                 q applies `{first}` in every partition before it narrows them - put the \
-                 `{column}` constraint first"
+                 q applies `{first}` in every partition before it narrows them - {advice}"
             ),
         ));
     }
@@ -1536,35 +2210,53 @@ fn plain_comparison(c: &str) -> bool {
 /// see `ATOMIC_MONADS` for what was measured. `count each`, `string each`
 /// and the rest that are not atomic are not reported.
 fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
+    let mut add = |at: usize, name: &str| {
+        debug_assert!(ATOMIC_MONADS.contains(&name));
+        out.push(Finding::at(
+            path,
+            source,
+            at,
+            "QV002",
+            format!(
+                "`{name}` is atomic: `{name} x` applies it to every item in one call, where \
+                 `each` makes one call per item"
+            ),
+        ));
+    };
+    // `abs each x`, `abs'[x]`, and each over apply, `abs@'x` (#2927).
     for m in re!(concat!(
         r"\b(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)",
         blank!(),
-        r"*(?:each\b|'\[)"
+        r"*(each\b|'\[|@')"
     ))
     .captures_iter(code)
     {
         let name = m.get(1).unwrap();
-        if !crate::boundary(code, name.start()) {
-            continue;
+        if crate::boundary(code, name.start())
+            && (&m[2] == "'[" || each_of_left(code, m.get(0).unwrap().end()))
+        {
+            add(name.start(), name.as_str());
         }
-        debug_assert!(ATOMIC_MONADS.contains(&name.as_str()));
-        out.push(Finding::at(
-            path,
-            source,
-            name.start(),
-            "QV002",
-            format!(
-                "`{0}` is atomic: `{0} x` applies it to every item in one call, where `each` \
-                 makes one call per item",
-                name.as_str()
-            ),
-        ));
+    }
+    // `each[abs;x]`, the same call in brackets.
+    for m in re!(concat!(
+        r"\beach[ \t]*\[\s*",
+        r"(abs|neg|sqrt|exp|log|floor|ceiling|not|null|signum|reciprocal)\s*;"
+    ))
+    .captures_iter(code)
+    {
+        let whole = m.get(0).unwrap();
+        if crate::boundary(code, whole.start())
+            && each_in_brackets(code, whole.start() + whole.as_str().find('[').unwrap())
+        {
+            add(whole.start(), &m[1]);
+        }
     }
 }
 
-/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while` copies
-/// all of `r` on every pass, so the loop takes time quadratic in its count.
-/// Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
+/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while`, or in a
+/// `while`'s condition, copies all of `r` on every pass, so the loop takes
+/// time quadratic in its count. Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
 /// 205 and 818 ms, against 2.5, 5.5 and 11 ms for `r,:til 10`, which
 /// appends in place, and for `raze f each`.
 ///
@@ -1584,13 +2276,20 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             continue;
         };
         let body = &code[open + 1..close - 1];
-        // The count or condition comes first, then the body.
+        // The count or condition comes first, then the body. A `do`'s count
+        // runs once; a `while`'s condition runs on every pass, as its body
+        // does, and `while[n>count r:r,i; ...]` copies `r` on each (#2944).
         let Some(semi) = first_at_depth_zero(body, b';') else {
             continue;
         };
-        let start = open + 1 + semi + 1;
-        // Names the body has given a value not joined from themselves.
-        let mut fresh = std::collections::HashSet::new();
+        let in_body = open + 1 + semi + 1;
+        let start = if l.as_str().starts_with("while") {
+            open + 1
+        } else {
+            in_body
+        };
+        // Each assignment, and whether it joins its name to more.
+        let mut assigned = vec![];
         let mut lambdas = LambdaDepth::new(code, start);
         for a in
             re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
@@ -1600,23 +2299,41 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             if !crate::boundary(code, at) || strings.at(at) || lambdas.inside(at) {
                 continue;
             }
-            // Directly after a `:` is a compound or nested assignment.
-            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
-            if !joins_itself(rhs, name.as_str()) {
-                fresh.insert(name.as_str());
+            // In a query's phrase `p:p,0` names a column, and its `,` starts
+            // the next one: q 5 gives `select p:p,0 by sym from t` the
+            // columns `p` and `x`, joined to nothing (#2925).
+            if crate::query_clause(code, at).is_some() {
                 continue;
             }
-            if !fresh.contains(name.as_str()) && reported.insert(at) {
+            // Directly after a `:` is a compound or nested assignment.
+            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
+            assigned.push((at, name.as_str(), joins_itself(rhs, name.as_str())));
+        }
+        // Names the loop has given a value not joined from themselves. The
+        // condition comes after the body on every pass but the first, so
+        // what the body gives a fresh value is fresh there too.
+        let mut fresh = std::collections::HashSet::new();
+        let after_body: std::collections::HashSet<&str> = assigned
+            .iter()
+            .filter(|(at, _, joins)| *at >= in_body && !joins)
+            .map(|(_, name, _)| *name)
+            .collect();
+        for (at, name, joins) in assigned {
+            if !joins {
+                fresh.insert(name);
+                continue;
+            }
+            let reset = fresh.contains(name) || (at < in_body && after_body.contains(name));
+            if !reset && reported.insert(at) {
                 out.push(Finding::at(
                     path,
                     source,
                     at,
                     "QV003",
                     format!(
-                        "Assigning `{0}` from `{0}` joined to more copies all of `{0}` on every \
-                         pass of the loop, so it takes time quadratic in its count: `{0},:` \
-                         appends in place",
-                        name.as_str()
+                        "Assigning `{name}` from `{name}` joined to more copies all of `{name}` \
+                         on every pass of the loop, so it takes time quadratic in its count: \
+                         `{name},:` appends in place"
                     ),
                 ));
             }

@@ -13,7 +13,9 @@
 // at most `lim` partitions spread over the whole range - those on disk
 // (`.Q.PV`), a `.Q.view` hiding none of them (#2533) - each in the
 // directory q loaded it from (`.Q.pd`, so any segmenting is followed,
-// #1977), and from every
+// #1977) and for every table directory it holds, not only those of q's own
+// list (`.Q.pt`, the newest partition's: a table that one lacks still has
+// its symbols in the file, #3050), and from every
 // splayed table in the root: each column's distinct indexes over them is
 // its share, and each partition's largest index is how big the file was,
 // at least, when it was written - an enumeration only ever appends. A null
@@ -37,6 +39,7 @@ export const SYM_INSPECT = [
   " dm:fs where{@[{11h=type get x};x;0b]}each` sv'r,/:fs;",
   " m:\"j\"$lim;at:$[m>=count pv;til count pv;distinct\"j\"$(til m)*(count[pv]-1)%m-1];s:pv at;",
   ` pd:@[get;\`.Q.PD;{@[{.Q.pd};::;()]}];sd:${PARTITION_DIRS}[r;$[count[pd]=count pv;pd at;()];s];`,
+  " pt:distinct pt,raze{k:key x;$[11h=type k;k;`$()]}each sd;",
   " o:(fs except dm)where{@[{`.d in key x};x;0b]}each` sv'r,/:fs except dm;",
   " enc:{[dm;d] cs:@[{(),get` sv x,`.d};d;`$()];k:{[dm;x]@[{[dm;x]v:get x;v:$[(type[v]>=77h)&count v;first v;v];$[type[v]within 20 76h;$[(key v)in dm;key v;`];`]}[dm];x;`]}[dm]each` sv'd,/:cs;(cs;k)}[dm];",
   " one:{[enc;p;t;d] e:enc d;w:where not null e 1;([] part:(count w)#p;tbl:(count w)#t;col:e[0]w;dom:e[1]w;ix:{v:get` sv x,y;\"j\"$$[type[v]>=77h;raze v;v]}[d]each e[0]w)};",

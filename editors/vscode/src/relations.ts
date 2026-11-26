@@ -141,6 +141,7 @@ const DYNAMIC: Record<string, string> = {
   sv: "a name built from parts",
   set: "set into a computed name",
   load: "a script loaded by a computed path",
+  namespace: "a switch to a computed context",
 };
 
 /// The rows of the view for `graph`: the files the document depends on, the

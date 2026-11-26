@@ -19,25 +19,40 @@ types are chosen in this order:
    the current line.
 2. A line at column 0 of the file: `/ @servertypes hdb`. A comment after the
    types is ignored. `/ @servertypes none` sends the file's queries to the
-   gateway itself.
+   gateway itself. A query saved from such a file keeps the line, so its
+   runs, scheduled exports and dashboard tiles go to the same types.
 3. The process's own server types.
 
+Server types are q names: one that is not (`hdb-eu`, `2hdb`) is named and
+refused, and a file whose line holds one sends none of its queries.
+
 Several statements are joined into one string, so a server in TorQ's
-read-only mode still accepts it. `.gw.syncexec` defers its reply on kdb+
+read-only mode still accepts it; with a `\d` among them they go as a list
+of strings valued in turn, so a function defined after the `\d` lands in
+its namespace. `.gw.syncexec` defers its reply on kdb+
 3.6 and later, so the call is sent as a plain string and q-lint formats the
 value, as in direct evaluation.
 
 Code that calls the gateway's own API or reads its state - any name in `.gw`
-or `.dataaccess`, such as `.gw.servers` - is sent as written. The history
-keeps the call as sent, and a rerun does not wrap it twice.
+or `.dataaccess`, such as `.gw.servers`, or the state every TorQ process
+keeps in `.servers`, `.clients`, `.timer` and `.kxdash` - is sent as
+written: `select from .servers.SERVERS` reads the gateway's own discovery.
+A selection is read statement by statement, so the gateway's own statements
+(and those tied to them by a name, `count t` under `t:.gw.syncexec[...]`)
+go as written and the rest through `.gw.syncexec`. The history keeps the
+call as sent, and a rerun does not wrap it twice.
 
 Dashboards, scheduled exports, Query a Tag, Compare Query, Watch Query, the
 REPL, the Interactive Window, Smart Send, notebook cells and live values,
-the agent tool, Copy Value as JSON and SQL all route through the gateway. A
+the agent tool, Copy Value as JSON and SQL all route through the gateway;
+a code cell, Smart Send and Copy Value as JSON use the server types their
+file names. A
 drill-down, wrangle step or cell edit goes to the server types its result
 came from. Features that evaluate inside q-lint's own lambda (Run Query
-Asynchronously, snapshots, Explain aj Match, Benchmark, Time Lines, the Join
-Assistant) refuse gateway-routed code rather than run it on the gateway.
+Asynchronously, snapshots, Explain aj Match, Benchmark, Time Lines, Profile
+Functions, the Join Assistant) refuse gateway-routed code rather than run it
+on the gateway. The Process Explorer lists the gateway's own names, so its
+**Preview** and **Table Templates...** read the gateway's tables.
 
 `q-lint.connection.torqGateway.enable` off sends every query as written.
 
@@ -87,7 +102,10 @@ is sent to any process.
   `q-lint.tickerplant.stream.enable`) subscribes to a table with
   ``.u.sub[table;`]`` on a connection of its own and shows updates live in a
   grid, newest first, keeping `q-lint.tickerplant.stream.rows` rows.
-  Closing the grid unsubscribes.
+  Closing the grid unsubscribes. While it waits for the table list or for
+  `.u.sub`, a notification says so; its Cancel, **Abort Current Query** or
+  **Disconnect** gives up, and the wait is bounded by the process's query
+  timeout (60 seconds with none).
 - **Tickerplant Subscribers**, a view, shows `.u.w` by table: each
   subscriber's handle, host and output queue.
 - **Open Tickerplant Log...** reads a tickerplant log in a separate q,

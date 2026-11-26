@@ -885,6 +885,136 @@ fn a_function_two_files_define_is_prepared_as_both() {
     assert_eq!(server.summaries("outgoingCalls", &go).len(), 2);
 }
 
+// #2953: one definition a name and file was listed, the first, so the
+// `.z.ts` assigned second - the one q keeps - could not be asked about, and
+// what it calls was in no list.
+#[test]
+fn a_function_one_file_defines_twice_is_prepared_as_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "f:{.z.ts[]}\n.z.ts:{h[x]}\n.z.ts:{g[x]}\ng:{x}\nh:{x}\n";
+    let uri = server.open(dir.path(), "timer.q", text);
+    let lines = |items: &Value| -> Vec<u64> {
+        let items = items.as_array().unwrap_or_else(|| panic!("{items}"));
+        items
+            .iter()
+            .map(|item| span(&item["selectionRange"]).0)
+            .collect()
+    };
+    // From a call, each in the order written; from an assignment, that one
+    // first.
+    let called = server.prepare(&uri, text, ".z.ts[]", 1);
+    assert_eq!(lines(&called), [1, 2]);
+    let first = server.prepare(&uri, text, ".z.ts:{h", 1);
+    assert_eq!(lines(&first), [1, 2]);
+    let second = server.prepare(&uri, text, ".z.ts:{g", 1);
+    assert_eq!(lines(&second), [2, 1]);
+    // Each calls what its own statement names.
+    assert_eq!(
+        server.summaries("outgoingCalls", &second[0]),
+        [call("g", FUNCTION, "timer.q", &[(2, 7, 8)])]
+    );
+    assert_eq!(
+        server.summaries("outgoingCalls", &second[1]),
+        [call("h", FUNCTION, "timer.q", &[(1, 7, 8)])]
+    );
+    // And what calls the name calls both of them.
+    let f = server.item(&uri, text, "f:", 0);
+    assert_eq!(
+        server.summaries("outgoingCalls", &f),
+        [
+            call(".z.ts", FUNCTION, "timer.q", &[(0, 3, 8)]),
+            call(".z.ts", FUNCTION, "timer.q", &[(0, 3, 8)]),
+        ]
+    );
+    for item in second.as_array().unwrap() {
+        assert_eq!(
+            server.summaries("incomingCalls", item),
+            [call("f", FUNCTION, "timer.q", &[(0, 3, 8)])]
+        );
+    }
+}
+
+// #2954: what the lambda of `a:b:{f[x]}` reads was `b`'s alone, the name
+// nearest before it, so `a` - the same function - called nothing and was
+// no caller of `f`.
+#[test]
+fn each_name_one_statement_gives_a_lambda_calls_what_the_lambda_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "a:b:{f[x]}\nf:{x}\ng:{x}\nif[1b; c:{f[x]}; d:{g[x]}]\n";
+    let uri = server.open(dir.path(), "chain.q", text);
+    let f = [call("f", FUNCTION, "chain.q", &[(0, 5, 6)])];
+    for name in ["a:b", "b:{"] {
+        let item = server.item(&uri, text, name, 0);
+        assert_eq!(server.summaries("outgoingCalls", &item), f, "{name}");
+    }
+    let f = server.item(&uri, text, "f:", 0);
+    assert_eq!(
+        server.summaries("incomingCalls", &f),
+        [
+            call("a", FUNCTION, "chain.q", &[(0, 5, 6)]),
+            call("b", FUNCTION, "chain.q", &[(0, 5, 6)]),
+            call("c", FUNCTION, "chain.q", &[(3, 10, 11)]),
+        ]
+    );
+    // Two names a statement assigns apart are two functions, and each
+    // calls its own.
+    let c = server.item(&uri, text, "c:", 0);
+    assert_eq!(
+        server.summaries("outgoingCalls", &c),
+        [call("f", FUNCTION, "chain.q", &[(3, 10, 11)])]
+    );
+    let g = server.item(&uri, text, "g:", 0);
+    assert_eq!(
+        server.summaries("incomingCalls", &g),
+        [call("d", FUNCTION, "chain.q", &[(3, 20, 21)])]
+    );
+}
+
+/// The calls out of a script that defines N one-line functions and calls
+/// each once take time in proportion to it: every read was asked of every
+/// function it might lead to, 4 s at 32,000 with every other request
+/// waiting behind it (#2955).
+#[test]
+fn the_calls_out_of_a_file_of_many_functions_take_linear_time() {
+    // The ratio of two sizes, not a bound, as for the speed tests in
+    // tests/core.rs: a fixed bound measures the runner.
+    let time = |n: usize| {
+        let text: String = (0..n)
+            .map(|i| format!("f{i}:{{x}}\n"))
+            .chain((0..n).map(|i| format!("f{i}[1]\n")))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = Server::start(dir.path(), &[("many.q", &text)]);
+        let uri = server.open(dir.path(), "many.q", &text);
+        // The file's own item is the caller of what it calls as it loads.
+        let f0 = server.item(&uri, &text, "f0:", 0);
+        let callers = server.calls("incomingCalls", &f0);
+        let (file, _) = &callers[0];
+        assert_eq!(file["kind"], FILE);
+        let mut ask = || {
+            let started = std::time::Instant::now();
+            let calls = server.result("callHierarchy/outgoingCalls", json!({"item": file}));
+            let elapsed = started.elapsed();
+            assert_eq!(calls.as_array().map(Vec::len), Some(n));
+            elapsed
+        };
+        (0..2).map(|_| ask()).min().unwrap()
+    };
+    // Sizes at which the comparisons were most of the time: reading the
+    // file is the rest, and in proportion to it.
+    let (small, large) = (time(3000), time(24000));
+    eprintln!("3000 functions took {small:?} and 24000 {large:?}");
+    // Linear is 8 times, and measures 9.4 here (0.38 s and 3.6 s in a debug
+    // build); with the comparisons it was 27 (0.60 s and 16.2 s). 16 fails
+    // that, and leaves a loaded runner most of twice the time.
+    assert!(
+        large < small * 16,
+        "3000 functions took {small:?} and 24000 {large:?}"
+    );
+}
+
 #[test]
 fn a_call_by_a_string_is_not_seen_and_a_recursive_one_is() {
     let dir = tempfile::tempdir().unwrap();
@@ -1140,4 +1270,52 @@ fn a_test_that_loads_at_run_time_is_named_as_one_the_list_may_miss() {
     // Nothing changed, nothing to miss.
     let result = server.result("q-lint/affectedTests", json!({"changed": []}));
     assert_eq!(result["dynamic"], json!([]), "{result}");
+}
+
+/// What a helper may load, the test loading the helper may run: KDB-X has
+/// lib.q's `libf` after `\l tests/test_helped.q`, whose helper computes the
+/// path, and after `\l tests/test_valued.q`, which loads by `value` of a
+/// string. Neither has an edge to lib.q, and both were left out of
+/// `dynamic` as well (#2810).
+#[test]
+fn a_test_reaching_a_load_at_run_time_is_named_as_one_the_list_may_miss() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("src/lib.q", "libf:{x}\n"),
+        ("util/helper.q", "p:\"src/\"\nsystem \"l \",p,\"lib.q\"\n"),
+        ("util/further.q", "\\l util/helper.q\n"),
+        ("util/plain.q", "pf:{x}\n"),
+        ("tests/test_helped.q", "\\l util/helper.q\ntest_a:{1}\n"),
+        ("tests/test_further.q", "\\l util/further.q\ntest_f:{1}\n"),
+        (
+            "tests/test_valued.q",
+            "value \"\\\\l src/lib.q\"\ntest_v:{1}\n",
+        ),
+        ("tests/test_plain.q", "\\l util/plain.q\ntest_p:{1}\n"),
+        ("tests/test_sum.q", "test_s:{value \"\\\\lambda\"}\n"),
+        ("tests/test_static.q", "\\l src/lib.q\n\\l util/helper.q\n"),
+    ];
+    let mut server = Server::start(dir.path(), &files);
+    let changed = [file_uri(&dir.path().join("src/lib.q"))];
+    let result = server.result("q-lint/affectedTests", json!({"changed": changed}));
+    let tests: Vec<String> = result["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| server.name(&test["uri"]))
+        .collect();
+    assert_eq!(tests, ["tests/test_static.q"]);
+    assert_eq!(
+        server.names(&result["dynamic"]),
+        [
+            "tests/test_further.q",
+            "tests/test_helped.q",
+            "tests/test_valued.q"
+        ]
+    );
+    let valued = file_uri(&dir.path().join("tests/test_valued.q"));
+    assert_eq!(
+        server.graph(&valued)["dynamic"],
+        json!([{"line": 1, "kind": "load"}])
+    );
 }

@@ -78,6 +78,12 @@
       return { columns: can };
     }
     const columns = can.filter(function (c) { return chosen.indexOf(c) >= 0; });
+    // Ticked for a kind that draws other columns - a histogram's first -
+    // and none of them is this kind's: every one, as before any is ticked,
+    // not a note that none is ticked beside a ticked box (#3138).
+    if (columns.length === 0 && chosen.length > 0) {
+      return { columns: can };
+    }
     return columns.length === 0 && can.length > 0 ? { columns: columns, note: "No column is ticked: tick one above to chart it." } : { columns: columns };
   }
 
@@ -295,8 +301,12 @@
   /// `spec.row`, one column per distinct value of `spec.column` (-1: one
   /// column), each cell `spec.agg` of column `spec.value` over the rows
   /// with both. `count` counts the non-null values (every row, with
-  /// `spec.value` -1); the others take a numeric column's values, nulls and
-  /// infinities left out. Values are ordered as q sorts them (the ranks),
+  /// `spec.value` -1); the others take a numeric column's values, nulls
+  /// left out. An infinity is a value, as q's aggregates take it (#3077):
+  /// a float's is 0w, so a sum holding one is 0w and one holding both is a
+  /// null; a whole number's is the largest its type holds, and its sum
+  /// wraps as q's does (a long's is a long, a short's or an int's an int).
+  /// Values are ordered as q sorts them (the ranks),
   /// or by text where q could not. At most `maxColumns` column values; the
   /// note says how many more there were. {rows: [text], columns: [text],
   /// cells: [[text]], note?}.
@@ -306,6 +316,9 @@
     const valueColumn = spec.value >= 0 && spec.value < grid.columns.length ? spec.value : -1;
     const numbers = valueColumn >= 0 && grid.columns[valueColumn].numeric ? grid.values[valueColumn] : null;
     const whole = numbers !== null && [5, 6, 7].indexOf(grid.columns[valueColumn].type) >= 0;
+    // A whole column's bits, and its infinity.
+    const bits = !whole ? 0 : grid.columns[valueColumn].type === 7 ? 64 : grid.columns[valueColumn].type === 6 ? 32 : 16;
+    const top = whole ? (1n << BigInt(bits - 1)) - 1n : 0n;
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
@@ -351,7 +364,15 @@
         }
         return;
       }
-      const v = numbers[r];
+      // `values` holds an infinity as a null: the cell tells them apart.
+      const cell = grid.cells[valueColumn][r];
+      const inf = numbers[r] === null && /^-?0w$/i.test(cell) ? (cell.charAt(0) === "-" ? -1 : 1) : 0;
+      if (inf !== 0 && !whole) {
+        a.n++;
+        a[inf > 0 ? "up" : "down"] = true;
+        return;
+      }
+      const v = inf !== 0 ? inf * Number(top) : numbers[r];
       if (v !== null) {
         a.n++;
         a.sum += v;
@@ -360,15 +381,22 @@
         a.max = Math.max(a.max, v);
         // A short, int or long by its digits: a double past 2^53 is a
         // number no cell holds (#2451).
-        const digits = whole ? grid.cells[valueColumn][r] : "";
-        if (whole && /^-?\d+$/.test(digits) && a.exact !== false) {
-          const b = BigInt(digits);
+        const digits = whole ? cell : "";
+        if (whole && (inf !== 0 || /^-?\d+$/.test(digits)) && a.exact !== false) {
+          const b = inf !== 0 ? BigInt(inf) * top : BigInt(digits);
           a.exact = { sum: (a.exact ? a.exact.sum : 0n) + b, min: a.exact && a.exact.min < b ? a.exact.min : b, max: a.exact && a.exact.max > b ? a.exact.max : b };
         } else {
           a.exact = false;
         }
       }
     });
+    // A whole number of `width` bits as q writes it: wrapped to them, its
+    // infinities 0W and -0W, its null blank.
+    const wholeText = function (b, width) {
+      const most = (1n << BigInt(width - 1)) - 1n;
+      const w = BigInt.asIntN(width, b);
+      return w === most ? "0W" : w === -most ? "-0W" : w === -most - 1n ? "" : String(w);
+    };
     const text = function (a) {
       if (agg === "count") {
         return String(a.n);
@@ -376,8 +404,19 @@
       if (a.n === 0) {
         return "";
       }
+      if (a.up || a.down) {
+        if (agg === "min" || agg === "max") {
+          return (agg === "min" ? a.down : a.up) ? (agg === "min" ? "-0w" : "0w") : meanText(agg === "min" ? a.min : a.max);
+        }
+        return a.up && a.down ? "" : a.up ? "0w" : "-0w";
+      }
       if (a.exact && agg !== "avg") {
-        return String(a.exact[agg === "sum" ? "sum" : agg]);
+        return wholeText(a.exact[agg], agg === "sum" ? Math.max(bits, 32) : bits);
+      }
+      if (a.exact && bits === 64) {
+        // A long's avg is of its sum, which wraps: of 1 and 0W, a null.
+        const sum = BigInt.asIntN(64, a.exact.sum);
+        return sum === -top - 1n ? "" : meanText(Number(sum) / a.n);
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
@@ -433,10 +472,27 @@
 
   /// One CSV field of a copy, as grid.ts's csvField(csvText(t)) writes it:
   /// quoted where it must be, and text a spreadsheet would run as a formula
-  /// (=, +, -, @, tab or CR first, and no number) behind a '.
-  function csvCell(t) {
-    const text = /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
+  /// (=, +, -, @, tab or CR first, and no number) behind a '. `own` true:
+  /// the text is q's of a number or the page's, and written as it is.
+  function csvCell(t, own) {
+    const text = own !== true && /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
     return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  /// The pivot `p` of `grid` by `spec` as CSV, each line ending in \n. The
+  /// names and a symbol's or string's values go through csvCell; a numeric
+  /// or temporal column's values and the aggregates are q's text or the
+  /// page's own numbers, written as they are (#3075).
+  function pivotCsv(grid, spec, p) {
+    const field = function (c) {
+      const column = grid.columns[c];
+      return column && (column.numeric || column.temporal) ? function (t) { return csvCell(t, true); } : function (t) { return csvCell(t); };
+    };
+    const head = [csvCell(grid.columns[spec.row] ? grid.columns[spec.row].name : "")].concat(p.columns.map(spec.column >= 0 ? field(spec.column) : function (t) { return csvCell(t); }));
+    const lines = [head.join(",")].concat(p.rows.map(function (k, i) {
+      return [field(spec.row)(k)].concat(p.cells[i].map(function (t) { return csvCell(t, true); })).join(",");
+    }));
+    return lines.join("\n") + "\n";
   }
 
   /// `map[key]` when `map` has it of its own: a column named constructor
@@ -488,6 +544,7 @@
     PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
     csvCell: csvCell,
+    pivotCsv: pivotCsv,
     gridMove: gridMove,
     announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
@@ -1477,7 +1534,11 @@
             counts.bars++;
           }
         } else if (chart && chart.kind === "spark") {
-          const values = LOOK.parseNumbers(raw);
+          // The vector GRID sent (#2465) when it sent one: the cell's text
+          // is `-3!`'s, cut at the process's `\c` width, so a line drawn
+          // from it is of the vector's start only (#3122).
+          const sent = grid.vectors && grid.vectors[ci] ? grid.vectors[ci][r] : null;
+          const values = sent || LOOK.parseNumbers(raw);
           const url = values ? LOOK.sparkUrl(values, d.colour) : null;
           if (url) {
             td.style.backgroundImage = url;
@@ -1486,6 +1547,12 @@
             td.textContent = "";
             td.className += " spark";
             counts.sparks++;
+            // No vector came (a list of integers, or a long one): the line
+            // is of the text, and says so where q cut it.
+            if (!sent && /\.\.\.?$/.test(String(raw).trim())) {
+              td.className += " cut";
+              td.title += "\nThe line is of the first " + values.length + " values only: q cut this cell's text.";
+            }
           }
         }
         const level = heat[ci] && !marked && !filled ? heat[ci][r] : null;
@@ -1613,8 +1680,7 @@
     copy.title = "The pivot as CSV";
     const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
     copy.addEventListener("click", function () {
-      const lines = [head.map(csvCell).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csvCell).join(","); }));
-      vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
+      vscode.postMessage({ type: "copyText", id: result.id, text: pivotCsv(grid, spec, p) });
     });
     controls.append(copy);
     FOCUS.each(controls, "pivot");
@@ -1651,22 +1717,55 @@
 
   // --- chart
 
+  /// The columns a chart of `kind` can draw: a box each.
+  function chartCan(grid, kind) {
+    return C.chartable(grid, kind === "linked" ? "line" : kind);
+  }
+
+  /// What a picked colour and a preset know column `c` by, of those the
+  /// chart `can` draw: its name, and from the second of one name on its
+  /// place among them too (`x`, `x#2`). By the name alone two series of one
+  /// name were one (#3136), and the first column of a name was meant, even
+  /// one the chart cannot draw - a key of the value's name (#3135).
+  function seriesKey(grid, can, c) {
+    const name = grid.columns[c].name;
+    const nth = can.filter(function (x) { return x < c && grid.columns[x].name === name; }).length;
+    return nth === 0 ? name : name + "#" + (nth + 1);
+  }
+
   /// The colours the chart draws its datasets in: the theme's, in turn, or
   /// the one chosen for a series' column (#1019).
   function seriesColours(grid, datasets, theme) {
+    const can = chartCan(grid, state.kind);
     return datasets.map(function (d, i) {
-      const name = d.column !== undefined && grid.columns[d.column] ? grid.columns[d.column].name : null;
-      return (feature("chartPresets") && name && ownValue(state.colours, name)) || theme.colours[i % theme.colours.length];
+      const key = d.column !== undefined && grid.columns[d.column] ? seriesKey(grid, can, d.column) : null;
+      return (feature("chartPresets") && key && ownValue(state.colours, key)) || theme.colours[i % theme.colours.length];
     });
   }
 
+  /// The kinds only some results offer, found by their columns.
+  const OWN_KINDS = ["depth", "map"];
+
+  /// Set the chart's kind. `state.usual` keeps the last one every result
+  /// offers, for the result after one drawn as depth or as a map (#3137).
+  function setKind(kind) {
+    [state.kind, kind].forEach(function (k) {
+      if (OWN_KINDS.indexOf(k) < 0) {
+        state.usual = k;
+      }
+    });
+    state.kind = kind;
+  }
+
   /// The chart drawn, as a preset a saved query keeps (#1019): its kind,
-  /// series, right axis, bins, colours and map columns, by name.
-  function currentPreset(picked) {
+  /// series, right axis, bins, colours and map columns, by name - a
+  /// series by its seriesKey() among the columns it `can` draw.
+  function currentPreset(can, picked) {
     const grid = result.grid;
     const name = function (c) { return c >= 0 && grid.columns[c] ? grid.columns[c].name : undefined; };
+    const key = function (c) { return seriesKey(grid, can, c); };
     // A depth chart and a map find their own columns.
-    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(name);
+    const series = state.kind === "depth" || state.kind === "map" ? [] : picked.map(key);
     const colours = {};
     series.forEach(function (n) {
       if (ownValue(state.colours, n)) {
@@ -1675,7 +1774,7 @@
     });
     const out = { kind: state.kind, series: series, bins: state.bins, colours: colours };
     if (picked.indexOf(state.y2) >= 0) {
-      out.y2 = name(state.y2);
+      out.y2 = key(state.y2);
     }
     if (state.kind === "map") {
       if (name(state.mapSize)) {
@@ -1692,10 +1791,19 @@
   /// series by name.
   function applyPreset(grid, preset) {
     const at = function (n) { return grid.columns.findIndex(function (c) { return c.name === n; }); };
+    // A series is one of the columns the kind can draw (#3135).
+    const can = chartCan(grid, preset.kind);
+    const drawn = function (k) {
+      const c = can.find(function (x) { return seriesKey(grid, can, x) === k; });
+      return c === undefined ? -1 : c;
+    };
     state.view = "chart";
-    state.kind = preset.kind;
-    state.columns = (preset.series || []).map(at).filter(function (i) { return i >= 0; });
-    state.y2 = preset.y2 ? at(preset.y2) : -1;
+    setKind(preset.kind);
+    // No series - a depth chart and a map keep none - is the kind's own
+    // choice of columns, not every box unticked (#3134).
+    const series = (preset.series || []).map(drawn).filter(function (i) { return i >= 0; });
+    state.columns = series.length > 0 ? series : null;
+    state.y2 = preset.y2 ? drawn(preset.y2) : -1;
     if (preset.bins) {
       state.bins = preset.bins;
     }
@@ -1743,7 +1851,9 @@
     kind.setAttribute("aria-label", "Chart kind");
     const KINDS = kinds();
     if (KINDS.indexOf(state.kind) < 0) {
-      state.kind = "line";
+      // Not a kind this result offers - depth, after a book: the kind
+      // chosen before it, not Line whatever that was (#3137).
+      state.kind = KINDS.indexOf(state.usual) >= 0 ? state.usual : "line";
     }
     KINDS.forEach(function (k) {
       const o = el("option", "", KIND_NAMES[k] || k[0].toUpperCase() + k.slice(1));
@@ -1752,14 +1862,14 @@
       kind.append(o);
     });
     kind.addEventListener("change", function () {
-      state.kind = kind.value;
+      setKind(kind.value);
       save();
       drawChart();
     });
     controls.append(kind);
     // A depth chart and a map find their columns by name.
     const own = state.kind === "depth" || state.kind === "map";
-    const can = C.chartable(grid, state.kind === "linked" ? "line" : state.kind);
+    const can = chartCan(grid, state.kind);
     const chosen = chartColumns(can, state.columns);
     const picked = chosen.columns;
     // A candle chart's columns are its open, high, low and close.
@@ -1778,12 +1888,13 @@
       if (feature("chartPresets") && box.checked) {
         // A series' own colour, kept with a chart preset.
         const name = grid.columns[c].name;
+        const key = seriesKey(grid, can, c);
         const colour = el("input", "swatch");
         colour.type = "color";
         colour.title = "The colour of " + name;
-        colour.value = ownValue(state.colours, name) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
+        colour.value = ownValue(state.colours, key) || (/^#[0-9a-f]{6}$/i.test(theme.colours[picked.indexOf(c) % theme.colours.length]) ? theme.colours[picked.indexOf(c) % theme.colours.length] : "#3794ff");
         colour.addEventListener("change", function () {
-          setOwn(state.colours, name, colour.value);
+          setOwn(state.colours, key, colour.value);
           save();
           drawChart();
         });
@@ -1846,12 +1957,14 @@
       label.append(y2);
       controls.append(label);
     }
+    const saves = [];
     if (feature("charts")) {
       ["png", "svg"].forEach(function (format) {
         const b = el("button", "", "Save " + format.toUpperCase());
         b.title = "Save the chart as a " + format.toUpperCase() + " file";
         b.addEventListener("click", function () { sendImage(format); });
         controls.append(b);
+        saves.push(b);
       });
     }
     if (feature("chartPresets")) {
@@ -1860,7 +1973,7 @@
         ? "Keep this chart with the saved query " + result.saved + ", to draw again when it runs"
         : "Save this result's query to Saved Queries with this chart, to draw again when it runs";
       keep.addEventListener("click", function () {
-        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(picked) });
+        vscode.postMessage({ type: "chartPreset", id: result.id, preset: currentPreset(can, picked) });
       });
       controls.append(keep);
     }
@@ -1881,6 +1994,10 @@
         summary.cut = true;
         chartView.append(el("p", "note", "The process cut a list of this book at its console width (\\c): only the levels before the cut are drawn."));
       }
+      if (data.unsided) {
+        summary.unsided = data.unsided;
+        chartView.append(el("p", "note", MORE.unsidedText(data.unsided) + ": left out of the book."));
+      }
     } else if (state.kind === "map") {
       data = MORE.mapData(grid, rows, { size: state.mapSize, colour: state.mapColour }, theme);
       summary = C.summary("map", data);
@@ -1890,6 +2007,8 @@
       }
     } else if (state.kind === "linked") {
       data = chosen.note ? { x: -1, panes: [], note: chosen.note } : MORE.linkedData(grid, rows, picked);
+      // A zoom the points have moved out of is dropped (#3128).
+      state.zoom = MORE.zoomOver(data, state.zoom);
       summary = { kind: "linked", datasets: data.panes.map(function (p) { return { label: p.label, points: p.data.length }; }) };
       if (data.note) {
         summary.note = data.note;
@@ -1901,12 +2020,17 @@
         summary.y2 = grid.columns[y2].name;
       }
     }
-    const preset = feature("chartPresets") ? currentPreset(picked) : undefined;
+    const preset = feature("chartPresets") ? currentPreset(can, picked) : undefined;
     drawnChart = null;
     if (data.note || typeof Chart !== "function") {
       const note = data.note || "The chart library did not load.";
       chartView.append(el("p", "note", note));
       summary.note = note;
+      // No chart: nothing to save, which the buttons did without a word (#3139).
+      saves.forEach(function (b) {
+        b.disabled = true;
+        b.title = "No chart is drawn, so there is nothing to save";
+      });
       rendered({ chart: summary, preset: preset });
       return;
     }
@@ -2211,7 +2335,7 @@
 
   /// What is kept of a result's page when another is chosen from the tabs.
   /// Its chart kind, bins and Compare too, so it is drawn as it was (#1638).
-  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "bins", "compare"];
+  const PER_RESULT = ["view", "sort", "filters", "columns", "top", "open", "names", "pivot", "y2", "colours", "mapSize", "mapColour", "zoom", "kind", "usual", "bins", "compare"];
 
   window.addEventListener("message", function (event) {
     const m = event.data;
@@ -2247,9 +2371,13 @@
           state.mapSize = -1;
           state.mapColour = -1;
           state.zoom = null;
-          // An order book is drawn as its depth (#1016) when its columns fit.
-          if ((!m.features || m.features.depthChart !== false) && MORE.depthColumns(m.grid)) {
-            state.kind = "depth";
+          // An order book is drawn as its depth (#1016) when its columns fit
+          // and its rows are one book, not a history (#3124) - which the
+          // depth of the book before it is not carried on to either.
+          if ((!m.features || m.features.depthChart !== false) && MORE.depthByItself(m.grid)) {
+            setKind("depth");
+          } else if (state.kind === "depth") {
+            state.kind = state.usual || "line";
           }
         }
         state.view = m.view;
@@ -2262,6 +2390,39 @@
         }
       }
       state.id = m.id;
+    }
+    if (typeof state.names === "string" && names !== state.names) {
+      // The same result run again with other columns, as a watched query's
+      // is (#3071): what was set on a column goes with its name to where
+      // the column now is, and is dropped with a column that is gone.
+      const now = m.grid.columns.map(function (c) { return c.name; });
+      const to = state.names.split("\u0000").map(function (name, i, was) {
+        // A name held twice: its first to the first, its second to the next.
+        let nth = was.slice(0, i).filter(function (n) { return n === name; }).length;
+        return now.findIndex(function (n) { return n === name && nth-- === 0; });
+      });
+      const at = function (i) { return Number.isInteger(i) && i >= 0 && to[i] >= 0 ? to[i] : -1; };
+      const filters = [];
+      (state.filters || []).forEach(function (text, i) {
+        if (text && at(i) >= 0) {
+          filters[at(i)] = text;
+        }
+      });
+      state.filters = filters;
+      state.sort = state.sort && at(state.sort.column) >= 0 ? { column: at(state.sort.column), descending: state.sort.descending } : null;
+      if (Array.isArray(state.columns)) {
+        const picked = state.columns.map(at).filter(function (i) { return i >= 0; }).sort(function (a, b) { return a - b; });
+        // Every ticked column gone: the chart's own choice, as for a new result.
+        state.columns = picked.length === 0 && state.columns.length > 0 ? null : picked;
+      }
+      const p = state.pivot;
+      state.pivot = p && at(p.row) >= 0 && (p.column < 0 || at(p.column) >= 0) && (p.value < 0 || at(p.value) >= 0)
+        ? Object.assign({}, p, { row: at(p.row), column: at(p.column), value: at(p.value) })
+        : null;
+      state.y2 = at(state.y2);
+      state.mapSize = at(state.mapSize);
+      state.mapColour = at(state.mapColour);
+      state.names = names;
     }
     Object.keys(state.saved).forEach(function (id) {
       if (kept.indexOf(id) < 0 || id === m.id) {

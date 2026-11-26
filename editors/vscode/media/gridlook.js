@@ -25,13 +25,15 @@
 
   /// The format a column's name asks for, or null: {base, suffix, kind,
   /// digits, label}. `base` is the name without its suffix, which the
-  /// header shows. The suffix is matched in any case after the last `_`.
+  /// header shows. The suffix is matched after the last `_`, in upper case
+  /// only: q's names are lower snake case, and `order_num`, `zip_code` and
+  /// `item_pct` are plain columns (#3087).
   function columnFormat(name) {
-    const m = /^(.*[^_])_([A-Za-z]+?)(\d)?$/.exec(String(name));
+    const m = /^(.*[^_])_([A-Z]+?)(\d)?$/.exec(String(name));
     if (!m) {
       return null;
     }
-    const known = SUFFIXES[m[2].toUpperCase()];
+    const known = SUFFIXES[m[2]];
     if (!known || (m[3] !== undefined && known.digits === undefined)) {
       return null;
     }
@@ -125,13 +127,21 @@
   /// The colours a rule can give, by name: the editor's chart colours.
   const PALETTE = { red: "#f14c4c", green: "#89d185", blue: "#3794ff", orange: "#d18616", yellow: "#cca700", purple: "#b180d7", grey: "#808080" };
 
+  /// How far apart, of the greater, two floats can be and still be equal
+  /// to q: its comparison tolerance, 2^-43.
+  const TOLERANCE = Math.pow(2, -43);
+
   /// The rows of the grid a rule matches, as a Set: those of its column
   /// (the first of that name) whose value compares as it asks. On a numeric
   /// column the comparisons are of numbers, and top or bottom N are the
   /// rows holding the N greatest or least values, ties included; on any
   /// other, `=` and `<>` compare the cell's text and `contains` finds it in
   /// any case. A null matches nothing; an infinity (0w, -0w) compares as
-  /// one (#1645). An empty Set for a rule its column cannot take. `shown`,
+  /// one (#1645). A whole number past 2^53, in a short, int or long column
+  /// or as the rule's value, is compared as its digits, not as the double
+  /// it rounds to (#3085). A real or float column compares as q's own
+  /// comparisons do, to q's tolerance: `= 0.3` matches 0.1+0.2, and `>`
+  /// does not (#3086). An empty Set for a rule its column cannot take. `shown`,
   /// when given, is what a cell shows (column, row) where a format changes
   /// q's text: `contains` finds either, as a filter does (#1646).
   function ruleRows(grid, rule, shown) {
@@ -159,10 +169,16 @@
       });
       return out;
     }
+    // A whole number a double does not hold, from its digits: a BigInt,
+    // which compares with a number as the two numbers they are.
+    const whole = [5, 6, 7].indexOf(grid.columns[c].type) >= 0;
+    const exact = function (v, text) {
+      return whole && !Number.isSafeInteger(v) && /^-?\d+$/.test(text) ? BigInt(text) : v;
+    };
     // grid.ts writes an infinity's value as null, as a null's: its text
     // tells them apart.
     const values = grid.values[c].map(function (v, r) {
-      return v !== null ? v : /^-0[wW]$/.test(cells[r]) ? -Infinity : /^0[wW]$/.test(cells[r]) ? Infinity : null;
+      return v !== null ? exact(v, cells[r]) : /^-0[wW]$/.test(cells[r]) ? -Infinity : /^0[wW]$/.test(cells[r]) ? Infinity : null;
     });
     if (rule.op === "contains") {
       const lower = String(rule.value).toLowerCase();
@@ -175,7 +191,8 @@
     }
     if (rule.op === "top" || rule.op === "bottom") {
       const n = Math.floor(Number(rule.value));
-      const sorted = values.filter(function (v) { return v !== null; }).sort(function (a, b) { return rule.op === "top" ? b - a : a - b; });
+      const order = function (a, b) { return a < b ? -1 : a > b ? 1 : 0; };
+      const sorted = values.filter(function (v) { return v !== null; }).sort(function (a, b) { return rule.op === "top" ? order(b, a) : order(a, b); });
       if (!(n >= 1) || sorted.length === 0) {
         return out;
       }
@@ -187,15 +204,18 @@
       });
       return out;
     }
-    const x = Number(rule.value);
-    if (!isFinite(x)) {
+    const x = exact(Number(rule.value), String(rule.value).trim());
+    if (typeof x !== "bigint" && !isFinite(x)) {
       return out;
     }
+    const float = [8, 9].indexOf(grid.columns[c].type) >= 0;
     values.forEach(function (v, r) {
       if (v === null) {
         return;
       }
-      const hit = rule.op === ">" ? v > x : rule.op === ">=" ? v >= x : rule.op === "<" ? v < x : rule.op === "<=" ? v <= x : rule.op === "=" ? v === x : v !== x;
+      // Not ===, which a BigInt and a number never are.
+      const same = (v >= x && v <= x) || (float && isFinite(v) && Math.abs(v - x) <= TOLERANCE * Math.max(Math.abs(v), Math.abs(x)));
+      const hit = rule.op === ">" ? v > x && !same : rule.op === ">=" ? v > x || same : rule.op === "<" ? v < x && !same : rule.op === "<=" ? v < x || same : rule.op === "=" ? same : !same;
       if (hit) {
         out.add(r);
       }
@@ -233,6 +253,10 @@
     return out;
   }
 
+  /// A whole number kept as its digits, as a rule's value is when a double
+  /// does not hold it (#3085).
+  const BIG = /^-?\d{16,}$/;
+
   /// A rule in words, for a header's tooltip and a pick: `px > 100: red
   /// background`.
   function ruleText(rule) {
@@ -247,7 +271,7 @@
     if (s.bold) {
       looks.push("bold");
     }
-    const what = rule.op === "top" || rule.op === "bottom" ? rule.op + " " + rule.value : rule.op + " " + (typeof rule.value === "string" ? JSON.stringify(rule.value) : rule.value);
+    const what = rule.op === "top" || rule.op === "bottom" ? rule.op + " " + rule.value : rule.op + " " + (typeof rule.value === "string" && !BIG.test(rule.value) ? JSON.stringify(rule.value) : rule.value);
     return rule.column + " " + what + ": " + (looks.join(", ") || "no style");
   }
 

@@ -77,15 +77,115 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
     const aj = suggestJoins(trade, shape("quote", ["sym", "time", "bid"], "stf", [], [attribute, "", ""])).find((x) => x.join === "aj");
     assert.match(aj.why, new RegExp(`\`${attribute}# on sym does not order time: this takes quote to be in time order within each sym already, as a tickerplant's table is; if it is not, use \`sym\`time xasc quote`), attribute);
   }
-  // A partitioned right table is told to pick a date.
+  // A partitioned right table is one partition of it, taken as ordered.
   const hdb = shape("quote", ["date", "sym", "time", "bid"], "dstf", [], ["", "p", "", ""], "partitioned");
-  assert.match(suggestJoins(trade, hdb).find((x) => x.join === "aj").why, /partitioned: select one date first/);
+  assert.strictEqual(suggestJoins(trade, hdb).find((x) => x.join === "aj").expression, "aj[`sym`time;trade;(select from quote where date=last .Q.pv)]");
   // Timestamps get a window in nanoseconds.
   const tp = shape("t", ["sym", "time", "px"], "spf");
   const qp = shape("q", ["sym", "time", "bid"], "spf");
   assert.match(suggestJoins(tp, qp).find((x) => x.join === "wj").expression, / xcol wj\[-1000000000 0\+\\:t`time;/);
   // Nothing in common: nothing to suggest.
   assert.deepStrictEqual(suggestJoins(shape("a", ["x"], "j"), shape("b", ["y"], "f")), []);
+});
+
+// `value` reads past a comment, so the shape was read; in brackets the
+// comment took the closing one, and q refused the join with '(.
+test("a comment ending an expression is left out of the operand written (#3047)", () => {
+  assert.strictEqual(operand("select from trade where sym=`a  / AAPL only"), "(select from trade where sym=`a)");
+  assert.strictEqual(operand("trade / the day's"), "trade");
+  assert.strictEqual(operand("select from trade / all of it\n  where sym=`a / one"), "(select from trade / all of it\n  where sym=`a)");
+  // A / in a string, or one that follows no blank, is no comment.
+  assert.strictEqual(operand('select from t where p like "a /b"'), '(select from t where p like "a /b")');
+  assert.strictEqual(operand('select from t where p like "a\\" /b"'), '(select from t where p like "a\\" /b")');
+  assert.strictEqual(operand("select px%2, s:+/[px] from t"), "(select px%2, s:+/[px] from t)");
+  const commented = shape("select from trade where sym=`a  / AAPL only", ["sym", "time", "px"], "stf");
+  assert.deepStrictEqual(suggestJoins(commented, ref).map((x) => x.expression), ["(select from trade where sym=`a) lj ref", "(select from trade where sym=`a) ij ref"]);
+});
+
+// Indexed by a column's name a keyed table is looked up by key, and wj
+// takes no keyed table: the whole expression signalled 'type.
+test("wj on a keyed left table unkeys it, and says so (#3046)", () => {
+  const orders = shape("orders", ["id", "sym", "time", "qty"], "jstj", ["id"]);
+  const by = Object.fromEntries(suggestJoins(orders, quote).map((x) => [x.join, x]));
+  assert.strictEqual(by.wj.expression, "((cols (0!orders)),`bid_max`bid_min) xcol wj[-1000 0+\\:(0!orders)`time;`sym`time;(0!orders);(`sym`time xasc quote;(max;`bid);(min;`bid))]");
+  assert.match(by.wj.why, /wj takes no keyed table, so orders is unkeyed \(0!\) and the answer has no key\./);
+  // The joins that keep a key are as they were, and an unkeyed left's wj.
+  assert.strictEqual(by.aj.expression, "aj[`sym`time;orders;`sym`time xasc quote]");
+  assert.doesNotMatch(suggestJoins(trade, quote).find((x) => x.join === "wj").why, /unkeyed/);
+});
+
+// Keyed on the columns both share with none left over, the right table is
+// keys alone: q refuses lj and ij of it with 'type.
+test("lj and ij are not suggested on an unkeyed right table with no column of its own (#3048)", () => {
+  const t1 = shape("t1", ["sym", "qty", "px"], "sjf");
+  const t2 = shape("t2", ["sym", "qty", "px"], "sjf");
+  assert.deepStrictEqual(suggestJoins(t1, t2).map((x) => x.join), ["uj"]);
+  // One column of its own, and they are.
+  const t3 = shape("t3", ["sym", "qty", "lot"], "sjj");
+  assert.deepStrictEqual(suggestJoins(t1, t3).map((x) => [x.join, x.expression]).slice(0, 2), [["lj", "t1 lj `sym xkey `sym`lot#t3"], ["ij", "t1 ij `sym xkey `sym`lot#t3"]]);
+});
+
+// uj goes by name alone: `qty` long in one and int in the other came out
+// mixed, and the why said only "the rows of both".
+test("uj says which shared columns differ in type, and so come out mixed (#3049)", () => {
+  const t1 = shape("t1", ["sym", "qty", "px"], "sjf");
+  const why = (r) => suggestJoins(t1, r).find((x) => x.join === "uj").why;
+  assert.match(why(shape("t2", ["sym", "qty", "px"], "sif")), / qty is j in t1 and i in t2: uj makes it a mixed column, not one of either type; cast one side to the other's first\.$/);
+  assert.match(why(shape("t2", ["sym", "qty", "px"], "sie")), / qty is j in t1 and i in t2, px is f in t1 and e in t2: uj makes each a mixed column/);
+  assert.doesNotMatch(why(shape("t2", ["sym", "qty", "px"], "sjf")), /mixed/);
+  // A column already mixed in one of them is no news.
+  assert.doesNotMatch(why(shape("t2", ["sym", "qty", "px"], "s f")), /mixed/);
+  // Keyed alike, the same.
+  const keyed = (name, types) => shape(name, ["sym", "qty"], types, ["sym"]);
+  assert.match(suggestJoins(keyed("k1", "sj"), keyed("k2", "sh")).find((x) => x.join === "uj").why, /where the keys match\. qty is j in k1 and h in k2: uj makes it a mixed column/);
+});
+
+// q joins no table where it lies on disk, on either side: a splayed one
+// signalled 'splay, or 'type under xkey (#3044); a partitioned right one
+// 'date or 'splay, though its note said every partition would be read (#3045).
+test("a splayed table is selected from, and a partitioned right table is one partition of it (#3044, #3045)", () => {
+  const sref = shape("sref", ["sym", "time", "lvl", "nm"], "stfs", [], ["", "", "", ""], "splayed");
+  const left = Object.fromEntries(suggestJoins(sref, quote).map((x) => [x.join, x]));
+  assert.deepStrictEqual(Object.values(left).map((x) => x.expression), [
+    "(select from sref) lj `sym xkey `sym`bid#quote",
+    "(select from sref) ij `sym xkey `sym`bid#quote",
+    "aj[`sym`time;(select from sref);`sym`time xasc quote]",
+    "((cols (select from sref)),`bid_max`bid_min) xcol wj[-1000 0+\\:(select from sref)`time;`sym`time;(select from sref);(`sym`time xasc quote;(max;`bid);(min;`bid))]",
+    "(select from sref) uj quote",
+  ]);
+  for (const s of Object.values(left)) {
+    assert.match(s.why, / sref is splayed, which q joins only once it is selected from: select from sref maps it\.$/, s.join);
+  }
+  assert.deepStrictEqual(suggestJoins(sref, ref).map((x) => x.expression), ["(select from sref) lj ref", "(select from sref) ij ref"]);
+  const right = Object.fromEntries(suggestJoins(trade, sref).map((x) => [x.join, x]));
+  assert.deepStrictEqual(Object.values(right).map((x) => x.expression), [
+    "trade lj `sym xkey `sym`lvl`nm#(select from sref)",
+    "trade ij `sym xkey `sym`lvl`nm#(select from sref)",
+    "aj[`sym`time;trade;`sym`time xasc (select from sref)]",
+    "((cols trade),`lvl_max`lvl_min) xcol wj[-1000 0+\\:trade`time;`sym`time;trade;(`sym`time xasc (select from sref);(max;`lvl);(min;`lvl))]",
+    "trade uj (select from sref)",
+  ]);
+  assert.match(right.uj.why, / sref is splayed, which q joins only once/);
+
+  // The field it is partitioned by is none of its own columns to join.
+  const hdb = shape("quote", ["date", "sym", "time", "bid", "ex"], "dstfs", [], ["", "p", "", "", ""], "partitioned");
+  const parted = suggestJoins(trade, hdb);
+  assert.deepStrictEqual(parted.map((x) => x.expression), [
+    "trade lj `sym xkey `sym`bid`ex#(select from quote where date=last .Q.pv)",
+    "trade ij `sym xkey `sym`bid`ex#(select from quote where date=last .Q.pv)",
+    "aj[`sym`time;trade;(select from quote where date=last .Q.pv)]",
+    "((cols trade),`bid_max`bid_min) xcol wj[-1000 0+\\:trade`time;`sym`time;trade;((select from quote where date=last .Q.pv);(max;`bid);(min;`bid))]",
+  ]);
+  for (const s of parted) {
+    assert.match(s.why, / quote is partitioned, which q joins only one partition of at a time: this takes its last date; change last \.Q\.pv to the date wanted\.$/, s.join);
+    assert.doesNotMatch(s.why, /every partition is read/, s.join);
+  }
+  // With no shared column left out of the keys, the field still is.
+  assert.strictEqual(suggestJoins(shape("t", ["sym", "q"], "sj"), hdb)[0].expression, "t lj `sym xkey `sym`time`bid`ex#(select from quote where date=last .Q.pv)");
+  // Both on disk: each says so, a table joined with itself once.
+  const both = suggestJoins(hdb, sref).find((x) => x.join === "aj");
+  assert.match(both.why, / sref is splayed, which q joins only once it is selected from: select from sref maps it\. quote is partitioned, which/);
+  assert.strictEqual(suggestJoins(hdb, hdb).find((x) => x.join === "uj").why.match(/quote is partitioned, which/g).length, 1);
 });
 
 test("the switch is declared on, and the command only where it can run", () => {
@@ -159,4 +259,23 @@ test("the guard reads the expressions of a join's tables as TABLE_SHAPE values t
   const { writes } = require("../out/guard.js");
   assert.deepStrictEqual(writes(shapeGuardCode(["(1;\n/\nj2:9)", "trade"])), ["assigns j2"]);
   assert.deepStrictEqual(writes(shapeGuardCode(["trade", "quote"])), []);
+});
+
+test("on a guarded process the shapes are read under reval, so a write the guard missed is refused (#2640)", async (t) => {
+  const { tableShapeLambda } = require("../out/joinassist.js");
+  const { EVALUATE_READ_ONLY } = require("../out/query.js");
+  const READ_ONLY = tableShapeLambda(EVALUATE_READ_ONLY);
+  const guardedAnswer = (m) => (m === "`reval in key`.q" ? true : Array.isArray(m) && m[0] === READ_ONLY ? answer([TABLE_SHAPE, m[1]]) : null);
+  const { q, live } = await setUp(t, { tags: ["prod"], answer: guardedAnswer, register: registerJoinAssistant });
+  await live.connectTo("rdb");
+  const before = q.sent.length;
+  const suggestions = await stub.commands.get(PROCESS_TOOL_COMMANDS.joinAssistant)("trade", "ref", "lj");
+  assert.deepStrictEqual(suggestions.map((s) => s.join), ["lj", "ij"]);
+  assert.deepStrictEqual(
+    q.sent.slice(before).filter((m) => Array.isArray(m)),
+    [
+      [READ_ONLY, " trade"],
+      [READ_ONLY, " ref"],
+    ],
+  );
 });

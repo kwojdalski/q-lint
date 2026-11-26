@@ -27,7 +27,6 @@ import { readExplorer, charKinds, type Node } from "./explorer";
 import {
   CALLERS,
   CALLER_NAMESPACES,
-  REDEFINE,
   SOURCE,
   editable,
   editedText,
@@ -40,8 +39,10 @@ import {
   sourceDocument,
   sourcePath,
   SOURCE_COMMANDS,
+  unquotedName,
   type Source,
 } from "./funcsource";
+import { redefineKeepingLogpoint } from "./logpoint";
 import { borrowWhenFree } from "./infoview";
 import { readInsight, turnedOff, type InsightFeature } from "./insightconfig";
 import type { Live } from "./live";
@@ -135,8 +136,14 @@ export class FunctionSources implements TextDocumentContentProvider {
   }
 
   /// The function a command was asked about: an explorer row's, a name
-  /// passed, the name under the cursor in a q editor, or one typed.
+  /// passed, the name under the cursor in a q editor, or one typed; a
+  /// backtick in front of it, as a symbol names it, is not part of it.
   private async target(arg: Node | string | undefined, verb: string): Promise<string | undefined> {
+    const name = await this.targetAsWritten(arg, verb);
+    return name === undefined ? undefined : unquotedName(name);
+  }
+
+  private async targetAsWritten(arg: Node | string | undefined, verb: string): Promise<string | undefined> {
     if (typeof arg === "string" && arg !== "") {
       return arg;
     }
@@ -253,13 +260,21 @@ export class FunctionSources implements TextDocumentContentProvider {
     let held = text;
     try {
       // Only on the process the question named (#1290).
-      const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, copy.name, copy.was, text), undefined, copy.process);
+      const got = await borrowWhenFree(
+        this.live,
+        (connection) => redefineKeepingLogpoint((q, ...args) => connection.call(q, ...args), copy.name, copy.was, text),
+        undefined,
+        copy.process,
+      );
       if (got === undefined) {
         void window.showInformationMessage(plainMessage(`q-lint: ${copy.process} is busy with a query; ${copy.name} was not redefined.`));
         return false;
       }
       // The text the process kept, which is not always the one sent (#1895).
-      held = typeof got.value === "string" ? got.value : text;
+      held = typeof got.value.held === "string" ? got.value.held : text;
+      if (got.value.lost !== undefined) {
+        void window.showWarningMessage(plainMessage(`q-lint: ${copy.name} was redefined on ${copy.process} without its logpoint: ${got.value.lost}`));
+      }
     } catch (error) {
       void window.showErrorMessage(plainMessage(`q-lint: ${copy.name} was not redefined on ${copy.process}: ${message(error)}`));
       return false;

@@ -164,3 +164,10 @@ test("Run Line and Run Selection hand over their answer and line; Run Block does
   await stub.commands.get("q-lint.queryBlock")();
   assert.strictEqual(got.length, 2);
 });
+
+test("the inline result drops a keyed table's rule, and keeps a data line of dashes (#2715)", () => {
+  assert.strictEqual(shortForm({ ok: true, type: 99, text: ["k| v", "-| -", "1| 3", "2| 4"] }), "k| v 1| 3 2| 4");
+  assert.strictEqual(shortForm({ ok: true, type: 99, text: ["kk| vvv", "--| ---", "1 | 3"] }), "kk| vvv 1 | 3");
+  assert.strictEqual(shortForm({ ok: true, type: 0, text: ["---", "abc"] }), "--- abc");
+  assert.strictEqual(shortForm({ ok: true, type: 98, text: ["s  ", "---", "---", "abc"] }), "s --- abc");
+});

@@ -3,12 +3,13 @@
 //
 // Rows are matched by their key when both results are keyed by the same
 // columns - a keyed table, a dictionary - and otherwise by their place.
-// Columns are matched by name. A cell is compared by the text the grid shows
-// for it, so a float compares to the decimals `q-lint.query.gridDecimals`
-// asks for, and a timestamp to its nanosecond. Only the rows each grid holds
-// are compared: a result cut at `q-lint.query.gridLimit` is compared as far
-// as it was sent, and a row the other side's cut may have left out is
-// neither added nor removed, only counted as not compared (#1640).
+// Columns are matched by name, those of one name in their order. A cell is
+// compared by the text the grid shows for it, so a float compares to the
+// decimals `q-lint.query.gridDecimals` asks for, and a timestamp to its
+// nanosecond. Only the rows each grid holds are compared: a result cut at
+// `q-lint.query.gridLimit` is compared as far as it was sent, and a row the
+// other side's cut may have left out is neither added nor removed, only
+// counted as not compared (#1640).
 import { rowCount, type Grid } from "./grid";
 
 /// The most changed cells, and removed rows, a diff lists: the rest are
@@ -97,14 +98,24 @@ export function diffGrids(before: Grid, after: Grid): GridDiff {
       used[r] = true;
     }
   }
-  // A column's place in `before`, by name: the first of that name.
-  const names = new Map<string, number>();
+  // A column's place in `before`, by name: columns of one name - a key and
+  // a value column, a join's two - in their order, the second to the
+  // second (#3074).
+  const names = new Map<string, number[]>();
   before.columns.forEach((c, i) => {
-    if (!names.has(c.name)) {
-      names.set(c.name, i);
+    const places = names.get(c.name);
+    if (places === undefined) {
+      names.set(c.name, [i]);
+    } else {
+      places.push(i);
     }
   });
-  const columnIn = after.columns.map((c) => names.get(c.name) ?? -1);
+  const seen = new Map<string, number>();
+  const columnIn = after.columns.map((c) => {
+    const nth = seen.get(c.name) ?? 0;
+    seen.set(c.name, nth + 1);
+    return names.get(c.name)?.[nth] ?? -1;
+  });
   const kept = new Set(columnIn.filter((i) => i >= 0));
   const changes: [number, number, string][] = [];
   let changed = 0;

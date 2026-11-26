@@ -279,6 +279,16 @@ struct Index {
     /// Each workspace folder as the client named it, which is how an answer
     /// names the files under it (`Sources::uri`).
     folders: Vec<Folder>,
+    /// The open documents, by key: what `follow` starts from, and whether
+    /// one was opened or closed since it last ran.
+    opened: HashSet<String>,
+    unfollowed: bool,
+    /// The files read from disk because an open document loads them, itself
+    /// or through another of these, and no workspace folder holds them
+    /// (`follow`). Each is `withheld`: found by Go to Definition, hover and
+    /// signature help, and defining nothing for the lint, as it defines
+    /// nothing for `qlinter .`, which never reads it.
+    followed: HashSet<String>,
 }
 
 /// A workspace folder: the path it was given as, which is what a removal
@@ -307,6 +317,9 @@ impl Folder {
 /// it reported names only it defines as undefined in the editor alone (#794).
 const MAX_FILES: usize = 20_000;
 const MAX_ENTRIES: usize = 500_000;
+/// And on the files read because an open document loads them from outside
+/// every folder (`Index::follow`).
+const MAX_FOLLOWED: usize = 1_000;
 
 /// One file in the index: what it defines read alone, what decides where
 /// its loaders put that, and the result, which is what `ws` holds.
@@ -314,7 +327,6 @@ const MAX_ENTRIES: usize = 500_000;
 struct Indexed {
     own: FileIndex,
     loads: Vec<(String, String)>,
-    implicit: Vec<String>,
     placement: Placement,
     placed: FileIndex,
     /// What the file reads, for the dependency graph `relate` draws when it
@@ -344,7 +356,19 @@ impl Index {
     /// `put` for an open document, which the scan may have passed by.
     fn open(&mut self, path: &str, text: &str, policy: &Policy) -> bool {
         let withheld = self.withheld(path, policy);
+        if is_q_path(path) {
+            self.unfollowed |= self.opened.insert(file_key(path));
+        }
         self.put(path, text, withheld)
+    }
+
+    /// The document at `path` was closed: the disk is the authority on it
+    /// again (`reload`), and what only it loaded is no longer followed.
+    fn close(&mut self, path: &str, policy: &Policy) -> bool {
+        // The files it loaded go when no other document leads to them,
+        // whether or not the file itself is one the index still reads.
+        self.unfollowed |= self.opened.remove(&file_key(path));
+        self.reload(path, policy)
     }
 
     /// `set`, leaving the placements to the caller's `settle`, so a batch
@@ -357,7 +381,7 @@ impl Index {
     fn put_keyed(&mut self, path: String, text: &str, withheld: bool) -> bool {
         let own = index(text);
         let read = guarded(|| q_lint_rs::references(text, false)).unwrap_or_default();
-        let (loads, implicit) = (read.loads.clone(), read.implicit_defines.clone());
+        let loads = read.loads.clone();
         let old = self.files.remove(&path);
         self.stale |= old.as_ref().is_none_or(|old| {
             old.loads != loads || old.read.module != read.module || old.read.uses != read.uses
@@ -382,7 +406,7 @@ impl Index {
             .map(|old| old.placement.clone())
             .unwrap_or_default();
         let mut placed = own.clone();
-        placement.apply(&mut placed, &implicit);
+        placement.apply(&mut placed, &read);
         if old.is_none() {
             self.ws.place(Path::new(&path), &placement);
         }
@@ -405,7 +429,6 @@ impl Index {
         let file = Indexed {
             own,
             loads,
-            implicit,
             placement,
             placed,
             read,
@@ -419,14 +442,18 @@ impl Index {
 
     /// Forget `path`, leaving the placements to the caller's `settle`.
     fn forget(&mut self, path: &str) -> bool {
-        let key = file_key(path);
-        self.reached.remove(&key);
-        match self.files.remove(&key) {
+        self.forget_keyed(&file_key(path))
+    }
+
+    /// `forget` for the file keyed `key`.
+    fn forget_keyed(&mut self, key: &str) -> bool {
+        self.reached.remove(key);
+        match self.files.remove(key) {
             Some(old) => {
                 if !old.withheld {
                     self.ws.remove(&old.placed);
                 }
-                self.ws.place(Path::new(&key), &Placement::default());
+                self.ws.place(Path::new(key), &Placement::default());
                 self.generation += 1;
                 self.reads += 1;
                 self.stale = true;
@@ -443,8 +470,15 @@ impl Index {
     /// can put a file anywhere but the root, so without one there is no
     /// graph to build.
     fn settle(&mut self) -> bool {
+        // What the open documents load from outside every folder first,
+        // since a file read or forgotten there is one more or one fewer to
+        // place.
+        let generation = self.generation;
+        if std::mem::take(&mut self.unfollowed) | self.stale {
+            self.follow();
+        }
         if !std::mem::take(&mut self.stale) {
-            return false;
+            return self.generation != generation;
         }
         let keys: Vec<String> = self.files.keys().cloned().collect();
         let contexts = self
@@ -453,7 +487,28 @@ impl Index {
             .any(|f| f.read.module || f.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."));
         let placements = if contexts {
             let paths: Vec<std::path::PathBuf> = keys.iter().map(Into::into).collect();
-            let reads: Vec<_> = keys.iter().map(|k| &self.files[k].read).collect();
+            // A withheld document loads nothing for the others, as it
+            // defines nothing for them: `qlinter .` never reads it, so its
+            // `\d .a` / `\l lib.q` moves no name of lib.q there (#2825). It
+            // is still put where the files that load it say.
+            let quiet: HashMap<&String, References> = keys
+                .iter()
+                .filter(|k| self.files[*k].withheld)
+                .map(|k| {
+                    let module = self.files[k].read.module;
+                    (
+                        k,
+                        References {
+                            module,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect();
+            let reads: Vec<_> = keys
+                .iter()
+                .map(|k| quiet.get(k).unwrap_or(&self.files[k].read))
+                .collect();
             let cwds = self.cwds();
             guarded(|| q_lint_rs::graph::placements(&paths, &reads, &cwds))
                 .unwrap_or_else(|_| vec![Placement::default(); keys.len()])
@@ -474,7 +529,7 @@ impl Index {
             changed = true;
             self.ws.place(Path::new(key), &placement);
             let mut placed = file.own.clone();
-            placement.apply(&mut placed, &file.implicit);
+            placement.apply(&mut placed, &file.read);
             file.placement = placement;
             if placed != file.placed {
                 if !file.withheld {
@@ -487,7 +542,80 @@ impl Index {
         if changed {
             self.generation += 1;
         }
-        changed
+        changed || self.generation != generation
+    }
+
+    /// Read each file an open document loads from outside every workspace
+    /// folder, and each one those load in turn, and forget the ones no open
+    /// document leads to any more. With no folder at all - a single file
+    /// opened, as Neovim and Helix open one without a root - or for
+    /// `\l ../outside/o.q`, the load's link led to the file and nothing it
+    /// defines was known: no definition and no signature (#2964).
+    ///
+    /// The disk is asked only about the loads of an open document and of a
+    /// file read here, and only while the index reads the disk at all. A
+    /// file under a folder is the scan's to read, or to pass by.
+    fn follow(&mut self) {
+        // One the scan has read since, or a document opened since, is no
+        // longer here on a load's account.
+        let (files, opened) = (&self.files, &self.opened);
+        self.followed
+            .retain(|key| files.get(key).is_some_and(|f| f.withheld) && !opened.contains(key));
+        let mut seen: HashSet<String> = HashSet::new();
+        if self.enabled {
+            let cwds = self.cwds();
+            let roots: Vec<std::path::PathBuf> =
+                self.roots.iter().map(|r| file_key(r).into()).collect();
+            let mut pending: Vec<String> = self.opened.iter().cloned().collect();
+            while let Some(from) = pending.pop() {
+                if !seen.insert(from.clone()) {
+                    continue;
+                }
+                let Some(file) = self.files.get(&from) else {
+                    continue;
+                };
+                let loads: Vec<String> = file.loads.iter().map(|(load, _)| load.clone()).collect();
+                let cwd = q_lint_rs::graph::start_dir(&cwds, Path::new(&from)).to_path_buf();
+                for load in loads {
+                    let found = |path: &Path| {
+                        let path = path.to_str()?;
+                        if self.files.contains_key(path) {
+                            return Some(path.to_string());
+                        }
+                        (is_q_path(path) && Path::new(path).is_file()).then(|| file_key(path))
+                    };
+                    let targets =
+                        q_lint_rs::graph::loaded(Path::new(&from), &load, &cwd, found, |_| vec![]);
+                    for key in targets {
+                        if !self.files.contains_key(&key) {
+                            let outside =
+                                !roots.iter().any(|root| Path::new(&key).starts_with(root));
+                            if !outside || self.followed.len() >= MAX_FOLLOWED {
+                                continue;
+                            }
+                            let Some((text, _)) = on_disk(&key) else {
+                                continue;
+                            };
+                            self.put_keyed(key.clone(), &text, true);
+                            self.followed.insert(key.clone());
+                        }
+                        if self.followed.contains(&key) {
+                            pending.push(key);
+                        }
+                    }
+                }
+            }
+        }
+        let gone: Vec<String> = self
+            .followed
+            .iter()
+            .filter(|key| !seen.contains(*key))
+            .cloned()
+            .collect();
+        for key in gone {
+            self.followed.remove(&key);
+            self.forget_keyed(&key);
+        }
     }
 
     /// The directories a relative `\l` may be tried against first: each
@@ -511,18 +639,33 @@ impl Index {
     /// the open documents, whose buffers still hold their text. A watcher
     /// reports a deleted folder as one event for the folder, not one per
     /// file inside it (#543).
+    ///
+    /// By the name the event gives it, below the real path of the folder it
+    /// was in, which is the key it was read under. `file_key` of the whole
+    /// path follows whatever answers to it now, and on a disk that ignores
+    /// case lib.q renamed Lib.q still answers to lib.q - as Lib.q, a key
+    /// the index does not hold yet, so the old one was never forgotten and
+    /// the file was listed twice (#2817). Each is forgotten by its key as
+    /// it stands, for the same reason, and a key that is an open document's
+    /// by the disk's answer is that document's still.
     fn remove_tree(&mut self, path: &str, docs: &Documents) -> bool {
-        let gone = std::path::PathBuf::from(file_key(path));
+        let given = Path::new(path);
+        let gone = match (given.parent(), given.file_name()) {
+            (Some(dir), Some(name)) => Path::new(&file_key(&dir.to_string_lossy())).join(name),
+            _ => file_key(path).into(),
+        };
         let open: Vec<String> = docs.keys().map(|uri| file_key(&path_of(uri))).collect();
         let under: Vec<String> = self
             .files
             .keys()
-            .filter(|k| std::path::Path::new(k).starts_with(&gone) && !open.contains(k))
+            .filter(|k| {
+                Path::new(k).starts_with(&gone) && !open.contains(k) && !open.contains(&file_key(k))
+            })
             .cloned()
             .collect();
         let mut changed = false;
         for key in under {
-            changed |= self.forget(&key);
+            changed |= self.forget_keyed(&key);
         }
         changed | self.settle()
     }
@@ -652,6 +795,8 @@ impl Index {
         self.files.clear();
         self.reached.clear();
         self.ws = Workspace::default();
+        self.opened.clear();
+        self.followed.clear();
         self.generation += 1;
         if self.enabled {
             self.scan(policy, docs);
@@ -673,11 +818,22 @@ impl Index {
         policy: &Policy,
         docs: &Documents,
     ) {
-        self.roots.retain(|r| !removed.contains(r));
-        self.folders.retain(|f| !removed.contains(&f.path));
+        // By the file each names, as the files under them are keyed: a
+        // client that spells a folder another way when it removes it - a
+        // trailing `/`, a `.` in the path, another case where the disk has
+        // none - left it a root, and everything in it indexed (#2962).
+        let gone: Vec<String> = removed.iter().map(|r| file_key(r)).collect();
+        self.roots.retain(|r| !gone.contains(&file_key(r)));
+        self.folders.retain(|f| !gone.contains(&file_key(&f.path)));
+        let mut known: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
         let added: Vec<String> = added
             .into_iter()
-            .filter(|(path, _)| !self.roots.contains(path))
+            .filter(|(path, _)| {
+                let key = file_key(path);
+                let new = !known.contains(&key);
+                known.push(key);
+                new
+            })
             .map(|folder| {
                 let path = folder.0.clone();
                 self.folders.push(Folder::of(folder));
@@ -687,7 +843,7 @@ impl Index {
         // A file no configuration governs is rooted at its own folder.
         policy.set_roots(self.roots.iter().chain(&added));
         let kept: Vec<String> = self.roots.iter().map(|r| file_key(r)).collect();
-        for gone in removed.iter().map(|r| file_key(r)) {
+        for gone in gone {
             let under = |key: &str, root: &str| std::path::Path::new(key).starts_with(root);
             let stale: Vec<String> = self
                 .files
@@ -1280,7 +1436,7 @@ impl Options {
     fn severity_of(&self, code: &str) -> Option<i64> {
         self.severity
             .iter()
-            .filter(|(s, _)| s == "ALL" || code.starts_with(s.as_str()))
+            .filter(|(s, _)| crate::config::names(s, code))
             .max_by_key(|(s, _)| if s == "ALL" { 0 } else { s.len() })
             .map(|&(_, level)| level)
     }
@@ -1795,7 +1951,7 @@ pub fn serve(
                         kept.remove(&uri);
                         // The buffer is gone, so the disk is the authority again - and
                         // unsaved definitions it held no longer define anything.
-                        if idx.reload(&path_of(&uri), policy) {
+                        if idx.close(&path_of(&uri), policy) {
                             relint(
                                 writer, &docs, &unsaved, &mut kept, &idx, None, policy, &opts,
                             )?;
@@ -2379,13 +2535,23 @@ fn signatures(text: &str) -> Vec<(String, Vec<String>)> {
 /// The reply to a request whose handler panicked: JSON-RPC 2.0 §5.1's
 /// `-32603 Internal error`, rather than no reply, which a client cannot tell
 /// from a hung server.
-/// Every read of a global in `text`, as `Indexed::tally` keeps them.
+/// Every read of a global in `text`, as `Indexed::tally` keeps them - and
+/// every symbol, tick and all, since a count takes one that may be a name
+/// for a read of it (#2679).
 fn tally(text: &str) -> Vec<(String, bool)> {
     guarded(|| {
+        let symbols = text.match_indices('`').map(|(tick, _)| {
+            let rest = &text[tick + 1..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+                .unwrap_or(rest.len());
+            (text[tick..tick + 1 + end].to_string(), false)
+        });
         q_lint_rs::mentions(text)
             .into_iter()
             .filter(|m| m.definition.is_none())
             .map(|m| (m.name, m.implicit))
+            .chain(symbols)
             .collect()
     })
     .unwrap_or_default()
@@ -2701,7 +2867,7 @@ fn code_actions(
         // The reason it is refused only to a menu that asked for refactors
         // by name: the lightbulb asks as the cursor moves.
         let why = opts.disabled_actions && only.is_some();
-        actions.extend(extract_action(params, docs, why));
+        actions.extend(extract_action(params, docs, ws, why));
     }
     if only
         .as_ref()
@@ -2956,7 +3122,7 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
         let d = m.definition.as_ref()?;
         (d.function
             && m.at == d.start
-            && (m.at == 0 || source[..m.at].ends_with('\n'))
+            && starts_statement(source, m.at)
             && (d.start..=d.end).contains(&cursor))
         .then_some((m, d))
     })?;
@@ -2964,17 +3130,30 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     if above.contains("@param") || above.contains("@return") {
         return None;
     }
+    // A file written with CRLF gets CRLF (#2795).
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    // The names each slot binds: `` x:`j `` is x, and the pattern `(a;b)` a
+    // and b, as QS007 reads the block back (#2778). An empty slot, the
+    // second of `{[a;] a}`, has no name to document (#2779).
     let mut block: String = definition
         .params
         .iter()
-        .map(|param| format!("/ @param {param}\n"))
+        .flat_map(|param| q_lint_rs::slot_names(param))
+        .map(|name| format!("/ @param {name}{newline}"))
         .collect();
-    block.push_str("/ @return\n");
+    block.push_str("/ @return");
+    block.push_str(newline);
     let at = lines.json(m.at);
     let mut changes = serde_json::Map::new();
+    // Above the line, which `q)` prompts may start (#3003).
+    let line = json!({"line": at["line"], "character": 0});
     changes.insert(
         uri.clone(),
-        json!([{"range": {"start": at, "end": at}, "newText": block}]),
+        json!([{"range": {"start": line, "end": line}, "newText": block}]),
     );
     Some(json!({
         "title": format!("Generate qDoc for {}", &source[m.at..m.at + m.len]),
@@ -3064,7 +3243,7 @@ fn functional_actions(params: &Value, docs: &Documents, why: bool) -> Vec<Value>
 /// (`q_lint_rs::extract`), and the selection a call to it. Nothing for an
 /// empty selection; for one it refuses, nothing, or with `why` the action
 /// disabled with the reason.
-fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> {
+fn extract_action(params: &Value, docs: &Documents, ws: &Workspace, why: bool) -> Option<Value> {
     let uri = uri_of(&params["textDocument"]);
     let source = docs.get(&uri).filter(|_| is_q_uri(&uri))?;
     let lines = Lines::new(source);
@@ -3081,7 +3260,11 @@ fn extract_action(params: &Value, docs: &Documents, why: bool) -> Option<Value> 
     let title = "Extract function";
     match q_lint_rs::extract(source, from, to) {
         Ok(found) => {
-            let name = q_lint_rs::fresh_name(source, "extracted");
+            // A name another file defines is in use as well, under whatever
+            // namespace: this file may load that one, or be loaded by it,
+            // into the context the new definition is made in (#2793).
+            let taken = |name: &str| ws.names().any(|(n, _)| n.rsplit('.').next() == Some(name));
+            let name = q_lint_rs::fresh_name_but(source, "extracted", taken);
             let insert = lines.json(found.insert_at);
             let mut changes = serde_json::Map::new();
             // Both edits are in the original's positions, as LSP has them;
@@ -3559,6 +3742,17 @@ fn severity(name: &str) -> i64 {
         "hint" => 4,
         _ => 2,
     }
+}
+
+/// Whether the name at byte `at` starts a statement of its own: at column
+/// 0, or right after the `q)` prompts its line starts with. q runs
+/// `q)h:{x}` and `q)q)h:{x}` as `h:{x}`, so each is a definition to run, to
+/// count the references of and to document like one at column 0 (#3003). A
+/// run with another language in it, `k)q)h:{x}`, is not q's to run.
+fn starts_statement(text: &str, at: usize) -> bool {
+    let line = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let lead = &text.as_bytes()[line..at];
+    lead.len().is_multiple_of(2) && lead.chunks(2).all(|prompt| prompt == b"q)")
 }
 
 /// Where each line starts, as an LSP client counts lines: the protocol ends

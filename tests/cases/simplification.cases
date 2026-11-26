@@ -67,6 +67,22 @@ t:({x} each)
 === clean | each-prior is something else
 r:{[p] {x}':[p]}
 
+=== QR002 | each over apply, and each in brackets (KDB-X: {x}@'-1 2 -3 is -1 2 -3, #2928)
+r:{[p] {x}@'p}
+s:{[p] each[{x};p]}
+
+=== clean | each before a bracket is applied to it first: {x} each[1 2] is a projection of each, and {x}@'[1 2] of @' (KDB-X, #2929)
+r:{x} each[1 2]
+s:{x} each [1 2]
+u:{x}@'[1 2]
+v:each[{x};]
+
+=== clean | an iterator on each is each's own: {x} each/[1 2] is 'type (KDB-X, #2930)
+r:{x} each/[1 2]
+s:{x} each'[1 2]
+u:{x} each\[1 2]
+v:{x} each/: 1 2
+
 === QR003 | distinct after sorting distinct items
 r:{[p] distinct asc distinct p}
 
@@ -106,6 +122,28 @@ r2:{[p] {x - 1} each p}
 
 === clean | x indexed at a negative literal is not arithmetic (q 5: {x -1} each (1 2;3 4) is 0N 0N)
 r:{[p] {x -1} each p}
+s:{[p] {x -.5} each p}
+
+=== QR004 | a number with a signed exponent, one that starts with its point, and a time (KDB-X: {x*1e-3} each 1 2 is 0.001 0.002, #2937)
+b:{x*1e-3} each 1 2
+c:{x+.5} each 1 2
+d:{x+00:01} each 00:02 00:03
+e:{1e-3*x} each 1 2
+f:{.5-x} each 1 2
+
+=== QR004 | each over apply, and each in brackets (KDB-X: {x+1}@'-1 2 -3 is 0 3 -2, #2928)
+r:{[p] {x+1}@'p}
+s:{[p] each[{x+1};p]}
+u:{[p] each[{2*x};p]}
+
+=== clean | each before a bracket, or under an iterator of its own, is no each over the lambda: 'type on KDB-X (#2929, #2930)
+r:{x+1}each[1 2]
+s:{x+1}@'[1 2]
+u:{x+1} each/[1 2]
+v:{x+1} each/: 1 2
+w:{x-1}each'[(1 2;3 4)]
+y:each[{x -1};p]
+z:each[{x+1};]
 
 === clean | a lambda that is not one atomic operation needs its each
 r1:{[p] {x,1} each p}

@@ -296,3 +296,12 @@ k:2==/ 1
 m:2==:: 1
 f:2==
   3
+
+=== clean profile: general | a symbol ending in a colon compared with = (#2850; q 5: `a:=`b is 0b)
+a:`a:=b
+b:`:x:=y
+c:`a:=`b
+
+=== QE004 profile: general | while the pair after such a symbol is still named as itself (#2850; q 5: '=, '>)
+a:`a:==b
+b:`a:=>b

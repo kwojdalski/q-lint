@@ -63,15 +63,18 @@ function inline(text: string, values: Record<string, LiveValue>, breaks = false)
     plain.push(text);
     return `\u0000${held.push(html) - 1}\u0000`;
   };
+  // A NUL is U+FFFD, as CommonMark reads it: none is left to be taken for
+  // a held piece's mark (#2662).
+  const unmarked = (t: string): string => t.replace(/\u0000/g, "\ufffd");
   let s = "";
   let from = 0;
   for (const span of inlineSpans(text)) {
     // A tag is shown as written, as the page shows no HTML of the notebook's.
     const html = span.kind === "code" ? `<code>${escapeHtml(codeText(span.expr))}</code>` : span.kind === "html" ? escapeHtml(span.expr) : liveHtml(span.expr, values[span.expr]);
-    s += text.slice(from, span.start) + hold(html, text.slice(span.start, span.end));
+    s += unmarked(text.slice(from, span.start)) + hold(unmarked(html), unmarked(text.slice(span.start, span.end)));
     from = span.end;
   }
-  s += text.slice(from);
+  s += unmarked(text.slice(from));
   if (breaks) {
     s = s.replace(/(?<!\\)((?:\\\\)*)\\\n/g, (_m, pairs: string) => `${pairs}${hold("<br>")}\n`).replace(/[ \t]* {2}\n/g, () => `${hold("<br>")}\n`);
   }

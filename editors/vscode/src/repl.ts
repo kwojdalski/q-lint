@@ -3,7 +3,7 @@
 // the word Tab completes and what it offers, and the history and its search.
 // Nothing here touches VS Code or a process.
 
-import { blockDepth, trimBlanks } from "./statements";
+import { COMMAND_LINE, blockDepth, trimBlanks } from "./statements";
 
 /// Whether each `(`, `[` and `{` of `text` is closed and no string is left
 /// open: then Enter runs it, else it starts a new line, as the Julia REPL
@@ -11,7 +11,8 @@ import { blockDepth, trimBlanks } from "./statements";
 /// `"..."` with `\` escapes, and a comment runs from a `/` at the start of
 /// a line, or after a space or a tab, to the line's end, as q reads it, or
 /// a block from a line of `/` alone, outside any bracket, to one of `\`
-/// alone - blocks nest, as q reads them.
+/// alone - blocks nest, as q reads them. Nor do those of a system command's
+/// line, which is the command's text and not q's: `\grep -c '(' f` (#2920).
 export function isComplete(text: string): boolean {
   const { depth, inString } = scan(text);
   return depth <= 0 && !inString;
@@ -52,6 +53,11 @@ function scan(text: string, stops: number[] = []): Open & { at: Open[] } {
           inComment = true;
           continue;
         }
+      }
+      // A system command's line is read to its end as the command's (#2920).
+      if (block === 0 && depth <= 0 && COMMAND_LINE.test(line)) {
+        inComment = true;
+        continue;
       }
     }
     if (inComment || block > 0) {

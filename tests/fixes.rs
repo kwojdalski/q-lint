@@ -207,6 +207,25 @@ fn a_fix_after_a_multibyte_token_does_not_panic() {
     }
 }
 
+/// QF001's rename walked the lambda byte by byte and sliced the text at each:
+/// inside any character past ASCII - an `é`, a pasted no-break space - which
+/// ended `--fix` and `--diff` in exit 101, on the very file QE012 says to
+/// fix (#2863).
+#[test]
+fn a_rename_in_a_lambda_holding_a_multibyte_character_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    for (source, renamed) in [
+        ("f:{[aj]\u{e9} aj}\n", "{[ajArg]\u{e9} ajArg}"),
+        ("f:{[aj] aj\u{a0}}\n", "{[ajArg] ajArg\u{a0}}"),
+        ("f:{[aj] aj,\u{2019}aj}\n", "{[ajArg] ajArg,\u{2019}ajArg}"),
+    ] {
+        let findings = lint(source, "probe.q", Profile::General);
+        let fixes = fixes_for(findings.iter().filter(|f| f.code == "QF001"), source);
+        assert_eq!(fixes.len(), 1, "{findings:?}");
+        assert_eq!(fixes[0].replacement, renamed, "{source:?}");
+    }
+}
+
 /// Nothing to rewrite outside the profile that asks for it. The CLI's own
 /// default is `uqf`; `general` is the one that answers only "would q refuse
 /// this", and juxtaposition is not something q refuses.
@@ -342,6 +361,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB012", "f:{[x] x+1;}", "f:{[x] x+1}", false),
     ("QB010", "a:1;b:a -1", "a:1;b:a - 1", false),
     ("QR001", "r:reverse asc 3 1 2", "r:desc 3 1 2", false),
+    ("QR001", "r:reverse desc 3 1 2", "r:asc 3 1 2", false),
     ("QR002", "r:{x} each 1 2 3", "r:1 2 3", false),
     ("QR002", "r:count {x} each y", "r:count y", false),
     ("QR002", "r:{x}' y", "r:y", false),
@@ -446,6 +466,11 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
     // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
     ("QP003", "a:.z.Z", "a:.z.p", false),
+    // `ltime` of the UTC clock goes whole (#2722).
+    ("QP003", "a:`date$ltime .z.p", "a:`date$.z.p", false),
+    ("QP003", "a:ltime[.z.p]", "a:.z.p", false),
+    // The clock, not the symbol that spells it (#2721).
+    ("QP003", "a:(`.z.P;.z.P)", "a:(`.z.P;.z.p)", false),
     (
         "QB006",
         "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",
@@ -528,12 +553,38 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         "f:{r:(); do[n; r,:1]; r}",
         false,
     ),
+    // A parameter is a local whatever is assigned, and outside a lambda
+    // both spellings write the global (#2798).
+    (
+        "QV003",
+        "f:{[r] do[2; r:r,3]; r}",
+        "f:{[r] do[2; r,:3]; r}",
+        false,
+    ),
+    ("QV003", "r:1 2\ndo[3; r:r,4]", "r:1 2\ndo[3; r,:4]", false),
+    // A symbol runs on over `:` and `/`: the word in a file handle is no
+    // use of the parameter (#2799).
+    (
+        "QF001",
+        "f:{[count] (count;`:count;`:dir/count)}",
+        "f:{[countArg] (countArg;`:count;`:dir/count)}",
+        false,
+    ),
+    (
+        "QF001",
+        "g:{[type] (type;`:db/type;`a:type;`type)}",
+        "g:{[typeArg] (typeArg;`:db/type;`a:type;`type)}",
+        false,
+    ),
     ("QR004", "r:{x+1} each 1 2 3", "r:1 2 3+1", false),
     ("QR004", "r:{2-x} each a,b", "r:2-a,b", false),
     ("QR004", "r:{x%2} each a,b", "r:(a,b)%2", false),
     ("QR004", "r:count {x*2} each b", "r:count b*2", false),
     ("QR004", "f:{a{x+1} each b}", "f:{a b+1}", false),
     ("QR004", "r:{x - 1} each b", "r:b-1", false),
+    // An exponent with a sign, a number that starts with its point (#2937).
+    ("QR004", "r:{x*1e-3} each b", "r:b*1e-3", false),
+    ("QR004", "r:{.5-x} each a,b", "r:.5-a,b", false),
     ("QR004", "s:a -{1+x} each 2 3", "s:a - 1+2 3", false),
     // In a query the argument ends where the column does (#350).
     (
@@ -574,6 +625,22 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         "f:{1}\nr:(!).(\"S=;\"); s:f[]\nt:g . (),1; u:f . ()",
         true,
     ),
+    // `[]` is the call only of a function that takes nothing: after a
+    // builtin, a lambda of two arguments or data it turns q's 'type into a
+    // value - `count[]` is 1, `{[a;b] a+b}[]` a projection and `d[]` is `d`
+    // (KDB-X) - so `--fix` leaves those to the editor (#2934).
+    ("QA004", "r:{[] 42} . ()", "r:{[] 42}[]", true),
+    ("QA004", "n:count . ()", "n:count[]", false),
+    ("QA004", "p:{[a;b] a+b} . ()", "p:{[a;b] a+b}[]", false),
+    ("QA004", "d:`a`b!1 2;c:d . ()", "d:`a`b!1 2;c:d[]", false),
+    ("QA004", "f:{x+y};r:f . ()", "f:{x+y};r:f[]", false),
+    (
+        "QA004",
+        "f:{1};f:{x+y};r:f . ()",
+        "f:{1};f:{x+y};r:f[]",
+        false,
+    ),
+    ("QA004", "f:{1};g:{[f] f . ()}", "f:{1};g:{[f] f[]}", false),
     ("QT008", "r:til 5.0", "r:til 5", true),
     ("QT008", "r:til 3f", "r:til 3", true),
     // One digit in quotes is a char atom, which is 'stype too (#565).
@@ -596,7 +663,36 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] {a+y}'[1 2;3 4]}",
-        "f:{[a] {[x;y;a] a+y}[;;a]'[1 2;3 4]}",
+        "f:{[a] {[unused;y;a] a+y}[;;a]'[1 2;3 4]}",
+        false,
+    ),
+    // An argument the lambda does not read is named for that, where `x`
+    // and `y` would be parameters QF016 reports (#2797).
+    (
+        "QF005",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {[unused1;unused2;z;a] a+z}[;;;a] . (1;2;3)}",
+        false,
+    ),
+    (
+        "QF005",
+        "f:{[a] {x+a+z}[1;2;3]}",
+        "f:{[a] {[x;unused;z;a] x+a+z}[;;;a][1;2;3]}",
+        false,
+    ),
+    // `{[] b}` takes one argument: `{[;b]` would hold the empty slot QF009
+    // reports, and `{[b] b}[b]` is the call and no projection (#2797).
+    (
+        "QF005",
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[b] g:{[unused;b] b}[;b]; g[]}",
+        false,
+    ),
+    // `.z.s` in a lambda nested deeper is that lambda (#2796).
+    (
+        "QF005",
+        "f:{[a] {$[x>0;a+{.z.s x} x-1;0]} 3}",
+        "f:{[a] {[x;a] $[x>0;a+{.z.s x} x-1;0]}[;a] 3}",
         false,
     ),
     (
@@ -608,7 +704,7 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
         "QF005",
         "f:{[a] g:{a}; g 1}",
-        "f:{[a] g:{[x;a] a}[;a]; g 1}",
+        "f:{[a] g:{[unused;a] a}[;a]; g 1}",
         false,
     ),
     (
@@ -644,6 +740,12 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QB014", "r:10/2", "r:10%2", false),
     ("QB017", "a:1\na:a\nb:2", "a:1\nb:2", false),
     ("QB017", "a:1;a:a;b:2", "a:1;b:2", false),
+    // After a `q)` prompt the statement goes whole, as on a plain line: q 5
+    // prints what `q)a` leaves on every load (#2998).
+    ("QB017", "a:til 3\nq)a:a\nb:2", "a:til 3\nb:2", false),
+    ("QB017", "a:til 3\nq)q)a:a\n", "a:til 3\n", false),
+    ("QB017", "a:1\nq)a:a;b:2", "a:1\nq)b:2", false),
+    ("QB017", "a:1\nq)a:a / note", "a:1\nq) / note", false),
     // A comment after it keeps its blank: `;/` is over (#403).
     ("QB017", "a:1\nx:1;a:a / note", "a:1\nx:1; / note", false),
     ("QB017", "a:1\nx:1;a:a; / note", "a:1\nx:1; / note", false),
@@ -664,6 +766,37 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+    // The `z` goes with the `T`, or the literal is a datetime still (#2743).
+    (
+        "QP002",
+        "r:2024.01.01T12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
+    (
+        "QP002",
+        "r:2024.01.01D12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
+    // The type in parentheses, and as the first argument of `$` (#2720).
+    ("QP002", "r:(15h)$2024.01.01", "r:(12h)$2024.01.01", false),
+    ("QP002", "r:(`datetime)$.z.p", "r:(`timestamp)$.z.p", false),
+    (
+        "QP002",
+        "r:$[\"z\";2024.01.01]",
+        "r:$[\"p\";2024.01.01]",
+        false,
+    ),
+    (
+        "QP002",
+        "r:$[`datetime;2024.01.01D12]",
+        "r:$[`timestamp;2024.01.01D12]",
+        false,
+    ),
+    // The null in lower case is the same null (#2719).
+    ("QP002", "r:0nz", "r:0np", false),
+    ("QP002", "r:-0wz", "r:-0wp", false),
     (
         "QP002",
         "s:\"15h$\";y:15h$2020.01.01",
@@ -747,6 +880,13 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QT029", "h:hopen[`db:5000]", "h:hopen[`:db:5000]", false),
+    // A symbol that runs on over `/` takes the colon too (#2886).
+    (
+        "QT029",
+        "h:hopen `unix://5000",
+        "h:hopen `:unix://5000",
+        false,
+    ),
     // Each look-alike becomes its ASCII; the one in the string stays.
     ("QE012", "r:1\u{a0}2", "r:1 2", true),
     (
@@ -799,7 +939,6 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
     for (code, source) in [
         ("QS004", "r:2 (3)"),                // would become the vector 2 3
         ("QS004", "r:(2)3"),                 // would become the number 23
-        ("QS004", "a:1;r:a -(1)"),           // would become a applied to -1
         ("QS004", "r:(2)\n  -1"),            // the vector 2 -1 across the line (#773)
         ("QS004", "l:1 2;r:l (1)\n  2"),     // and l 1 2 (#773)
         ("QR002", "g:{x} each"),             // a function, with nothing to return
@@ -838,6 +977,9 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QP002", "r:`datetime$x"),
         ("QP002", "r:\"z\"$-923892.12"),
         ("QP002", "r:15h$x"),
+        ("QP002", "r:(15h)$x"), // nor with the type in parentheses (#2720)
+        ("QP002", "r:$[`datetime;x]"),
+        ("QP002", "r:(-15h)$\"2024.01.01T00:00\""), // a parse reads no timestamp from that text
         (
             "QF005",
             "f:{[k] g:{[a;b;c;d;e;f;g;h] k+h}; g[1;2;3;4;5;6;7;8]}",
@@ -846,9 +988,24 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QF005", "h:{a:{a+1};a}"),
         ("QF005", "k:{[b] r:{a+x} each b; a:2; r}"),
         ("QF005", "f:{[a] {[c:a] c}}"), // a pattern, not a body to pass it into (#637)
+        // `.z.s` would be the lambda with one more parameter, and its call a
+        // projection (#2796)
+        ("QF005", "f:{[a] {$[x>0;a+.z.s x-1;0]} 3}"),
+        ("QF005", "f:{[a] {[n] $[n>0;a+.z.s[n-1];0]} 3}"),
+        // The body has `unused` for something else (#2797)
+        ("QF005", "f:{[a] g:{a+unused}; g 1}"),
         // A bracket argument would become a key-column header (#406)
         ("QR004", "a:1 2 3;r:{x*2}'[a]"),
         ("QR004", "a:1 2 3;r:{x*2} each[a]"),
+        // Each over apply and each in brackets are reported, not rewritten.
+        ("QR004", "a:1 2 3;r:{x*2}@'a"),
+        ("QR004", "a:1 2 3;r:each[{x*2};a]"),
+        ("QR002", "a:1 2 3;r:{x}@'a"),
+        ("QR002", "a:1 2 3;r:each[{x};a]"),
+        ("QV002", "a:1 2 3;r:abs@'a"),
+        ("QV002", "a:1 2 3;r:each[abs;a]"),
+        // `{x -.5}` indexes x, and has no arithmetic to lift.
+        ("QR004", "r:{x -.5} each b"),
         // A symbol applied to () is a projection, which `[]` would call (#408)
         ("QA004", "f:{42};r:`f . ()"),
         // A comment holding a `}` would go with the code (#410)
@@ -881,6 +1038,8 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QT029", "h:hopen 1.5"), // no handle it spells
         ("QT029", "h:hopen -1"),
         ("QT029", "h:hopen `"),
+        ("QT029", "h:hopen `a`b"), // nor a vector with a colon (#2887)
+        ("QT029", "h:hopen 0N"),
         ("QE012", "s:\u{201c}hi"),            // no close on the line
         ("QE012", "s:\u{201c}C:\\d\u{201d}"), // a backslash would be an escape
         ("QE012", "a:`\u{e9}"),               // no ASCII it stands for
@@ -888,6 +1047,12 @@ fn no_fix_where_the_rewrite_would_change_the_program() {
         ("QV003", "f:{[n] r:0; i:0; while[i<n; r:r,i; i+:1]; r}"),
         ("QV003", "f:{[s] r:`; do[2; r:r,s]; r}"),
         ("QV003", "r:\"a\"\ndo[3; r:r,\"b\"]"),
+        // `r:r,x` is all that makes `r` a local: `r,:x` would amend the
+        // global `r` (#2798)
+        ("QV003", "r:1 2\nf:{do[2; r:r,x]; r}"),
+        ("QV003", "r:1 2\ng:{[x] do[1; r:r,x]; count r}"),
+        ("QV003", "f:{g:{r:()}; do[2; r:r,x]; r}"), // assigned in another lambda
+        ("QV003", "f:{s:`r:1; do[2; r:r,x]; r}"),   // and in a symbol
     ] {
         for finding in lint(source, "probe.q", Profile::Uqf)
             .iter()
@@ -1775,6 +1940,36 @@ fn qf005_fix_raises_no_qs008() {
     }
 }
 
+/// Nor does it write a parameter the linter's own rules then report: an
+/// empty slot (QF009) for `{[] b}`, or an `x` and `y` never read (QF016)
+/// before the `z` that is (#2797).
+#[test]
+fn qf005_fix_writes_no_parameter_another_rule_reports() {
+    use q_lint_rs::{Profile, fix_for, lint};
+    for source in [
+        "f:{[b] g:{[] b}; g[]}",
+        "f:{[a] {a+z} . (1;2;3)}",
+        "f:{[a] {a+y}'[1 2;3 4]}",
+        "f:{[a] g:{a}; g 1}",
+    ] {
+        for profile in [Profile::Style, Profile::StyleQ, Profile::Uqf] {
+            let finding = lint(source, "probe.q", profile)
+                .into_iter()
+                .find(|f| f.code == "QF005")
+                .expect("QF005");
+            let fix = fix_for(&finding, source).expect("a fix");
+            let fixed = format!(
+                "{}{}{}",
+                &source[..fix.start],
+                fix.replacement,
+                &source[fix.end..]
+            );
+            let after = lint(&fixed, "probe.q", profile);
+            assert!(after.is_empty(), "{fixed}: {after:?}");
+        }
+    }
+}
+
 /// Two fixes that touch are applied in one pass, each against the source
 /// as it was. QS004 unwrapped both of `(x)(y)` and left the name `xy`, which
 /// q 5 throws as undefined where the original indexes `x` by `y`.
@@ -2201,6 +2396,41 @@ fn a_datetime_cast_fix_keeps_the_instant() {
         return;
     };
     assert_eq!(values, ["1b", "1b", "1b", "0b"]);
+}
+
+/// `asc` marks what it sorted and `reverse desc` does not, so that rewrite
+/// changes what `attr` says of a list and of a table's first column: it is
+/// offered in the editor with a title that says so. `desc` for `reverse asc`
+/// has nothing to say - neither marks anything (#2800).
+#[test]
+fn asc_for_reverse_desc_says_the_result_is_marked_sorted() {
+    let title = |source: &str| {
+        let finding = selected(source, &["QR001"]).remove(0);
+        let fix = q_lint_rs::fix_for(&finding, source).unwrap();
+        assert!(!fix.batch_safe, "{source}");
+        fix.title.to_string()
+    };
+    assert!(
+        title("r:reverse desc 3 1 2").contains("marks the result as sorted"),
+        "{}",
+        title("r:reverse desc 3 1 2")
+    );
+    assert_eq!(
+        title("r:reverse asc 3 1 2"),
+        "Replace `reverse asc` with `desc`"
+    );
+    let scripts = [
+        "r:attr reverse desc 3 1 2 1",
+        "r:attr asc 3 1 2 1",
+        "r:(attr reverse asc 3 1 2 1;attr desc 3 1 2 1)",
+        "r:(reverse desc 3 1 2 1)~asc 3 1 2 1",
+        "r:(attr first flip reverse desc t;attr first flip asc t:([]a:3 1 2))",
+    ]
+    .map(String::from);
+    let Some(values) = values_on_q(&scripts) else {
+        return;
+    };
+    assert_eq!(values, ["`", "`s", "``", "1b", "``s"]);
 }
 
 /// `asc scan x` iterates `asc` to convergence, so `reverse` reverses the

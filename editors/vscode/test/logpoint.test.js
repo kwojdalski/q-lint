@@ -5,8 +5,9 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, readLogpoints, hitLines } = require("../out/logpoint.js");
+const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, addLogpoint, readLogpoints, hitLines } = require("../out/logpoint.js");
 const { registerLogpoints } = require("../out/logpointview.js");
+const { DRIFT } = require("../out/definitions.js");
 
 test("the process's list and hits are read whatever shape q gives them", () => {
   assert.deepStrictEqual(readLogpoints({ names: "sq", hits: [] }), { names: ["sq"], hits: [] });
@@ -18,14 +19,22 @@ test("the process's list and hits are read whatever shape q gives them", () => {
   assert.deepStrictEqual(hitLines("dev", []), ["# dev: no logpoint has been hit"]);
 });
 
-function setup() {
+// A run's text in the function goes when the run ends: a logpoint written
+// into it would go too, so none is sent meanwhile.
+test("a function a coverage run holds takes no logpoint until the run is over", async () => {
+  const sent = [];
+  const call = async (q, ...args) => (sent.push(q), q === DRIFT ? { name: args, state: ["lambda"], text: ["{x*x}"], via: ["cov"] } : "sq");
+  await assert.rejects(addLogpoint(call, "sq"), /a coverage run holds it just now; add the logpoint when that is over/);
+  assert.deepStrictEqual(sent, [DRIFT]);
+});
+
+function setup(text = "/ lib\nsq:{x*x}\n\\d .fx\nmid:{[b;a] (b+a)%2}\n", file = "/w/lib.q") {
   stub.reset();
-  const text = "/ lib\nsq:{x*x}\n\\d .fx\nmid:{[b;a] (b+a)%2}\n";
   const lines = text.split("\n");
   const decorated = [];
   vscode.window.createTextEditorDecorationType = () => ({ disposed: false, dispose() { this.disposed = true; } });
   vscode.window.activeTextEditor = {
-    document: { languageId: "q", getText: () => text, lineAt: (i) => ({ range: { line: i }, text: lines[i] }) },
+    document: { uri: vscode.Uri.file(file), languageId: "q", getText: () => text, lineAt: (i) => ({ range: { line: i }, text: lines[i] }) },
     selection: { active: { line: 3 } },
     setDecorations: (_d, ranges) => decorated.push(ranges.map((r) => r.range.line)),
   };
@@ -33,6 +42,8 @@ function setup() {
   const held = new Set();
   const connection = {
     call: async (lambda, name) => {
+      // Add Logpoint reads the function's text first, and sends it back with the logging in it.
+      if (lambda === DRIFT) return { name: [name], state: ["lambda"], text: ["{x}"] };
       sent.push([lambda, name]);
       if (lambda === LOG_ADD) return held.add(name), name;
       if (lambda === LOG_REMOVE) return held.delete(name), true;
@@ -100,6 +111,25 @@ test("Add Logpoint wraps the function at the cursor through the guard and marks 
   assert.deepStrictEqual(s.sent.slice(-1), [[LOG_REMOVE, "sq"]]);
   assert.deepStrictEqual(s.api.marked(), []);
   assert.deepStrictEqual(s.live.guarded, [LOG_ADD, LOG_ADD, LOG_REMOVE, LOG_REMOVE]);
+});
+
+// The process holds a module's `f` as `.m.mymod.f`: a logpoint on `f` was
+// one on a name it does not have.
+test("Add Logpoint names a KDB-X module's function in the module's context (#2917)", async (t) => {
+  const s = setup("/ a module\nhlp:{x+1}\nexport:([hlp])\n\n", "/w/mymod/init.q");
+  vscode.workspace.asRelativePath = (uri) => uri.fsPath.replace(/^\/w\//, "");
+  t.after(() => delete vscode.workspace.asRelativePath);
+  vscode.window.activeTextEditor.selection = { active: { line: 1 } };
+  await stub.commands.get(LOGPOINT_COMMANDS.add)();
+  assert.deepStrictEqual(s.sent, [[LOG_ADD, ".m.mymod.hlp"]]);
+  assert.deepStrictEqual(s.api.marked(), [1]);
+});
+
+test("Add Logpoint takes a function named as a symbol, `.fx.mid, as the name .fx.mid (#2649)", async () => {
+  const s = setup();
+  await stub.commands.get(LOGPOINT_COMMANDS.add)("`.fx.mid");
+  assert.deepStrictEqual(s.sent, [[LOG_ADD, ".fx.mid"]]);
+  assert.deepStrictEqual(s.api.logged(), { dev: [".fx.mid"] });
 });
 
 test("off, every command refuses, nothing is sent, and the marks go", async () => {

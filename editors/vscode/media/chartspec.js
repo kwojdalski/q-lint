@@ -41,28 +41,99 @@
   /// value until the next.
   const LINES = ["line", "area", "step"];
 
-  /// The columns a candle chart draws, [open, high, low, close]: by name
+  /// A candle's four values, and the names a column takes one by.
+  const OHLC = [["open", "o"], ["high", "h"], ["low", "l"], ["close", "c"]];
+  const NO_CANDLES = "A candle chart needs open, high, low and close columns: four numeric columns after the first.";
+
+  /// The columns a candle chart draws, [open, high, low, close], as
+  /// {columns}, or the {note} said when it cannot tell them: by name
   /// (open/o, high/h, low/l, close/c, any case), or else the first four
-  /// columns it can plot, in order. Null when there are not four.
-  function ohlcColumns(grid) {
+  /// columns it can plot, in order.
+  ///
+  /// Some of the four words but not all (`open, high, low, lastpx`): those
+  /// keep their value, and each one missing is the unnamed column in its
+  /// place among them - before the first named for the values before it,
+  /// after the one before it otherwise. With no column there the note says
+  /// which is missing: the first four columns would draw a size as the open
+  /// (#3125). One word alone places nothing (`bid_open, bid_high, bid_low,
+  /// bid_close, open`): the first four, as with none.
+  ///
+  /// The first column is one of the four only where the names are all
+  /// found and one is its own - `select open, high, low, close from bars`:
+  /// there is no x axis then, and the candles are drawn against their row
+  /// numbers (#3150).
+  function candleColumns(grid) {
     const can = chartable(grid, "candlestick");
-    const names = [["open", "o"], ["high", "h"], ["low", "l"], ["close", "c"]];
-    const found = names.map(function (alias) {
-      const at = can.filter(function (c) { return alias.indexOf(grid.columns[c].name.toLowerCase()) >= 0; });
-      return at.length ? at[0] : -1;
-    });
-    if (found.every(function (c) { return c >= 0; })) {
-      return found;
+    const called = function (c, names) { return names.indexOf(grid.columns[c].name.toLowerCase()) >= 0; };
+    const find = function (letters, among) {
+      return OHLC.map(function (alias) {
+        const at = among.filter(function (c) { return called(c, letters ? alias : alias.slice(0, 1)); });
+        return at.length ? at[0] : -1;
+      });
+    };
+    const all = function (found) { return found.every(function (c) { return c >= 0; }); };
+    const found = find(true, can);
+    if (all(found)) {
+      return { columns: found };
     }
-    return can.length >= 4 ? can.slice(0, 4) : null;
+    const withFirst = grid.columns.length > 0 && grid.columns[0].numeric ? find(true, can.concat(can.indexOf(0) < 0 ? [0] : [])) : found;
+    if (all(withFirst)) {
+      return { columns: withFirst };
+    }
+    const named = find(false, can);
+    const first = named.findIndex(function (c) { return c >= 0; });
+    if (named.filter(function (c) { return c >= 0; }).length < 2) {
+      return can.length >= 4 ? { columns: can.slice(0, 4) } : { note: NO_CANDLES };
+    }
+    const free = can.filter(function (c) { return named.indexOf(c) < 0; });
+    const before = free.filter(function (c) { return c < named[first]; }).slice(-first);
+    const out = named.map(function (c, i) { return i < first && before.length === first ? before[i] : c; });
+    for (let i = first + 1; i < 4; i++) {
+      if (out[i] < 0) {
+        const next = free.filter(function (c) { return c > out[i - 1] && out.indexOf(c) < 0; });
+        out[i] = next.length ? next[0] : -1;
+      }
+    }
+    const missing = OHLC.filter(function (_, i) { return out[i] < 0; }).map(function (alias) { return alias[0]; });
+    return missing.length === 0 ? { columns: out } : { note: "A candle chart needs open, high, low and close columns: no column here is the " + missing.join(" or ") + "." };
+  }
+
+  function ohlcColumns(grid) {
+    return candleColumns(grid).columns || null;
+  }
+
+  /// The columns that name a row on a category axis: the first, and the
+  /// other keys of a table keyed by several (`select ... by sym, hour`).
+  function nameColumns(grid) {
+    const out = [0];
+    grid.columns.forEach(function (c, i) {
+      if (i > 0 && c.key) {
+        out.push(i);
+      }
+    });
+    return out;
+  }
+
+  /// Row `r` as a category axis names it: its first column's text, and with
+  /// several keys every key's (`a 9`) - the first alone called both of
+  /// `a`'s rows `a` (#3123).
+  function rowName(grid, r) {
+    return nameColumns(grid).map(function (c) { return grid.cells[c][r]; }).join(" ");
+  }
+
+  /// The title of an axis of rowName()s: the columns' names.
+  function axisName(grid) {
+    return nameColumns(grid).map(function (c) { return grid.columns[c].name; }).join(" ");
   }
 
   /// The columns a chart can plot: the numeric ones, and for every kind but
-  /// a histogram not the first, which is the x axis, unless it is the only.
+  /// a histogram not the first, which is the x axis, unless it is the only,
+  /// and no other key either: a key names the row, and is no series beside
+  /// the values it groups (#3123).
   function chartable(grid, kind) {
     const out = [];
     grid.columns.forEach(function (c, i) {
-      if (c.numeric && (kind === "histogram" || i > 0 || byRow(grid))) {
+      if (c.numeric && (kind === "histogram" || byRow(grid) || (i > 0 && !c.key))) {
         out.push(i);
       }
     });
@@ -125,7 +196,8 @@
     const day = 86400000;
     const stamp = function (ms, sep) {
       const d = new Date(946684800000 + ms);
-      return d.getUTCFullYear() + "." + pad(d.getUTCMonth() + 1) + "." + pad(d.getUTCDate()) +
+      // The year in four digits, as q writes one before 1000: `0001.01.01` (#1235, #3146).
+      return pad(d.getUTCFullYear(), 4) + "." + pad(d.getUTCMonth() + 1) + "." + pad(d.getUTCDate()) +
         (sep ? sep + pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()) : "");
     };
     const clock = function (s) {
@@ -166,7 +238,7 @@
     }
     switch (type) {
       case 12: return stamp(v / 1e6, "D");
-      case 13: v = Math.floor(v); return (2000 + Math.floor(v / 12)) + "." + pad(((v % 12) + 12) % 12 + 1);
+      case 13: v = Math.floor(v); return pad(2000 + Math.floor(v / 12), 4) + "." + pad(((v % 12) + 12) % 12 + 1);
       case 14: return stamp(v * day);
       case 15: return stamp(v * day, "T");
       case 16: return (v < 0 ? "-" : "") + Math.floor(Math.abs(v) / 864e11) + "D" + clock((Math.abs(v) % 864e11) / 1e9);
@@ -181,15 +253,55 @@
   /// With `step`, the distance to the next label, the digits that tell the
   /// two apart, so bins over a narrow range of prices are not all
   /// "1.08341 - 1.08341".
+  ///
+  /// A million and up, or under a thousandth, is in exponent form only
+  /// where that is the shorter: a spread of `0.0001` and an order id of
+  /// `1234567.2` are plain digits, not `1.00000e-4` and `1.23456720e+6`,
+  /// which is also wider than an axis has room for (#3133, #3145).
   function short(v, step) {
     const digits = step > 0 && v !== 0 ? Math.min(15, Math.max(6, Math.ceil(Math.log10(Math.abs(v) / step)) + 2)) : 6;
-    return Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(step > 0 ? Math.max(3, digits - 1) : 3) : String(+v.toPrecision(digits));
+    if (Math.abs(v) >= 1e6 || (v !== 0 && Math.abs(v) < 1e-3)) {
+      const most = step > 0 ? Math.max(4, digits) : 4;
+      const exponent = v.toExponential(most - 1);
+      const plain = String(+v.toPrecision(most));
+      return plain.length <= exponent.length ? plain : exponent;
+    }
+    return String(+v.toPrecision(digits));
+  }
+
+  /// About the pixels a character of an SVG chart's 11 px text is wide.
+  const CHAR = 6.6;
+
+  /// The margin an SVG chart's y axis needs for its tick `labels`: their
+  /// widest and the gap to the axis - and, `titled`, the axis' title
+  /// written up the edge - or 64 pixels, whichever is more. A fixed 64 cut
+  /// a label of ten characters at the image's edge (#3133).
+  function yMargin(labels, titled) {
+    const widest = labels.reduce(function (w, l) { return Math.max(w, String(l).length); }, 0);
+    return Math.max(64, Math.ceil(widest * CHAR + (titled ? 30 : 12)));
   }
 
   /// What a chart of `kind` over `rows` of the grid draws, before colours:
   /// {type, labels?, datasets: [{label, data}], note?}. `columns` are the
-  /// y columns, as chartable() gives them; `bins` is for a histogram.
-  function chartData(grid, rows, kind, columns, bins) {
+  /// y columns, as chartable() gives them; `bins` is for a histogram. With
+  /// no row, or no value in any, a note says so: axes around nothing read
+  /// as a chart that failed to draw (#3149). `ohlc`: a candle chart's four
+  /// columns where the caller names them, in place of those found (#3126).
+  function chartData(grid, rows, kind, columns, bins, ohlc) {
+    const data = seriesData(grid, rows, kind, columns, bins, ohlc);
+    if (data.note) {
+      return data;
+    }
+    if (rows.length === 0) {
+      return { type: "bar", datasets: [], note: "No row to chart." };
+    }
+    const drawn = data.datasets.some(function (d) {
+      return d.data.some(function (p) { return p !== null && (typeof p !== "number" || isFinite(p)); });
+    });
+    return drawn ? data : { type: "bar", datasets: [], note: kind === "candlestick" ? "No row has all four of open, high, low and close." : "Every value is null." };
+  }
+
+  function seriesData(grid, rows, kind, columns, bins, given) {
     if (columns.length === 0 && kind !== "candlestick") {
       return { type: "bar", datasets: [], note: "No numeric column to chart" + (kind === "histogram" ? "." : " against the first.") };
     }
@@ -208,18 +320,22 @@
       };
     }
     if (kind === "candlestick") {
-      const ohlc = ohlcColumns(grid);
-      if (!ohlc) {
-        return { type: "bar", datasets: [], note: "A candle chart needs open, high, low and close columns: four numeric columns after the first." };
+      const candles = given ? { columns: given } : candleColumns(grid);
+      if (!candles.columns) {
+        return { type: "bar", datasets: [], note: candles.note };
       }
+      const ohlc = candles.columns;
+      // No x axis where the first column is one of the four (#3150).
+      const rowAxis = byRow(grid) || ohlc.indexOf(0) >= 0;
       const v = function (c, r) { return grid.values[c][r]; };
       // A row missing any of the four draws no candle.
       const whole = function (r) { return ohlc.every(function (c) { return v(c, r) !== null; }); };
       const name = function (c) { return grid.columns[c].name; };
       return {
         type: "bar",
-        labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
+        labels: rows.map(function (r) { return rowAxis ? String(r) : rowName(grid, r); }),
         ohlc: ohlc,
+        rowAxis: rowAxis,
         datasets: [
           { label: name(ohlc[2]) + " - " + name(ohlc[1]), column: ohlc[1], wick: true, data: rows.map(function (r) { return whole(r) ? [v(ohlc[2], r), v(ohlc[1], r)] : null; }) },
           { label: name(ohlc[0]) + " - " + name(ohlc[3]), column: ohlc[3], data: rows.map(function (r) { return whole(r) ? [v(ohlc[0], r), v(ohlc[3], r)] : null; }) },
@@ -245,7 +361,7 @@
     }
     return {
       type: kind === "bar" ? "bar" : "line",
-      labels: rows.map(function (r) { return byRow(grid) ? String(r) : grid.cells[0][r]; }),
+      labels: rows.map(function (r) { return byRow(grid) ? String(r) : rowName(grid, r); }),
       datasets: columns.map(function (c) { return { label: name(c), column: c, data: values(c) }; }),
     };
   }
@@ -320,7 +436,7 @@
         interaction: { mode: kind === "scatter" ? "nearest" : "index", intersect: false },
         scales: {
           x: {
-            title: { display: kind !== "histogram", text: rowAxis ? "row" : x.name },
+            title: { display: kind !== "histogram", text: rowAxis ? "row" : kind === "scatter" ? x.name : axisName(grid) },
             type: kind === "scatter" ? "linear" : "category",
             // A month, date, minute or second is a whole number: a tick
             // between two would repeat one's label, or name no month.
@@ -383,7 +499,7 @@
         maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         scales: {
-          x: { title: { display: true, text: byRow(grid) ? "row" : grid.columns[0].name }, ticks: { autoSkip: true, maxRotation: 0 } },
+          x: { title: { display: true, text: data.rowAxis ? "row" : axisName(grid) }, ticks: { autoSkip: true, maxRotation: 0 } },
           // Prices: the axis spans the candles, not down to zero as bars'.
           y: { beginAtZero: false, title: { display: false } },
         },
@@ -446,6 +562,96 @@
     return out.length > 0 ? { values: out, step: step } : { values: [lo, hi], step: hi - lo };
   }
 
+  /// An SVG chart's x labels, `items` of {x, text} in x's order, at height
+  /// `y` of an image `W` wide. Each is centred on its x, but one that would
+  /// pass the image's edge is anchored at the edge instead, and one that
+  /// would touch the label before it is left out - widths being CHAR a
+  /// character. A timestamp is 29 of them, and centred every 90 pixels each
+  /// covered half of the next, the first cut at the image's left (#3131).
+  function xLabels(items, y, W, fill) {
+    const out = [];
+    let free = 0;
+    items.forEach(function (item) {
+      const text = String(item.text);
+      const w = text.length * CHAR;
+      let anchor = "middle";
+      let x = item.x;
+      let from = x - w / 2;
+      if (from < 2) {
+        anchor = "start";
+        x = from = 2;
+      } else if (x + w / 2 > W - 2) {
+        anchor = "end";
+        x = W - 2;
+        from = x - w;
+      }
+      if (text === "" || from < free) {
+        return;
+      }
+      free = from + w + 6;
+      out.push('<text x="' + x.toFixed(1) + '" y="' + y + '" text-anchor="' + anchor + '" fill="' + fill + '">' + xml(text) + "</text>");
+    });
+    return out;
+  }
+
+  /// An SVG chart's legend in rows: `items` of {label, colour} from `left`
+  /// on, a row begun where the next entry would pass `right`. On one row,
+  /// four of ten long names started past the image's edge, so the file did
+  /// not say which line was which (#3132). `most` rows at most: the entries
+  /// there is no row for are counted in a last "and N more", with `more`,
+  /// those `items` already leaves out.
+  function legendRows(items, left, right, most, more) {
+    const unlisted = more || 0;
+    const wide = function (label) { return 24 + label.length * 6.5; };
+    const rows = [[]];
+    let x = left;
+    let k = 0;
+    for (; k < items.length; k++) {
+      const label = String(items[k].label);
+      if (x > left && x + wide(label) - 10 > right) {
+        if (rows.length >= most) {
+          break;
+        }
+        rows.push([]);
+        x = left;
+      }
+      rows[rows.length - 1].push({ x: x, label: label, colour: items[k].colour });
+      x += wide(label);
+    }
+    if (k < items.length || unlisted > 0) {
+      const last = rows[rows.length - 1];
+      const rest = function () { return "and " + (items.length - k + unlisted) + " more"; };
+      while (last.length > 1 && x + rest().length * 6.5 > right) {
+        x = last.pop().x;
+        k--;
+      }
+      last.push({ x: x, label: rest(), colour: null });
+    }
+    return rows;
+  }
+
+  /// The margin under an SVG chart's plot that legendRows() `rows` need:
+  /// the 64 pixels of one row, and 14 for each row more.
+  function legendMargin(rows) {
+    return 64 + 14 * Math.max(0, rows.length - 1);
+  }
+
+  /// legendRows() `rows` as SVG, the last row at the foot of an image `H`
+  /// high. `fill`, the text's colour, is escaped already.
+  function legendSvg(rows, H, fill) {
+    const out = [];
+    rows.forEach(function (row, r) {
+      const y = H - 16 - 14 * (rows.length - 1 - r);
+      row.forEach(function (e) {
+        if (e.colour) {
+          out.push('<rect x="' + e.x + '" y="' + y + '" width="10" height="10" fill="' + xml(e.colour) + '"/>');
+        }
+        out.push('<text x="' + (e.x + (e.colour ? 14 : 0)) + '" y="' + (y + 9) + '" fill="' + fill + '">' + xml(e.label) + "</text>");
+      });
+    });
+    return out;
+  }
+
   /// The chart chartData() describes as an SVG document, drawn here rather
   /// than by Chart.js, so it is vector graphics: axes with round ticks, each
   /// series as a line (filled for an area, stepped for a step), bars,
@@ -459,12 +665,7 @@
     const fg = look.foreground || "#333";
     const border = look.border || "#ccc";
     const y2 = Number.isInteger(opts.y2) && kind !== "histogram" && kind !== "candlestick" && data.datasets.some(function (d) { return d.column === opts.y2; }) ? opts.y2 : -1;
-    const left = 64;
-    const right = y2 >= 0 ? 64 : 20;
     const top = opts.title ? 40 : 16;
-    const bottom = 64;
-    const pw = W - left - right;
-    const ph = H - top - bottom;
     const out = [
       '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="' + font + '" font-size="11">',
     ];
@@ -501,7 +702,8 @@
     };
     const axis = function (sets) {
       const s = span(sets);
-      const t = ticks(s.lo, s.hi);
+      // A histogram's axis counts values: whole numbers, as on screen (#3143).
+      const t = ticks(s.lo, s.hi, kind === "histogram");
       const lo = Math.min(s.lo, t.values[0]);
       const hi = Math.max(s.hi, t.values[t.values.length - 1]);
       // Halved, so a span past the largest double does not overflow.
@@ -510,6 +712,18 @@
     const main = axis(data.datasets.filter(function (d) { return d.column !== y2; }));
     const alt = y2 >= 0 ? axis(data.datasets.filter(function (d) { return d.column === y2; })) : null;
     const yOf = function (d) { return d.column === y2 && alt ? alt.y : main.y; };
+    // Each side as wide as its axis' labels (#3133).
+    const labelled = function (a) { return a.ticks.values.map(function (v) { return short(v, a.ticks.step); }); };
+    const left = yMargin(labelled(main));
+    const right = alt ? yMargin(labelled(alt)) : 20;
+    const pw = W - left - right;
+    const colour = function (i) { return look.colours[i % look.colours.length]; };
+    // The legend, under the x axis's title, in as many rows as it takes
+    // (#3132): a third of the image at most.
+    const legend = kind === "candlestick" ? [] : legendRows(data.datasets.map(function (d, j) {
+      return { label: d.label + (d.column === y2 ? " (right)" : ""), colour: colour(j) };
+    }), left, W - right, Math.max(1, Math.floor(H / 3 / 14)));
+    const ph = H - top - legendMargin(legend);
     // Gridlines and the left axis's labels; the right axis's labels.
     main.ticks.values.forEach(function (v) {
       const y = main.y(v).toFixed(1);
@@ -534,23 +748,28 @@
         hi = 1;
       }
       const x0 = grid.columns[0];
-      const t = ticks(lo, hi, x0 && x0.temporal && UNITS.indexOf(x0.type) >= 0);
+      // Row numbers are whole, as a date's days are: no tick at row 0.5 (#3142).
+      const rowAxis = byRow(grid) || !grid.values[0];
+      const t = ticks(lo, hi, rowAxis || (x0 && x0.temporal && UNITS.indexOf(x0.type) >= 0));
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
       xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };
-      t.values.forEach(function (v) {
-        const label = x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step);
-        out.push('<text x="' + xOf(v).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(label) + "</text>");
+      const labels = t.values.map(function (v) {
+        return { x: xOf(v), text: x0 && x0.temporal && grid.columns.length > 1 ? temporalLabel(x0.type, v, t.step) : short(v, t.step) };
       });
+      out.push.apply(out, xLabels(labels, top + ph + 16, W, xml(fg)));
     } else {
       const band = n > 0 ? pw / n : pw;
       xOf = function (i) { return left + band * (i + 0.5); };
-      const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / 90))));
+      // A label every 90 pixels, or as far apart as the longest is wide (#3131).
+      const widest = data.labels.reduce(function (w, l) { return Math.max(w, String(l).length); }, 0);
+      const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(pw / Math.max(90, widest * CHAR + 12)))));
+      const labels = [];
       for (let i = 0; i < n; i += every) {
-        out.push('<text x="' + xOf(i).toFixed(1) + '" y="' + (top + ph + 16) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(data.labels[i]) + "</text>");
+        labels.push({ x: xOf(i), text: data.labels[i] });
       }
+      out.push.apply(out, xLabels(labels, top + ph + 16, W, xml(fg)));
     }
-    const colour = function (i) { return look.colours[i % look.colours.length]; };
     const band = n > 0 ? pw / n : pw;
     if (kind === "candlestick") {
       const ohlc = data.ohlc;
@@ -626,19 +845,11 @@
       });
     }
     // The x axis's title and the legend, under it.
-    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) ? "row" : grid.columns[0].name;
+    const xTitle = kind === "histogram" ? "" : byRow(grid) || (kind === "scatter" && !grid.values[0]) || (kind === "candlestick" && data.rowAxis) ? "row" : kind === "scatter" ? grid.columns[0].name : axisName(grid);
     if (xTitle) {
       out.push('<text x="' + (left + pw / 2) + '" y="' + (top + ph + 34) + '" text-anchor="middle" fill="' + xml(fg) + '">' + xml(xTitle) + "</text>");
     }
-    if (kind !== "candlestick") {
-      let lx = left;
-      data.datasets.forEach(function (d, j) {
-        const label = d.label + (d.column === y2 ? " (right)" : "");
-        out.push('<rect x="' + lx + '" y="' + (H - 16) + '" width="10" height="10" fill="' + xml(colour(j)) + '"/>');
-        out.push('<text x="' + (lx + 14) + '" y="' + (H - 7) + '" fill="' + xml(fg) + '">' + xml(label) + "</text>");
-        lx += 24 + label.length * 6.5;
-      });
-    }
+    out.push.apply(out, legendSvg(legend, H, xml(fg)));
     out.push("</svg>");
     return out.join("\n");
   }
@@ -672,6 +883,11 @@
     ticks: ticks,
     WHOLE: WHOLE,
     short: short,
+    yMargin: yMargin,
+    xLabels: xLabels,
+    legendRows: legendRows,
+    legendMargin: legendMargin,
+    legendSvg: legendSvg,
     xml: xml,
   };
   if (typeof module !== "undefined" && module.exports) {

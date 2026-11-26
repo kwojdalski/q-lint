@@ -11,7 +11,8 @@ const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
 const pkg = require("../package.json");
-const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, isGatewayCall, joined, readGateway, symbols, withServerTypes } = require("../out/gateway.js");
+const { GATEWAY_COMMANDS, fileServerTypes, gatewayParts, gatewayStatement, gatewayStatements, isGatewayCall, isGatewayOwn, joined, notServerTypes, readGateway, serverTypesProblem, symbols, withServerTypes } = require("../out/gateway.js");
+const { statements } = require("../out/statements.js");
 const { qString } = require("../out/qliteral.js");
 const { givenServerTypes, parseProcesses, serverTypes } = require("../out/processes.js");
 const { Live } = require("../out/live.js");
@@ -29,7 +30,7 @@ test("a query is a q string, several statements one string joined on `;` lines (
   assert.strictEqual(gatewayStatement(["select from trade"], ["rdb", "hdb"]), '.gw.syncexec["select from trade";`rdb`hdb]');
   assert.strictEqual(gatewayStatement(["n:1 / one", "n+1"], ["hdb"]), '.gw.syncexec["n:1 / one\\n ;n+1";enlist `hdb]');
   // A system command cannot be followed on its line, so it is `system`.
-  assert.strictEqual(joined(["\\d .x", "f:{x+\n 1}", "f 1"]), 'system "d .x"\n ;f:{x+\n 1}\n ;f 1');
+  assert.strictEqual(joined(["\\l f.q", "f:{x+\n 1}", "f 1"]), 'system "l f.q"\n ;f:{x+\n 1}\n ;f 1');
   assert.ok(isGatewayCall('.gw.syncexec["1";`rdb]'));
   assert.ok(!isGatewayCall("select from trade"));
   // TorQ's typed and timed variants are gateway calls too (#1427).
@@ -63,7 +64,6 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb\nselect from t"), ["rdb", "hdb"]);
   assert.deepStrictEqual(fileServerTypes("a:1\n/@servertypes `hdb,rdb\n"), ["hdb", "rdb"]);
   assert.strictEqual(fileServerTypes("  / @servertypes rdb\n"), undefined);
-  assert.strictEqual(fileServerTypes("/ @servertypes 1x\n"), undefined);
   // A comment after them is no more types (#2587).
   assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb / the live and history ones\nselect from t"), ["rdb", "hdb"]);
   assert.deepStrictEqual(fileServerTypes("/ @servertypes `rdb`hdb  - both\n"), ["rdb", "hdb"]);
@@ -73,6 +73,39 @@ test("a file names its server types on a `/ @servertypes` line", () => {
   assert.strictEqual(serverTypes(""), undefined);
   // Read from every source, a discovery server's too: it runs nothing new.
   assert.deepStrictEqual(parseProcesses([{ label: "gw", host: "h", port: 1, gateway: ["rdb"] }]).processes[0].gateway, ["rdb"]);
+});
+
+test("a `/ @servertypes` line in a block comment, or after the script's end, names nothing (#2918)", () => {
+  // The live line under a commented-out one is the file's.
+  assert.deepStrictEqual(fileServerTypes("/\nold setup:\n/ @servertypes hdb\n\\\n/ @servertypes rdb\nselect from trade\n"), ["rdb"]);
+  assert.strictEqual(fileServerTypes("/\n/ @servertypes hdb\n\\\nselect from trade\n"), undefined);
+  // q reads nothing after a lone `\`.
+  assert.strictEqual(fileServerTypes("select from trade\n\\\n/ @servertypes hdb\n"), undefined);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb\nselect from trade\n\\\n/ @servertypes hdb\n"), ["rdb"]);
+  // A line comment anywhere q reads still names them, between a
+  // statement's lines too, and with Windows line ends.
+  assert.deepStrictEqual(fileServerTypes("f:{\n/ @servertypes hdb\n  x}\n"), ["hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/\r\nnote\r\n\\\r\n/ @servertypes rdb hdb\r\nselect from t\r\n"), ["rdb", "hdb"]);
+  // `/` and a no-break space is a line comment, which hides nothing.
+  assert.deepStrictEqual(fileServerTypes("/\u00a0\n/ @servertypes rdb\nselect from t"), ["rdb"]);
+});
+
+// `rdb hdb-eu` in the box, or `rdb 2hdb` on a file's line, was read as
+// `rdb` alone and nothing said: the HDB named was never queried (#3065).
+test("a server type that is no q name is named, not dropped (#3065)", () => {
+  assert.deepStrictEqual(notServerTypes("rdb hdb-eu, 2hdb `ok hdb-eu"), ["hdb-eu", "2hdb"]);
+  assert.deepStrictEqual(notServerTypes(["rdb", "`hdb", "a b", 7, ""]), ["a b", "7"]);
+  assert.strictEqual(serverTypesProblem("rdb `hdb, my_rdb"), undefined);
+  assert.strictEqual(serverTypesProblem(""), undefined);
+  assert.strictEqual(serverTypesProblem("rdb hdb-eu"), 'Server types are q names: rdb hdb. "hdb-eu" is not one.');
+  assert.strictEqual(serverTypesProblem("1x hdb-eu"), 'Server types are q names: rdb hdb. "1x", "hdb-eu" are not.');
+  // A file's line keeps a type mistyped, for its query to be refused; what
+  // does not start as a name or a number does still starts a comment.
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb 2hdb\n"), ["rdb", "2hdb"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb hdb-eu / both\n"), ["rdb", "hdb-eu"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes 1x\n"), ["1x"]);
+  assert.deepStrictEqual(fileServerTypes("/ @servertypes rdb (the live one)\n"), ["rdb"]);
+  assert.strictEqual(fileServerTypes("/ @servertypes - none yet\n"), undefined);
 });
 
 // The editor context menu hands in the editor's Uri: taken as types, it
@@ -144,6 +177,7 @@ async function torq(t, servers = "") {
     [
       `.gw.h:\`rdb\`hdb!(hopen \`::${rdb};hopen \`::${hdb})`,
       ".gw.servers:([] servertype:`rdb`hdb)",
+      ".servers.SERVERS:([] procname:`rdb1`hdb1; proctype:`rdb`hdb)",
       "role:`gateway",
       ".gw.run:{[query;servertypes;join] servertypes,:(); if[count m:servertypes except key .gw.h; '\"not all of the requested server types are available: \",\",\" sv string m]; join .gw.h[servertypes]@\\:({$[`.pm.valp~key`.pm.valp;.pm.valp x;value x]};query)}",
       ".gw.replies:()",
@@ -276,6 +310,181 @@ test("a gateway call written by hand, and the gateway's own API and state, run o
   assert.deepStrictEqual(r, { code: "role", outcome: "ok", text: "`gateway" });
 });
 
+// Every TorQ process keeps discovery state of its own, and a server's is
+// not the gateway's: sent on, the rdb answered with the tickerplant it
+// knows, shown as what the gateway had found (#3058).
+test("a read of the state a gateway keeps as any TorQ process does - .servers, .clients, .timer - and .kxdash stay on the gateway (#3058)", () => {
+  assert.ok(isGatewayOwn("select from .servers.SERVERS where proctype=`hdb"));
+  assert.ok(isGatewayOwn(".servers.getservers[`proctype;`hdb;()!();1b;0b]"));
+  assert.ok(isGatewayOwn(".kxdash.dashexec[\"select from trade\";`rdb;raze]"));
+  assert.ok(isGatewayOwn("count .clients.clients"));
+  assert.ok(isGatewayOwn("select from .timer.timer where active"));
+  assert.ok(isGatewayOwn(".gw.servers"));
+  // They defer no reply, so they are no gateway call: sent as any query.
+  assert.ok(!isGatewayCall("select from .servers.SERVERS where proctype=`hdb"));
+  // A query for the servers that reads TorQ's clock is still theirs, as is
+  // a name in a string, a comment or another namespace.
+  assert.ok(!isGatewayOwn("select from trade where time>.proc.cp[]-0D00:05"));
+  assert.ok(!isGatewayOwn('s:".servers.SERVERS"'));
+  assert.ok(!isGatewayOwn("count trade / not .servers.SERVERS"));
+  assert.ok(!isGatewayOwn("my.servers.SERVERS"));
+});
+
+test("a gateway's own discovery state is read on the gateway, not on a server (#3058)", { skip }, async (t) => {
+  const gw = await torq(t, ".servers.SERVERS:([] procname:enlist `tp1; proctype:enlist `tickerplant)");
+  const { live, query } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  let r = await query("exec procname from .servers.SERVERS where proctype=`hdb");
+  assert.deepStrictEqual(r, { code: "exec procname from .servers.SERVERS where proctype=`hdb", outcome: "ok", text: ",`hdb1" });
+  // Asked for on server types, it still runs on the gateway, and says so.
+  stub.messages = [];
+  r = await query("exec procname from .servers.SERVERS", GATEWAY_COMMANDS.queryWith, "rdb");
+  assert.deepStrictEqual([r.code, r.text], ["exec procname from .servers.SERVERS", "`rdb1`hdb1"]);
+  assert.match(stub.messages.at(-1)[1], /reads the gateway's own state, so it runs on the gateway itself, not on rdb\./);
+  // Written out, the call sends it to them.
+  r = await query('.gw.syncexec["exec procname from .servers.SERVERS";`rdb]');
+  assert.strictEqual(r.text, ",`tp1");
+});
+
+// q parses a string whole before it runs any of it: in one string, the
+// functions after a `\d .stats` were bound to the root, and `wide`'s call of
+// `mid` failed with 'mid, or found a `mid` of the root (#3057).
+test("statements that switch the context are strings valued one by one, each in the context before it (#3057)", () => {
+  assert.strictEqual(joined(["\\d .x", "f:{x+\n 1}", "f 1"]), 'last value each ("system \\"d .x\\"";"f:{x+\\n 1}";"f 1")');
+  assert.strictEqual(joined(['system "d .x"', "1"]), 'last value each ("system \\"d .x\\"";enlist "1")');
+  assert.strictEqual(gatewayStatement(["\\d .x", "f 1"], ["hdb"]), '.gw.syncexec["last value each (\\"system \\\\\\"d .x\\\\\\"\\";\\"f 1\\")";enlist `hdb]');
+  // The call is still one string with its types, so it is read back.
+  assert.deepStrictEqual(gatewayParts(gatewayStatement(["\\d .x", "f 1"], ["hdb"])), { query: 'last value each ("system \\"d .x\\"";"f 1")', types: ["hdb"] });
+  // A switch beside other code on its line is one too (#2916).
+  assert.strictEqual(joined(['a:1;system "d .x"', "f:{x}"]), 'last value each ("a:1;system \\"d .x\\"";"f:{x}")');
+  // One statement, and statements that switch no context, go as they did.
+  assert.strictEqual(joined(["\\d .x"]), 'system "d .x"');
+  assert.strictEqual(joined(["a:1", "\\c 20 200", "a"]), 'a:1\n ;system "c 20 200"\n ;a');
+});
+
+test("functions defined after a \\d through a gateway are bound to its context, and call each other (#3057)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.run("\\d .stats\nspread:{[b;a] a-b}\nmid:{[b;a] (b+a)%2}\nwide:{[b;a] spread[b;a]>mid[b;a]*0.01}\n\\d .");
+  assert.strictEqual(live.history()[0].outcome, "ok");
+  lines.length = 0;
+  await live.run(".stats.wide[100;103]");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["11b"]]);
+  // The last statement's value is each server's answer, as of one string.
+  lines.length = 0;
+  await live.run("\\d .stats\nn:3 / wide enough\nwide[100;100+n]");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["11b"]]);
+  // A later query is in the root again.
+  lines.length = 0;
+  await live.run("string system \"d\"");
+  assert.deepStrictEqual(lines.slice(1), ['".."']);
+});
+
+// `k)` is a prefix only where a string starts: joined second it was read as
+// q, ')', and joined first it made the q after it k, 'til (#2912).
+test("a k) statement among several goes through a gateway as a string of its own, valued (#2912)", { skip }, async (t) => {
+  assert.strictEqual(joined(["a:1", "k)b:2+!3", "b"]), 'a:1\n ;value "k)b:2+!3"\n ;b');
+  assert.strictEqual(joined(["k)a:1+!3", "b:til 3"]), 'value "k)a:1+!3"\n ;b:til 3');
+  // Alone it is the string itself, and no prefix after a space.
+  assert.strictEqual(gatewayStatement(["k)!3"], ["hdb"]), '.gw.syncexec["k)!3";enlist `hdb]');
+  assert.strictEqual(joined(["a:1", "b:(a+1\n k)"]), "a:1\n ;b:(a+1\n k)");
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  // Each server's last value, joined.
+  await live.run("a:1\nk)b:a+!3\nb");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["1 2 3 1 2 3"]]);
+  lines.length = 0;
+  await live.run("k)c:1+!3\nd:til 3\n\\d .kq\nk)e:{x+1}\ne 1 3 5");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["2 4 6 2 4 6"]]);
+});
+
+// One `.gw.` name anywhere made the whole selection the gateway's own, so
+// a query under `n:count .gw.servers` ran on the gateway: 'trade (#3059).
+test("a selection goes to a gateway statement by statement: its own as written, the rest through .gw.syncexec (#3059)", () => {
+  const through = (code) => gatewayStatements(statements(code), ["rdb"]);
+  assert.deepStrictEqual(through("n:count .gw.servers\nselect count i by sym from trade"), ["n:count .gw.servers", '.gw.syncexec["select count i by sym from trade";enlist `rdb]']);
+  // Statements next to each other for the servers are one call.
+  assert.deepStrictEqual(through("a:1\nb:a+1\n.gw.servers\ncount trade"), ['.gw.syncexec["a:1\\n ;b:a+1";enlist `rdb]', ".gw.servers", '.gw.syncexec["count trade";enlist `rdb]']);
+  // A statement a name ties to one of the gateway's runs where it does:
+  // what a call's answer was assigned to (#2361), what a call reads (#1951).
+  let cut = statements('t:.gw.syncexec["select from trade";`rdb]\ncount t\nu:2#t\nmeta u');
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  cut = statements("t:`trade\n.gw.syncexec[({select from x};t);`rdb`hdb]");
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  assert.deepStrictEqual(through("t:.gw.servers\ncount trade\ncount t"), ["t:.gw.servers", '.gw.syncexec["count trade";enlist `rdb]', "count t"]);
+  // A \d holds on both sides: for the gateway's statements where it is,
+  // and at the head of each call after it.
+  assert.deepStrictEqual(through("\\d .stats\nn:count .gw.servers\nf:{x+1}\n\\d .\ncount trade"), [
+    "\\d .stats",
+    "n:count .gw.servers",
+    '.gw.syncexec["last value each (\\"system \\\\\\"d .stats\\\\\\"\\";\\"f:{x+1}\\")";enlist `rdb]',
+    "\\d .",
+    '.gw.syncexec["count trade";enlist `rdb]',
+  ]);
+  cut = statements("\\d .stats\ncount .gw.servers");
+  assert.strictEqual(gatewayStatements(cut, ["rdb"]), cut);
+  // None of the gateway's own: one call of all, as before.
+  assert.deepStrictEqual(through("n:count trade / rows\nn*10"), ['.gw.syncexec["n:count trade / rows\\n ;n*10";enlist `rdb]']);
+  assert.deepStrictEqual(through(""), []);
+});
+
+test("a query selected with one of the gateway's own statements still goes to its servers (#3059)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  lines.length = 0;
+  await live.run("n:count .gw.servers\nexec sym from trade");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["`a`b`c`d`e"]]);
+  assert.strictEqual(live.history()[0].code, 'n:count .gw.servers\n.gw.syncexec["exec sym from trade";`rdb`hdb]');
+  // Run again from the history, it goes as it was sent.
+  await stub.commands.get("q-lint.rerunQuery")(live.history()[0]);
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['n:count .gw.servers\n.gw.syncexec["exec sym from trade";`rdb`hdb]', "ok"]);
+  // What reads a name the gateway's statement set stays with it.
+  lines.length = 0;
+  await live.run("n:count .gw.servers\nn+1");
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome, lines.slice(1)], ["n:count .gw.servers\nn+1", "ok", ["3"]]);
+  // The servers' statement first, then the gateway's own count of them.
+  lines.length = 0;
+  await live.run("exec sym from trade\nn+count .gw.servers");
+  assert.deepStrictEqual([live.history()[0].outcome, lines.slice(1)], ["ok", ["4"]]);
+});
+
+// The Process Explorer lists and reads the gateway's own tables, TorQ's
+// root `logmsg` among them. Preview and the templates that run then went
+// through .gw.syncexec: the grid showed a server's `logmsg` under the
+// gateway's table, or failed for a table only the gateway has (#3061).
+test("Preview and Table Templates of a table the Process Explorer lists on a gateway read the gateway's (#3061)", { skip }, async (t) => {
+  const gw = await torq(t, "logmsg:([] msg:enlist `server)");
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.run("logmsg:([] msg:`gw1`gw2)\nonlyhere:([] n:1 2 3)", undefined, []);
+  const context = stub.newContext();
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  const { ProcessExplorer } = require("../out/explorerview.js");
+  const { EXPLORER } = require("../out/explorer.js");
+  const { SchemaTools } = require("../out/schemaview.js");
+  const { SCHEMA_COMMANDS } = require("../out/schema.js");
+  new ProcessExplorer(context, live);
+  new SchemaTools(context, live);
+  lines.length = 0;
+  await stub.commands.get(EXPLORER.preview)({ kind: "table", name: "logmsg", partitioned: false });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["5 sublist logmsg", "ok"]);
+  assert.match(lines.join("\n"), /gw1\ngw2/);
+  await stub.commands.get(EXPLORER.preview)({ kind: "table", name: "onlyhere", partitioned: false });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["5 sublist onlyhere", "ok"]);
+  lines.length = 0;
+  stub.picks.push("Select first 100");
+  await stub.commands.get(SCHEMA_COMMANDS.templates)({ kind: "table", label: "logmsg", name: "logmsg" });
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["select[100] from logmsg", "ok"]);
+  assert.match(lines.join("\n"), /gw1\ngw2/);
+  // The same code from the editor is still a query for the servers.
+  lines.length = 0;
+  await live.run("select[100] from logmsg");
+  assert.match(lines.join("\n"), /server/);
+});
+
 test("a drill-down, a wrangle or a cell edit from a gateway's result goes to the server types it came from (#2437)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
@@ -305,6 +514,37 @@ test("the REPL, a notebook cell, its live values and the agent's query go throug
   const { runAgentQuery } = require("../out/agent.js");
   const agent = await live.runOnActive("count trade", (c) => runAgentQuery(c, "count trade", [25, 80], via));
   assert.deepStrictEqual(agent.value.data, [[2], [3]]);
+});
+
+// A cell, Smart Send and the REPL's run from the editor read only the
+// process's own server types: a file naming the HDB had its cells answered
+// by the RDB, where Run Query on the same line asked the HDB (#3063).
+test("a cell, Smart Send and the REPL send a file's code to the server types the file names (#3063)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  const { runText } = require("../out/consolerun.js");
+  const open = (name, text) => {
+    const document = { uri: vscode.Uri.file(name), getText: () => text };
+    vscode.workspace.textDocuments = [...vscode.workspace.textDocuments, document];
+    return document.uri;
+  };
+  t.after(() => (vscode.workspace.textDocuments = []));
+  const hist = open("/w/hist.q", "/ @servertypes hdb\n//// history\nexec sym from trade");
+  let ran = await runText(live, "exec sym from trade", hist);
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`c`d`e"]]);
+  // Several statements go as one query there.
+  ran = await runText(live, "n:count trade\nn+1", hist);
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, [",4"]]);
+  // None: the gateway itself. A file naming none, and code from no file,
+  // go to the process's own.
+  ran = await runText(live, "role", open("/w/own.q", "/ @servertypes none\nrole"));
+  assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`gateway"]]);
+  for (const from of [open("/w/live.q", "exec sym from trade"), undefined]) {
+    ran = await runText(live, "exec sym from trade", from);
+    assert.deepStrictEqual([ran.answer.ok, ran.answer.text], [true, ["`a`b"]]);
+  }
 });
 
 // What runs code inside a lambda of q-lint's cannot go through a deferred
@@ -339,6 +579,107 @@ test("on a TorQ gateway, features that need q-lint's lambda refuse, Copy Value a
   assert.strictEqual(live.goesThroughGateway(".gw.servers"), false);
 });
 
+// Copy Value as JSON read only the process's own server types: from a file
+// naming others it copied another server's value than Run Query showed, and
+// under `/ @servertypes none` asked the servers for the gateway's own (#3062).
+test("Copy Value as JSON goes to the server types its file names, as Run Query does (#3062)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  let clipboard = "";
+  vscode.env = { clipboard: { readText: async () => clipboard, writeText: async (s) => void (clipboard = s) } };
+  const context = stub.newContext();
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  require("../out/pasteview.js").registerPaste(context, live);
+  stub.config.user["jsonConversion.enable"] = true;
+  const copy = (text) => {
+    vscode.window.activeTextEditor = {
+      document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: text.split("\n")[0] }), getText: () => text },
+      selection: { active: { line: 0 }, isEmpty: true },
+    };
+    return stub.commands.get("q-lint.copyAsJson")();
+  };
+  assert.strictEqual(await copy("exec sym from trade"), '["a","b"]');
+  assert.strictEqual(await copy("exec sym from trade\n/ @servertypes hdb"), '["c","d","e"]');
+  assert.strictEqual(await copy("exec sym from trade\n/ @servertypes hdb rdb"), '["c","d","e","a","b"]');
+  // None: the gateway's own value, which no server has.
+  assert.strictEqual(await copy("role\n/ @servertypes none"), '"gateway"');
+  // Code given without a file goes to the process's own.
+  assert.strictEqual(await stub.commands.get("q-lint.copyAsJson")("exec sym from trade"), '["a","b"]');
+});
+
+// A file's `/ @servertypes rdb 2hdb` was cut at the word that is no q name:
+// the query went to the rdb alone, as if the HDB had not been named (#3065).
+test("a query whose server types are not all q names is not sent, and the one that is not is named (#3065)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const plain = await startQ(t, "trade:([] sym:`x`y`z`w)\n");
+  const { live, lines } = await setUp(t, [
+    { label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] },
+    { label: "plain", host: "127.0.0.1", port: plain, tags: [] },
+  ]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  const text = "count trade\n/ @servertypes rdb 2hdb";
+  const document = { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: "count trade" }), getText: () => text };
+  vscode.window.activeTextEditor = { document, selection: { active: { line: 0 }, isEmpty: true } };
+  vscode.workspace.textDocuments = [document];
+  t.after(() => (vscode.workspace.textDocuments = []));
+  const refused = 'q-lint: Not run: Server types are q names: rdb hdb. "2hdb" is not one.';
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", refused]);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // A cell, and a query run apart, as Query a Tag runs the file's.
+  const { runText } = require("../out/consolerun.js");
+  assert.strictEqual(await runText(live, "count trade", document.uri), undefined);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", refused]);
+  await assert.rejects(live.runApart(live.processes()[0], "count trade", undefined, { serverTypes: ["rdb", "2hdb"] }), /"2hdb" is not one\./);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // Watched, it is not sent either, and the watch ends with its first run.
+  stub.config.user["query.watch.enable"] = true;
+  await stub.commands.get("q-lint.watchQuery")(undefined, 1);
+  assert.deepStrictEqual(stub.messages.slice(-2), [["error", refused], ["info", "q-lint: stopped watching the query: it was not run."]]);
+  assert.strictEqual(live.api().watching(), undefined);
+  // Query Gateway on Server Types, given them or asked.
+  await stub.commands.get(GATEWAY_COMMANDS.queryWith)("rdb hdb-eu");
+  assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: Server types are q names: rdb hdb. "hdb-eu" is not one. Nothing was run.']);
+  let box;
+  stub.inputs.push((o) => ((box = o), undefined));
+  await stub.commands.get(GATEWAY_COMMANDS.queryWith)();
+  // The file's line as written is offered, and refused until corrected.
+  assert.strictEqual(box.value, "rdb 2hdb");
+  assert.strictEqual(box.validateInput(box.value), 'Server types are q names: rdb hdb. "2hdb" is not one.');
+  assert.strictEqual(box.validateInput("rdb hdb"), undefined);
+  assert.strictEqual(live.history().length, 0, "nothing was sent");
+  // To a process that is no gateway the line is a comment, as before.
+  assert.strictEqual(await live.connectTo("plain"), true);
+  lines.length = 0;
+  await stub.commands.get("q-lint.queryCurrentLine")();
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ["count trade", "ok"]);
+  assert.match(lines.join("\n"), /^4$/m);
+});
+
+// Run from Saved Queries, a query saved from a `/ @servertypes hdb` file
+// went to the process's own server types, and so did its scheduled exports
+// and dashboard tiles (#3064).
+test("a saved query goes to the server types its own `/ @servertypes` line names, run or run apart (#3064)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live, lines } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  await live.runFilledIn("/ @servertypes hdb\nexec sym from trade", "history");
+  assert.deepStrictEqual([live.history()[0].code, live.history()[0].outcome], ['.gw.syncexec["exec sym from trade";enlist `hdb]', "ok"]);
+  assert.match(lines.join("\n"), /`c`d`e/);
+  await live.runFilledIn("exec sym from trade", "live");
+  assert.strictEqual(live.history()[0].code, '.gw.syncexec["exec sym from trade";enlist `rdb]');
+  // A scheduled export and a dashboard tile run it apart.
+  const apart = async (code, options) => (await live.runApart(live.processes()[0], code, undefined, options)).text.join("\n");
+  assert.match(await apart("/ @servertypes hdb\ncount trade"), /^,?3$/);
+  assert.match(await apart("count trade"), /^,?2$/);
+  assert.match(await apart("/ @servertypes none\nrole"), /^`gateway$/);
+  // Server types asked for outright still win.
+  assert.match(await apart("/ @servertypes hdb\ncount trade", { serverTypes: ["rdb"] }), /^,?2$/);
+});
+
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);
@@ -368,9 +709,21 @@ test("with q-lint.connection.torqGateway.enable off, a gateway's query goes as w
 
 test("Set Gateway Server Types marks and unmarks a saved process", async (t) => {
   const { live } = await setUp(t, [{ label: "gw", host: "h", port: 1, tags: [] }]);
-  stub.inputs.push((o) => (assert.strictEqual(o.validateInput("1x"), "Server types are q names: rdb hdb."), "rdb hdb"));
+  let box;
+  stub.inputs.push((o) => ((box = o), "rdb hdb"));
   await stub.commands.get(GATEWAY_COMMANDS.set)("gw");
+  // Each word that is no q name is named, one among names too (#3065).
+  assert.strictEqual(box.validateInput("1x"), 'Server types are q names: rdb hdb. "1x" is not one.');
+  assert.strictEqual(box.validateInput("rdb hdb-eu"), 'Server types are q names: rdb hdb. "hdb-eu" is not one.');
+  assert.strictEqual(box.validateInput(" , "), "Server types are q names: rdb hdb.");
+  assert.deepStrictEqual([box.validateInput("rdb, `hdb"), box.validateInput("")], [undefined, undefined]);
   assert.deepStrictEqual(live.processes()[0].gateway, ["rdb", "hdb"]);
+  // Given without the box, it is refused whole: nothing is changed.
+  for (const given of ["rdb hdb-eu", ["rdb", "hdb-eu"]]) {
+    await stub.commands.get(GATEWAY_COMMANDS.set)("gw", given);
+    assert.deepStrictEqual(stub.messages.at(-1), ["error", 'q-lint: Server types are q names: rdb hdb. "hdb-eu" is not one. gw was not changed.']);
+    assert.deepStrictEqual(live.processes()[0].gateway, ["rdb", "hdb"]);
+  }
   await stub.commands.get(GATEWAY_COMMANDS.set)("gw", null);
   assert.strictEqual(live.processes()[0].gateway, undefined);
   // Querying with types needs a connected gateway.

@@ -19,13 +19,14 @@
 // `base64` otherwise. `execution`, `outputs` and `metadata` are written only
 // when there is something in them. A field this extension does not know,
 // on the file, a cell, an output, an item or a run, is kept and written
-// back after the ones it does. Saving what was opened gives the same file
-// back.
+// back after the ones it does; so is a `metadata` that is no object, and
+// the `base64` of an item that has a `text` too, which are not read
+// (#2993). Saving what was opened gives the same file back.
 //
 // A file that is not one is refused with what is wrong with it, never read as
 // an empty notebook that a save would then write over it.
 
-import { blockDepth, statements } from "./statements";
+import { blockDepth, statements, trimBlanks } from "./statements";
 
 /// The format this extension writes, and the newest it reads.
 export const QNB_VERSION = 1;
@@ -109,16 +110,25 @@ const OUTPUT_FIELDS = ["items", "metadata"];
 const ITEM_FIELDS = ["mime", "text", "base64"];
 const EXECUTION_FIELDS = ["order", "success", "start", "end"];
 
-/// The fields of `json` not in `known`, as `{extra}`, or nothing when none.
-function unknown(json: Json, known: string[]): { extra?: Json } {
-  const extra = Object.fromEntries(Object.entries(json).filter(([key]) => !known.includes(key)));
+/// The known fields a file may hold in a shape that is not read, where one
+/// of any other is refused: a `metadata` that is no object, and an item's
+/// `text` or `base64` beside the one that is its bytes. Each is kept as it
+/// was for the save, which dropped it (#2993).
+const LOOSE = ["metadata", "text", "base64"];
+
+/// The fields of `json` not in `known`, and the loose ones `read` did not
+/// take, as `{extra}`, or nothing when none.
+function unknown(json: Json, known: string[], read: object = {}): { extra?: Json } {
+  const extra = Object.fromEntries(Object.entries(json).filter(([key]) => !known.includes(key) || (LOOSE.includes(key) && !(key in read))));
   return Object.keys(extra).length > 0 ? { extra } : {};
 }
 
-/// `extra`'s fields added to `out`, less any `out` has a field of its own for.
+/// `extra`'s fields added to `out`, less any `out` has a field of its own
+/// for: a known one is written from `extra` only when it is a loose one
+/// `out` does not have.
 function withExtra(out: Json, extra: Json | undefined, known: string[]): Json {
   for (const [key, value] of Object.entries(extra ?? {})) {
-    if (!known.includes(key)) {
+    if (!known.includes(key) || (LOOSE.includes(key) && !(key in out))) {
       out[key] = value;
     }
   }
@@ -163,7 +173,8 @@ export function parseQnb(raw: string, exact = true): Qnb {
     throw new QnbError("not a q notebook: \"cells\" is missing or not a list");
   }
   const cells = json.cells.map((cell, i) => readCell(cell, `cell ${i + 1}`));
-  return { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}), ...unknown(json, FILE_FIELDS) };
+  const notebook: Qnb = { cells, ...(isObject(json.metadata) ? { metadata: json.metadata } : {}) };
+  return { ...notebook, ...unknown(json, FILE_FIELDS, notebook) };
 }
 
 function readCell(raw: unknown, where: string): QnbCell {
@@ -225,7 +236,7 @@ function readCell(raw: unknown, where: string): QnbCell {
   if (isObject(raw.metadata)) {
     cell.metadata = raw.metadata;
   }
-  return { ...cell, ...unknown(raw, raw.kind === "code" ? CELL_FIELDS : MARKDOWN_FIELDS) };
+  return { ...cell, ...unknown(raw, raw.kind === "code" ? CELL_FIELDS : MARKDOWN_FIELDS, cell) };
 }
 
 function readOutput(raw: unknown, where: string): QnbOutput {
@@ -236,15 +247,18 @@ function readOutput(raw: unknown, where: string): QnbOutput {
     if (!isObject(item) || typeof item.mime !== "string") {
       throw new QnbError(`${where}, item ${k + 1} has no "mime"`);
     }
+    let read: QnbItem;
     if (typeof item.text === "string") {
-      return { mime: item.mime, text: item.text, ...unknown(item, ITEM_FIELDS) };
+      read = { mime: item.mime, text: item.text };
+    } else if (typeof item.base64 === "string") {
+      read = { mime: item.mime, base64: item.base64 };
+    } else {
+      throw new QnbError(`${where}, item ${k + 1} has neither "text" nor "base64"`);
     }
-    if (typeof item.base64 === "string") {
-      return { mime: item.mime, base64: item.base64, ...unknown(item, ITEM_FIELDS) };
-    }
-    throw new QnbError(`${where}, item ${k + 1} has neither "text" nor "base64"`);
+    return { ...read, ...unknown(item, ITEM_FIELDS, read) };
   });
-  return { items, ...(isObject(raw.metadata) ? { metadata: raw.metadata } : {}), ...unknown(raw, OUTPUT_FIELDS) };
+  const output: QnbOutput = { items, ...(isObject(raw.metadata) ? { metadata: raw.metadata } : {}) };
+  return { ...output, ...unknown(raw, OUTPUT_FIELDS, output) };
 }
 
 /// Write a `.qnb`: keys in a fixed order, one space of indent, a final newline.
@@ -305,7 +319,10 @@ export function decodeItem(item: QnbItem): Uint8Array {
 
 // --- export
 
-const trimEnd = (line: string): string => line.replace(/\s+$/, "");
+// q's blanks only: a `/` and a no-break space or a form feed is a line
+// comment to q, and closed as a block comment its `\` ended the script
+// (#2906).
+const trimEnd = trimBlanks;
 
 /// A code cell as a script runs it the way the cell runs: q reads a script
 /// as `statements.ts` reads a cell, but across cells, so what one cell leaves
@@ -315,12 +332,17 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
 /// opens a block comment over the rest of the cell instead. Block comments
 /// nest, in a cell as in KDB-X (#1462), so each level the cell leaves open is
-/// closed by a `\` of its own (#1731).
+/// closed by a `\` of its own (#1731). An indented first line that is a
+/// command once unindented - `  \\`, `  \l lib.q` - is none as the cell
+/// sends it, and q runs nothing of its statement: unindented, `\\` ended q
+/// there and lost every later cell, so the statement is a comment (#3000).
 function scriptCell(source: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let ended = false;
   let first = true;
+  // In the statement of such a command, which runs to the next unindented line.
+  let unrun = false;
   for (const line of source.split(/\r?\n/)) {
     const text = trimEnd(line);
     if (ended) {
@@ -341,9 +363,17 @@ function scriptCell(source: string): string[] {
       continue;
     } else if (first && text !== "" && !text.startsWith("/")) {
       const unindented = line.trimStart();
-      if (trimEnd(unindented) === "/" || trimEnd(unindented) === "\\") {
-        // Unindented, a lone `/` would open a block comment and a lone `\`
-        // end the script, losing every later cell (#1563): a line comment.
+      if (unindented !== line && (unrun || unindented.startsWith("\\"))) {
+        // Unindented it would be a command, which the cell never ran: a
+        // lone `\` ends the script (#1563), `\\` ends q, `\l` loads a file
+        // (#3000). A line comment, as are the lines that continue it.
+        unrun = true;
+        out.push(`/ ${unindented}`);
+        continue;
+      }
+      if (trimEnd(unindented) === "/") {
+        // Unindented, a lone `/` would open a block comment over every
+        // later cell (#1563): a line comment.
         out.push(`/ ${unindented}`);
         continue;
       }
@@ -373,6 +403,61 @@ function commentCell(source: string): string[] {
   return ["/", ...lines, "\\"];
 }
 
+/// `code` as its strings, unescaped and in order, and the rest of it: its
+/// text without them and without its comments.
+function strings(code: string): { bare: string; quoted: string[] } {
+  const quoted: string[] = [];
+  let bare = "";
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === '"') {
+      let body = "";
+      for (i++; i < code.length && code[i] !== '"'; i++) {
+        if (code[i] === "\\" && i + 1 < code.length) {
+          i++;
+          body += { n: "\n", t: "\t", r: "\r" }[code[i]] ?? code[i];
+        } else {
+          body += code[i];
+        }
+      }
+      quoted.push(body);
+      bare += " ";
+    } else if (c === "/" && (i === 0 || code[i - 1] === " " || code[i - 1] === "\t" || code[i - 1] === "\n")) {
+      const end = code.indexOf("\n", i);
+      i = (end < 0 ? code.length : end) - 1;
+    } else {
+      bare += c;
+    }
+  }
+  return { bare, quoted };
+}
+
+// `\d .ns` as q reads the line: after any `q)` or `k)` prompts (#2999).
+const CONTEXT_COMMAND = /^(?:[qkK]\))*\\d\s+(\S+)([^]*)$/;
+
+/// Whether `code`, read after a context that was `away` from the root or
+/// not, leaves q in a namespace, by the strings in it: a `"d .ns"` where
+/// `system` is applied - however: `system "d .ns"`, `system("d .ns")`,
+/// `@[system;"d .ns";h]`, in a lambda - and a `"\\d .ns"`, which `value`
+/// runs. One built from parts (`system "d ",ns`) may name any. Code inside
+/// a string is read the same way, as in `value "system \"d .ns\""`. A
+/// string that names the root puts q back there only where something is
+/// seen to run it.
+function leftBy(code: string, away: boolean): boolean {
+  const { bare, quoted } = strings(code);
+  const system = /\bsystem\b/.test(bare);
+  const run = system || /\b(?:value|get|eval|reval)\b/.test(bare);
+  for (const text of quoted) {
+    const switched = CONTEXT_COMMAND.exec(text) ?? (system ? /^d[ \t]+(\S*)([^]*)$/.exec(text) : null);
+    if (switched !== null) {
+      away = switched[1] !== "." || switched[2].trim() !== "" || (away && !run);
+    } else if (/\\d\s|\bsystem\b/.test(text)) {
+      away = leftBy(text, away);
+    }
+  }
+  return away;
+}
+
 /// Whether the cell's code ends in a namespace other than the root: its last
 /// `\d` or `system "d ..."` names one. A notebook runs each cell in the root,
 /// so the `\d` ends with the cell; a script would carry it into every cell
@@ -380,13 +465,15 @@ function commentCell(source: string): string[] {
 /// the text: a namespace set inside a function the cell calls is not seen.
 /// A `\d` statement's lines after its first, even a comment, are its
 /// argument to q, so `\d .` and an indented line is no root (#2155).
+/// Every way of writing the switch that KDB-X takes in a script counts
+/// (#2999) - `q)\d .ns`, `k)\d .ns`, `system("d .ns")`,
+/// `@[system;"d .ns";h]`, `value "\\d .ns"` - and one that only may run
+/// does too: a `\d .` the script did not need changes nothing.
 export function leavesNamespace(source: string): boolean {
   let away = false;
   for (const statement of statements(source)) {
-    const command = /^\\d\s+(\S+)([^]*)$/.exec(statement);
-    for (const [, name, rest] of command !== null ? [command] : statement.matchAll(/\bsystem\s*\[?\s*"d\s+([^"\s]+)/g)) {
-      away = name !== "." || (rest ?? "").trim() !== "";
-    }
+    const command = CONTEXT_COMMAND.exec(statement);
+    away = command !== null ? command[1] !== "." || command[2].trim() !== "" : leftBy(statement, away);
   }
   return away;
 }

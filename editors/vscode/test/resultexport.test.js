@@ -281,6 +281,26 @@ test("a minute, second or time of 100 hours or more is cast from its count: q ca
   assert.strictEqual(tableLiteral(minutes).code, '([] c0:(0Nu;"u"$6000))');
 });
 
+test("a date, month or datetime outside years 1 to 9999 is cast from its count: q cannot read what it writes (#3073)", () => {
+  // KDB-X: "d"$-800000 is 0000.00.00, "m"$-30000 100000 are 0+00.01m and **33.05m, "z"$-1000000f is 0000.00.00T00:00:00.000.
+  assert.strictEqual(atomLiteral(14, "0000.00.00", -800000).literal, '"d"$-800000');
+  assert.strictEqual(atomLiteral(14, "0000.00.00", 2921940).literal, '"d"$2921940');
+  assert.strictEqual(atomLiteral(13, "0+00.01", -30000).literal, '"m"$-30000');
+  assert.strictEqual(atomLiteral(13, "0000.12", -23989).literal, '"m"$-23989');
+  assert.strictEqual(atomLiteral(13, "**33.05", 100000).literal, '"m"$100000');
+  assert.strictEqual(atomLiteral(15, "0000.00.00T00:00:00.000", -1000000).literal, '"z"$-1000000f');
+  assert.strictEqual(atomLiteral(15, "0000.00.00T00:00:00.000", 2921940.5).literal, '"z"$2921940.5');
+  // Inside them the text is the literal, as it was.
+  assert.deepStrictEqual(
+    [atomLiteral(14, "0001.01.01", -730119).literal, atomLiteral(14, "9999.12.31", 2921939).literal, atomLiteral(13, "0001.01", -23988).literal, atomLiteral(13, "9999.12", 95999).literal],
+    ["0001.01.01", "9999.12.31", "0001.01m", "9999.12m"],
+  );
+  assert.deepStrictEqual([atomLiteral(15, "0001.01.01T00:00:00.000", -730119).literal, atomLiteral(15, "9999.12.31T12:00:00.000", 2921939.5).literal], ["0001.01.01T00:00:00.000", "9999.12.31T12:00:00.000"]);
+  assert.deepStrictEqual([atomLiteral(14, "", null).literal, atomLiteral(14, "0W", Infinity).literal, atomLiteral(13, "", null).literal], ["0Nd", "0Wd", "0Nm"]);
+  const dates = { count: 2, keys: 0, names: ["a"], types: [14], cells: [["0000.00.00", "2024.01.02"]], raw: [[-800000, 8767]], rank: [[0, 1]] };
+  assert.strictEqual(tableLiteral(dates).code, '([] a:("d"$-800000;2024.01.02))');
+});
+
 test("a lone item that is no noun, the generic null or an operator, is enlisted in parentheses (#1968)", () => {
   // KDB-X: enlist :: is enlist itself, and enlist + a 'rank.
   const one = (type, cell, raw) => tableLiteral({ count: 1, keys: 0, names: ["c"], types: [type], cells: [[cell]], raw: [[raw]], rank: [[0]] }).code;
@@ -539,6 +559,31 @@ const grid = (columns, cells, values, rank) => ({
   total: cells[0].length,
 });
 
+test("a pivot's sum, avg, min and max take an infinity as q's do, not as a null (#3077)", () => {
+  const by = (type, cells, values, agg) => page.pivot(grid([["s", 11], ["v", type]], [cells.map((_, i) => "aabbcdd"[i]), cells], [null, values], [cells.map((_, i) => "aabbcdd".charCodeAt(i) - 97), null]), cells.map((_, i) => i), { row: 0, column: -1, value: 1, agg }).cells.map((c) => c[0]);
+  // q: select agg v by s from ([] s:`a`a`b`b`c`d`d; v:1 0w 3 -0w 0n 0w -0w)
+  const f = [["1", "0w", "3", "-0w", "", "0w", "-0w"], [1, null, 3, null, null, null, null]];
+  assert.deepStrictEqual(by(9, ...f, "sum"), ["0w", "-0w", "", ""]);
+  assert.deepStrictEqual(by(9, ...f, "avg"), ["0w", "-0w", "", ""]);
+  assert.deepStrictEqual(by(9, ...f, "min"), ["1", "-0w", "", "-0w"]);
+  assert.deepStrictEqual(by(9, ...f, "max"), ["0w", "3", "", "0w"]);
+  assert.deepStrictEqual(by(9, ...f, "count"), ["2", "2", "0", "2"]);
+  // A long's infinity is its largest value: 1+0W is 0N, a null.
+  const j = [["1", "0W", "3", "-0W", ""], [1, null, 3, null, null]];
+  assert.deepStrictEqual(by(7, ...j, "sum"), ["", "-9223372036854775804", ""]);
+  assert.deepStrictEqual(by(7, ...j, "min"), ["1", "-0W", ""]);
+  assert.deepStrictEqual(by(7, ...j, "max"), ["0W", "3", ""]);
+  assert.deepStrictEqual(by(7, ...j, "avg").map(Number), [0, -4611686018427387902, 0]);
+  assert.strictEqual(by(7, ...j, "avg")[0], "");
+  // An int's sum is an int, its avg a float of the values.
+  assert.deepStrictEqual(by(6, ...j, "sum"), ["", "-2147483644", ""]);
+  assert.deepStrictEqual(by(6, ...j, "avg"), ["1073741824", "-1073741822", ""]);
+  assert.deepStrictEqual(by(6, ...j, "max"), ["0W", "3", ""]);
+  // A short's sum is an int: 1+0Wh is 32768i.
+  assert.deepStrictEqual(by(5, ...j, "sum"), ["32768", "-32764", ""]);
+  assert.deepStrictEqual(by(5, ...j, "min"), ["1", "-0W", ""]);
+});
+
 test("a pivot groups by two columns in q's order and aggregates a third", () => {
   const g = grid(
     [["sym", 11], ["side", 11], ["qty", 7]],
@@ -744,4 +789,70 @@ test("an export is written in parts: past V8's longest string it is still the wh
   assert.strictEqual(exportResult("html", payload, 2).data.toString(), toHtml(payload, 2));
   assert.match(toHtml({ ...payload, cells: [[], [], []], raw: [[], [], []] }, 2), /<tbody>\n\n<\/tbody>\n<\/table><\/body><\/html>\n$/);
   assert.strictEqual(toJson({ ...payload, cells: [[], [], []], raw: [[], [], []] }), "[]\n");
+});
+
+test("a cell of a function q writes as it does not read back is counted, and Copy as q says so (#3084)", () => {
+  // As GRID sends one: ("u";its text), in a list too.
+  const k = "k){$[0>@x;!x;'`type]}";
+  const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [[k, `(${k};1)`, "{x}"]], raw: [[["u", k], ["l", [["u", k], "1"]], false]], rank: [[]] };
+  assert.strictEqual(atomLiteral(0, k, ["u", k]).unread, true);
+  assert.strictEqual(atomLiteral(0, "{x}", false).unread, undefined);
+  assert.strictEqual(tableLiteral(p).unread, 2);
+  assert.strictEqual(tableLiteral(p, [2]).unread, 0);
+  const note = "2 cell(s) hold a function q writes as it does not read back (one defined in q, or a composition)";
+  assert.ok(exportResult("q", p, -1).notes.includes(note));
+  assert.deepStrictEqual(exportResult("q", p, -1, [2]).notes, []);
+  // The other formats write the cell's text, which is all they say it is.
+  assert.deepStrictEqual(exportResult("json", p, -1).notes, []);
+});
+
+test("a drill-down literal that is no single token is one operand, in parentheses (#3072)", () => {
+  const g = "409031f3-b19c-6770-ee84-6e9369c98697";
+  const p = {
+    count: 1,
+    keys: 0,
+    names: ["g", "u", "x", "d", "s", "n", "l", "v", "w"],
+    types: [2, 17, 0, 0, 11, 7, 0, 0, 0],
+    cells: [[g], ["**:00"], [',"x"'], ["`a`b!1 2"], ["a"], ["-1"], ["(1;`a)"], ["1 2 3"], ["(1;2)!(3;4)"]],
+    raw: [[], [6000], [false], [false], [], [-1], [false], [false], [false]],
+    rank: [[]],
+  };
+  const left = (column) => fillDrilldown("{{value}}~/:c", p, column, 0).code;
+  // q reads `"G"$"..."~/:c` as `"G"$("..."~/:c)`.
+  assert.strictEqual(left(0), `("G"$"${g}")~/:c`);
+  assert.strictEqual(left(1), '("u"$6000)~/:c');
+  assert.strictEqual(left(2), '(enlist "x")~/:c');
+  assert.strictEqual(left(3), "(`a`b!1 2)~/:c");
+  assert.strictEqual(left(7), "(1 2 3)~/:c");
+  assert.strictEqual(left(8), "((1;2)!(3;4))~/:c");
+  // One token, or one in parentheses already, is as it was.
+  assert.strictEqual(left(4), "`a~/:c");
+  assert.strictEqual(left(5), "-1~/:c");
+  assert.strictEqual(left(6), "(1;`a)~/:c");
+  const t = typed();
+  assert.deepStrictEqual(
+    [0, 1, 2, 3, 4, 5].map((c) => fillDrilldown("{{value}}", t, c, 0).code),
+    ["`a", "1b", "9007199254740993", fillDrilldown("{{value}}", t, 3, 0).code, "2024.01.31", "2024.01.02D03:04:05.123456789"],
+  );
+  assert.strictEqual(fillDrilldown("{{value}}", t, 6, 0).code, '"abc"');
+  assert.strictEqual(fillDrilldown("{{value}}", t, 6, 1).code, "`x`y");
+});
+
+test("a Parquet datetime is the millisecond the grid shows: one a fraction under the next is not rounded up to it (#3083)", () => {
+  /// Whether the file holds `ms` since 1970 as an INT64.
+  const holds = (raw, ms) => {
+    const z = { count: 1, keys: 0, names: ["z"], types: [15], cells: [["2000.01.01T00:00:00.000"]], raw: [[raw]], rank: [[0]] };
+    const want = Buffer.alloc(8);
+    want.writeBigInt64LE(BigInt(ms));
+    return toParquet(z, [0]).data.includes(want);
+  };
+  const y2k = Date.UTC(2000, 0, 1);
+  // KDB-X: 2000.01.01T00:00:00.000 + 0.0000000058 shows 00:00:00.000, + 0.0000000116 00:00:00.001.
+  assert.ok(holds(0.0000000058, y2k));
+  assert.ok(!holds(0.0000000058, y2k + 1));
+  assert.ok(holds(0.0000000116, y2k + 1));
+  assert.ok(holds(0.5, y2k + 432e5));
+  // 0.99999999999 is 23:59:59.999, not the next day.
+  assert.ok(holds(0.99999999999, y2k + 864e5 - 1));
+  assert.ok(holds(-0.0000000058, y2k - 1));
 });

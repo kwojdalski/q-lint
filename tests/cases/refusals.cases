@@ -291,6 +291,19 @@ h2:hopen `:localhost:5000
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
 
+=== QT030 profile: general | a character that is no letter is no type either (#2888; q 5: each is 'type)
+r:" "$"ab"
+r2:"1"$1
+r3:"_"$1
+r4:"9"$()
+r5:f[" " $ x]
+
+=== clean profile: general | but the star hands its argument back, and a quote between two strings opens no string (#2888; q 5: 1, "a$", ("x";"$y"))
+a:"*"$1
+b:"a","$"
+c:("x";"$y")
+d:"a\"","$b"
+
 === clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
 a:1b
 mode:"w"
@@ -569,7 +582,7 @@ f:{[x]
 f:{[(a;b)] '1}
 g:{[a:`j] '1}
 
-=== clean | a continued line after an operand makes it each
+=== QE009 | a continued line after an operand makes it each, detached by its blank (#2852; q 5 refuses the lambda as it loads, with ')
 h:{a
   '1}
 
@@ -1224,10 +1237,70 @@ b:`u#"aa"
 a:`s#"abc"
 b:`u#"ab"
 
+=== QT024 profile: general | an atom takes no attribute, the grouped one included (#2891; q 5: each is 'type)
+a:`s#3
+b:`u#`a
+c:`p#"a"
+d:`g#1b
+e:`s#2024.01.01
+f:(`s#-1.5;0)
+g:`s#0x01
+
+=== clean profile: general | while a list of one item, an empty list, or an atom that only starts a list takes one (#2891; q 5: each runs)
+a:`s#enlist 3
+b:`s#()
+c:`s#""
+d:`s#3,4
+e:`g#`a`b
+f:@[`t;`sym;`g#]
+
 === QT029 profile: general | hopen of a real, the empty symbol or the empty string (q 5: 'type)
 a:hopen 1.5e
 b:hopen `
 c:hopen ""
+
+=== QT029 profile: general | a string needs the leading colon as a symbol does (#2885; q 5: each is 'type)
+a:hopen "localhost:5000"
+b:hopen["localhost:5000"]
+c:hopen "a"
+d:hopen " :localhost:5000"
+
+=== clean profile: general | with the colon it is a handle, and a string joined to something is not one literal (#2885; q 5: 'hop, if nothing listens)
+a:hopen ":localhost:5000"
+b:hopen "localhost:",string p
+c:hopen":unix://5000"
+
+=== QT029 profile: general | a symbol that runs on over a slash, without its colon (#2886; q 5: each is 'type)
+a:hopen `unix://5000
+b:hopen `tcps://localhost:5000
+c:hopen[`unix://5000]
+
+=== clean profile: general | and with it (#2886; q 5: 'hop, if nothing listens)
+a:hopen `:unix://5000
+b:hopen `:tcps://localhost:5000
+
+=== QT029 profile: general | a null or infinite long is no handle, nor any other literal that is no long (#2887; q 5: 'domain for the first four, 'type each after)
+a:hopen 0N
+b:hopen 0W
+c:hopen -0W
+d:hopen 0Nj
+e:hopen 0n
+f:hopen 2024.01.01
+g:hopen 1b
+h:hopen 0x01
+i:hopen 12:00
+j:hopen `a`b
+k:hopen 1 2
+l:hopen 0D00:00:01
+m:hopen 0Ni
+n:hopen `:a`:b
+o:hopen 010b
+
+=== clean profile: general | while a long, a handle and its timeout, or an int are left to run (#2887; q 5: 'hop, if nothing listens, for the first three)
+a:hopen 5000j
+b:hopen (`:localhost:5000;100)
+c:hopen 05
+d:hopen 5000i
 
 === QT025 profile: general | a list cannot be signalled (q 5: '(1;2), '() and '`a`b are 'stype)
 a:{'(1;2)}
@@ -1538,6 +1611,32 @@ b:{x+y} over y
 c:"x + each y"
 d:max over y
 
+=== clean profile: general | a string or a symbol between the two is the iterator's own left operand (q 5 parses each line; #2771)
+a:"x" , "abc" each 0 2
+b:`a , `b`c each 0 1
+c:"ab" ~ "ab" each 0 1
+d:`a`b cross `c`d each 0 1
+e:1 2 ,
+  "abc" each 0 1
+
+=== QE011 profile: general | a two-character comparison is one glyph (q 5: parse "x <= each y" is ' ) (#2772)
+x:1 2 3;y:2 3 4
+a:x <= each y
+b:x >= each y
+c:x <> each y
+
+=== clean profile: general | a byte or a boolean ends no number vector, so the derived function after it is applied infix (q 5: parse "0 1b/0x0102" is ((/;1b);0;0x0102), #2783)
+a:0 1b/0x0102
+b:1b 0/0x0102
+c:0 0x01/0x0102
+d:0 1 01b/0x0102
+e:0 1b'0x0102
+
+=== QE009 profile: general | while a vector of one type is one operand, and a lone boolean has nothing on its left (q 5: '/, #2783)
+a:0 1/0x0102
+b:1b/0x0102
+c:1 2f/0x0102
+
 === QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
 a:hopen -1.5
 b:hopen 1e3
@@ -1831,6 +1930,39 @@ a:select a by b by c from t
 
 === QE007 profile: general | a clause this query does not take (q 5: 'by, #2227)
 a:delete by from t
+
+=== clean profile: general | QE007: a segment of a dotted name is no `from`, `by` or `where` (q 5 runs each with the names defined; #2773)
+s:select px from t where date>=.rng.from
+f:{select px from t where date>=.rng.from}
+v:select px by .grp.by from t
+w:exec px from t where date>=.rng.from
+u:update px:2 from t where date>=.rng.from
+d:delete from t where date>=.rng.from
+a:select px, by.x from t
+b:select px by sym, by.x from t
+c:select from where.x
+
+=== QE007 profile: general | so a `from` that is one has no table after it (q 5: parse "select px from.t" is 'from, #2773)
+e:select px from.t
+
+=== QE007 profile: general | an update with no column (q 5: 'type on any table, #2782)
+r1:update from t
+r2:update by sym from t
+r3:update from t where px>1
+r4:{update
+  from x}
+
+=== QE007 profile: general | an exec with one unnamed by column and no column (q 5: 'nyi, #2782)
+r:exec by sym from t
+
+=== clean profile: general | while q 5 runs these (#2782)
+r1:exec by sym,date from t
+r2:exec by a:sym from t
+r3:update distinct from t
+r4:exec distinct by sym from t
+r5:exec from t
+r6:update a:1 by sym from t
+r7:exec px by sym from t
 
 === clean profile: general | while q 5 parses each of these (#2227)
 a:delete a from t
@@ -2346,3 +2478,187 @@ a:12:00?10
 a:12:30:?10
 a:12:-10
 a:12:#10
+
+=== QE010 profile: general | a capital after an integer, an exponent or a temporal, and a temporal letter after an uppercase exponent (#2828, #2829, #2831; q 5: '1T, '1e3N, '12:00T, '0D12N, '2000.01.01N, '1E3)
+a:1T
+b:12T
+c:1e3N
+d:1e3W
+e:12:00T
+f:12:00:00D
+g:0D12N
+h:2000.01.01N
+i:2000.01.01D12W
+j:2000.01.01T12D
+k:1E3p
+l:1E3n
+
+=== QE010 profile: general | a letter a timespan, timestamp or datetime with a short clock does not take (#2830; q 5: '0D12x, '2000.01.01D12x, '2000.01.01T12)
+a:0D12x
+b:2000.01.01D12x
+c:2000.01.01T12p
+d:2000.01.01T12n
+
+=== QE010 profile: general | a point or a second e after an exponent (#2841; q 5: '1e3.5, '1.5e3.5, '1ee3)
+a:1e3.5
+b:1.5e3.5
+c:f[1ee3]
+
+=== clean profile: general | while a clock filled to the second takes more, an empty clock takes a type letter, and a token ending in c is chars (#2830, #2832, #2833; q 5 parses each)
+a:0D12:00:00x
+b:2000.01.01T12:00:00.123p
+c:1Dp
+d:0Dn
+e:2000.01.01Dp
+f:2000.01.01Tz
+g:1ec
+h:1.5e-3c
+i:0Wjc
+j:1bc
+k:0Ngc
+l:1D
+m:2000.01.01D
+n:1E3f
+
+=== QE010 profile: general | a vector literal item its last item cannot type (#2835-#2838; q 5: '0D12, '2000.01.01D12, '1, '2000.01.01T12, '1.5, '1e3, '2000.01.01, '12:00u)
+a:0D12 1
+b:0D12 12:00
+c:2000.01.01D12 1
+d:1 2000.01.01T12
+e:2000.01.01T12 12:00
+f:1.5 12:00
+g:1e3 2000.01m
+h:-1.5 1u
+i:1e3 0D12
+j:2000.01.01 12:00
+k:2000.01 1u
+l:12:00 2000.01m
+m:12:00u 12:00:00
+
+=== QE010 profile: general | a guid null after anything but a null, and a typed null over an item it cannot type (#2839, #2840; q 5: '1, '0W, '2000.01.01, '12:00)
+a:1 0Ng
+b:0W 0Ng
+c:2000.01.01 0Ng
+d:1 0Nm
+e:12:00 0Nd
+f:2000.01.01 0Ne
+g:2000.01.01 1t
+
+=== clean profile: general | while a suffixed time takes nulls and items it can read, and the last item types what it can (#2834-#2840; q 5 parses each)
+a:12:00u 0N
+b:12:00u 1u
+c:12:00:00v 1v
+d:12:00:00v 0n
+e:0D12 2000.01.01D12
+f:2000.01.01T12 2000.01.01
+g:1.5 12:00:00.000
+h:0D12 1 2000.01.01D12
+i:.5 12:00:00.000 12:00:00
+j:0N 0Ng
+k:2001 0Nm
+l:2000.01.01d 0Nd
+m:0D 12:00:00.12345
+n:2000.01.01T12:00 0D12
+
+=== QE006 profile: general | the seconds after a point in hh:mm.ss take two digits and stop at 59 (#2842; q 5: '12:00.5, '12:00.60, '12:00.99)
+a:12:00.5
+b:12:00.60
+c:12:00.99 12:00
+d:12:00.60v
+
+=== clean profile: general | while two digits of seconds, three or more of fraction, and a t, u or c after them parse (#2842; q 5 parses each)
+a:12:30.25
+b:12:00.123
+c:12:00.5t
+d:12:00.60u
+e:12:00.60c
+
+=== QE006 profile: general | an impossible date, month or time straight after a drop's _ (#2843; q 5: '2024.02.30, '12:60, '2024.13)
+a:1_2024.02.30
+b:x _2024.02.30
+c:x _12:60
+d:x _2024.13m
+
+=== clean profile: general | while a _ inside a name joins the digits to it (#2843; q 5 parses each)
+a:x_2024.02.30
+b:x _2024.02.28
+
+=== QE006 profile: general | a one-digit field in the expression a \t or \ts times (#2844; q 5: '12:5, '12:00:5 and '0D1:30 as the file loads)
+\t a:12:5
+\ts a:12:00:5
+\t:10 a:0D1:30
+
+=== QE006 profile: general | a one-digit hour after a minus between operands or a drop (#2845; q 5: '1:, '0:)
+a:t-1:30
+b:t-0:30
+c:1-1:30
+d:(t)-1:30:00
+e:t _0:30
+
+=== clean profile: general | while a minus that starts a literal makes it negative (#2845; q 5 parses each)
+a:-1:30
+b:t -1:30
+c:t_1:30
+
+=== QE007 profile: general | a row limit on exec, update or delete, which only select takes (#2846; q 5: 'type, and '] for an empty one)
+a:exec[2] a from t
+b:update[2] a:1 from t
+c:delete[2] from t
+d:exec[] a from t
+
+=== QE007 profile: general | a select row limit with a slot after its count that is no sort, or a third slot (#2847; q 5: 'length)
+a:select[2;a] from t
+b:select[2;`a] from t
+c:select[2;>a;] from t
+d:select[2;>a;b] from t
+e:select[2;;] from t
+f:select[2;>a;>b] from t
+
+=== clean profile: general | while with no count a sort, an empty slot or a name parses (#2848; q 5 parses each)
+a:select[;>a] from t
+b:select[;] from t
+c:select[;a] from t
+d:select[;;] from t
+e:select[;>a;>b] from t
+f:select[2;] from t
+g:select[2;>a] from t
+
+=== clean profile: general | an infix keyword straight before a qSQL from or by is a value (#2849; q 5 parses each)
+a:select in from t
+b:exec fby from t
+c:select a,mod from t
+d:select a by in from t
+
+=== QE008 profile: general | a k-form monadic glyph with a blank before its operand (#2853; q 5: ')
+a:#: y
+b:-: y
+c:x+ -: y
+
+=== clean profile: general | while the k form after an operand, or with nothing after it, is fine (#2853; q 5 parses each)
+e:x#: y
+f:#:
+g:(#:) y
+
+=== clean profile: general | >> is one operator, and a value with nothing applied to it (#2855; q 5 parses each)
+a:(>>)
+f[x;>>]
+b:3>>3
+c:(<>=)
+d:(>>=)
+
+=== QE008 profile: general | a pair applied to another glyph, or >> to an operand (#2855; q 5: '<=, '>=, '<>, '>>)
+a:(<=>)
+b:(>=<)
+c:f[<>,;1]
+d:>>x
+
+=== QE013 profile: general | a second empty slot after the empty first slot q takes (#2854; q 5: ';)
+a:([] ;;b:1 2)
+
+=== QE013 profile: general | or an empty last slot after it (#2854; q 5: ';)
+a:([] ;a:1 2;)
+
+=== clean profile: general | while the empty first slot alone, or before columns, parses (#2854; q 5 parses each)
+a:([] ;a:1 2)
+b:([] ;)
+c:([] ;a:1 2;b:3 4)

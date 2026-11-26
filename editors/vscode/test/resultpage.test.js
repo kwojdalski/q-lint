@@ -209,6 +209,60 @@ test("the results kept are tabs; choosing one asks for it, and it comes back wit
   assert.deepStrictEqual(lastRendered(page).rendered.history, { count: 2, index: 0 });
 });
 
+test("a result run again in place with other columns keeps its filter, sort, pivot and chart picks on the columns they were set on (#3071)", () => {
+  // A table of long columns, three rows each.
+  const table = (columns) => ({
+    ...result("s.1", 3),
+    grid: {
+      columns: Object.keys(columns).map((name) => ({ name, type: 7, typeName: "long (j)", key: false, numeric: true, temporal: false })),
+      cells: Object.values(columns).map((c) => c.map(String)),
+      rank: Object.values(columns).map((c) => c.map((v) => [...c].sort((a, b) => a - b).indexOf(v))),
+      values: Object.values(columns),
+      total: 3,
+    },
+  });
+  const filters = (page) => page.body.all((e) => e.tagName === "INPUT" && e.type === "search");
+  const header = (page, name) => page.body.all((e) => e.tagName === "TH" && (e.title || "").startsWith(`${name}:`))[0];
+  const one = { time: [900, 901, 902], AAPL: [150, 151, 152], MSFT: [300, 301, 302] };
+  const page = loadPage(undefined);
+  page.send(table(one));
+  filters(page)[1].value = "151";
+  filters(page)[1].fire("input");
+  header(page, "MSFT").fire("click");
+  header(page, "MSFT").fire("click");
+  assert.deepStrictEqual(page.state.sort, { column: 2, descending: true });
+  // The watched query's next run, under the same id: a column before them.
+  page.send(table({ time: one.time, AAA: [151, 7, 8], AAPL: one.AAPL, MSFT: one.MSFT }));
+  assert.deepStrictEqual(filters(page).map((f) => f.value), ["", "", "151", ""]);
+  assert.deepStrictEqual(page.state.sort, { column: 3, descending: true });
+  assert.deepStrictEqual(page.rows().map((r) => r.children.map((c) => c.textContent)), [["901", "7", "151", "301"]]);
+  // A column gone takes its filter and the sort on it with it.
+  page.send(table({ time: one.time, AAPL: one.AAPL }));
+  assert.deepStrictEqual(filters(page).map((f) => f.value), ["", "151"]);
+  assert.strictEqual(page.state.sort, null);
+  page.send(table({ time: one.time, MSFT: one.MSFT }));
+  assert.deepStrictEqual(filters(page).map((f) => f.value), ["", ""]);
+  assert.strictEqual(page.rows().length, 3);
+  // The pivot, the ticked chart columns and the right axis, the same way.
+  const kept = { id: "s.1", names: Object.keys(one).join("\u0000"), pivot: { row: 0, column: -1, value: 2, agg: "max" }, columns: [1, 2], y2: 2, mapSize: 1, mapColour: 2 };
+  const again = loadPage(kept);
+  again.send(table({ time: one.time, AAA: [151, 7, 8], AAPL: one.AAPL, MSFT: one.MSFT }));
+  assert.deepStrictEqual(again.state.pivot, { row: 0, column: -1, value: 3, agg: "max" });
+  assert.deepStrictEqual(again.state.columns, [2, 3]);
+  assert.deepStrictEqual([again.state.y2, again.state.mapSize, again.state.mapColour], [3, 2, 3]);
+  // A pivot one of whose columns is gone starts again; a pick gone is dropped.
+  again.send(table({ time: one.time, AAPL: one.AAPL }));
+  assert.strictEqual(again.state.pivot, null);
+  assert.deepStrictEqual(again.state.columns, [1]);
+  assert.deepStrictEqual([again.state.y2, again.state.mapSize, again.state.mapColour], [-1, 1, -1]);
+  // The same columns again: nothing moves.
+  again.send(table({ time: one.time, AAPL: one.AAPL }));
+  assert.deepStrictEqual(again.state.columns, [1]);
+  // Every ticked column gone: the chart chooses again, as for a new result.
+  again.send(table({ time: one.time, MSFT: one.MSFT }));
+  assert.strictEqual(again.state.columns, null);
+});
+
 test("Compare marks changed cells with what they were, new rows, and lists the removed ones (#919)", () => {
   const page = loadPage(undefined);
   const m = result("s.2", 3);
@@ -482,6 +536,9 @@ test("the chart offers area, step and candles, a right axis and image buttons on
   const options = () => page.body.all((e) => e.tagName === "SELECT")[0].children.map((o) => o.value);
   assert.deepStrictEqual(options(), ["line", "bar", "scatter", "histogram", "area", "step", "candlestick", "linked"]);
   assert.ok(button(page, "Save PNG") && button(page, "Save SVG"));
+  // No chart is drawn here (no Chart.js), so there is none to save (#3139).
+  assert.deepStrictEqual([button(page, "Save PNG").disabled, button(page, "Save SVG").disabled], [true, true]);
+  assert.match(button(page, "Save PNG").title, /No chart is drawn/);
   assert.strictEqual(page.body.all((e) => e.tagName === "SELECT").length, 2);
   // A request for an image, with no chart drawn here (no Chart.js), answers empty.
   page.send({ ...twoSeries, control: { key: "k.1", action: "image", format: "svg" } });

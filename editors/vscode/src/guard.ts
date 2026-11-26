@@ -205,6 +205,8 @@ interface Token {
   pos: number;
   /// Where it is among the statement's tokens, spaces too.
   n: number;
+  /// A symbol cast from a string written out, `` `$".q.set" `` (#2037).
+  cast?: true;
 }
 
 /// What each ASCII character may be in a token, as bits: a letter, a
@@ -232,6 +234,12 @@ const WRITERS = new Set([
   "set", "upsert", "insert", "hdel", "exit", "hclose", "system", "save", "rsave", "dsave", "load", "rload", "setenv",
   ".Q.dpft", ".Q.dpfts", ".Q.dpt", ".Q.dpts", ".Q.hdpf", ".Q.en", ".Q.ens", ".Q.enx", ".Q.enxs", ".Q.chk", ".Q.dsftg",
   ".Q.view", ".Q.l", ".Q.lo", ".Q.li", ".Q.bv", ".Q.opt", ".Q.Xf", ".Q.L", "use", ".h.ht",
+  // The workers of `.Q.L` and `.Q.bv`, which load a database and assign
+  // globals, and the debugger's `.Q.dbg`, which assigns them (#2631).
+  ".Q.MAP", ".Q.L1", ".Q.bvfp", ".Q.dbg",
+  // q's own HTTP handler and its JSON pager run the query string they are
+  // given through `.h.val`, and `.z.ph` assigns `R` (#2632).
+  ".z.ph", ".h.jx",
   // The debugger's breakpoints patch a function's code in place, which
   // `reval` does not stop (#2276).
   ".Q.bs", ".Q.bc", ".Q.bd", ".Q.bu", ".Q.bp", ".Q.Ls",
@@ -246,6 +254,9 @@ const EVALUATORS = new Set(["value", "get", "eval", "reval", ".h.val"]);
 const CALLED = new Set([...WRITERS, ...EVALUATORS, "hopen", "xasc", "xdesc", "xkey"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
+/// System commands that list a namespace's names given one: variables,
+/// functions, tables and views.
+const LISTS_NAMESPACE = new Set([..."vfab"]);
 
 /// The tokens of one statement: strings and symbols whole, a comment (a `/`
 /// after a space, to the end of its line) dropped.
@@ -265,7 +276,7 @@ function tokens(code: string): Token[] {
       const cast = tail.length >= 2 && tail[tail.length - 1].text === "$" && tail[tail.length - 2].kind === "sym" && tail[tail.length - 2].text === "`";
       if (cast) {
         const start = out.lastIndexOf(tail[tail.length - 2]);
-        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos, n: start });
+        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos, n: start, cast: true });
       } else {
         out.push({ kind: "str", text, pos: i, n: out.length });
       }
@@ -434,6 +445,10 @@ function formatIn(t: Token[], from: number, to: number): boolean {
   }
   const [s, e] = t[from]?.text === "(" && t[from].kind === "open" && items(t, from).length > 1 && items(t, from).at(-1)?.[1] === to - 1 ? items(t, from)[0] : [from, to];
   const part = t.slice(s, e);
+  // `csv` is q's `","`, a format too (#2643).
+  if (part.length === 1 && part[0].kind === "name" && (part[0].text === "csv" || part[0].text === ".q.csv")) {
+    return true;
+  }
   return part.some((k) => k.kind === "str") && part.every((k) => k.kind !== "sym" && (k.kind !== "name" || k.text === "enlist"));
 }
 
@@ -753,6 +768,46 @@ function implicit(t: Token[], open: number, close: number): number {
   return last;
 }
 
+/// Whether the group that opens at `t[open]` is applied to what follows it:
+/// `(f x)[]`, `(f x)@1`, `(f x) y`.
+function groupApplied(t: Token[], open: number): boolean {
+  if (t[open]?.text !== "(" || t[open].kind !== "open") {
+    return false;
+  }
+  let close = open;
+  for (let depth = 0; close < t.length; close++) {
+    if (t[close].kind === "open") depth++;
+    else if (t[close].kind === "close" && --depth === 0) break;
+  }
+  const after = t[close + 1];
+  return (
+    after !== undefined &&
+    ((after.kind === "open" && after.text !== "{") ||
+      (after.kind === "op" && ["@", "."].includes(after.text)) ||
+      ["str", "sym", "num"].includes(after.kind) ||
+      (after.kind === "name" && !INFIX.has(after.text)))
+  );
+}
+
+/// Whether the `upsert` at `t[i]`, applied infix, is given a value on its
+/// left: a name alone that is no local holding a symbol (`held`), or a
+/// table written out, `([] a:1 2)`.
+function upsertsValue(t: Token[], i: number, held: ReadonlySet<string> | undefined): boolean {
+  const left = t[i - 1];
+  if (left?.kind === "name") {
+    return !INFIX.has(left.text) && !(held?.has(left.text) ?? false);
+  }
+  if (left?.kind !== "close" || left.text !== ")") {
+    return false;
+  }
+  let open = i - 1;
+  for (let depth = 0; open >= 0; open--) {
+    if (t[open].kind === "close") depth++;
+    else if (t[open].kind === "open" && --depth === 0) break;
+  }
+  return open >= 0 && t[open].text === "(" && t[open + 1]?.text === "[" && t[open + 1].kind === "open";
+}
+
 /// Whether `t[from]` to `t[to]`, what `.[f;..]` or `@[f;..]` gives `f`,
 /// may hold a symbol: `` `t ``, `` enlist`t ``, `` (`t;1) ``.
 function symbolicArgument(t: Token[], from: number, to: number, held: ReadonlySet<string> | undefined): boolean {
@@ -887,10 +942,10 @@ function heldLocals(t: Token[], open: number, close: number, touching: (a: Token
 }
 
 /// Whether the handle symbol `sym` names a file rather than a process:
-/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 `` and
-/// `` `:unix://5000 `` do not.
+/// `` `:/tmp/x `` and `` `:x.txt `` do; `` `:host:5000 ``, `` `::5000 ``,
+/// `` `:unix://5000 `` and `` `:http://host ``, as `.Q.hg` opens it (#2646), do not.
 function isFileHandle(sym: string): boolean {
-  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|[^:/]*:\d)/.test(sym);
+  return sym.startsWith("`:") && !/^`:(unix:\/\/\d|tcps?:\/\/|https?:\/\/|[^:/]*:\d)/.test(sym);
 }
 
 /// The locals of the lambda that opens at `t[open]`: its parameters (`x`,
@@ -1883,10 +1938,18 @@ function readStatement(statement: string, found: Set<string>): void {
     if (name === "t" && !text.startsWith("\\t:") && /^\d+$/.test(argument)) {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
-      statement = argument;
-      ({ text, language } = unprefixed(argument));
+      // The expression whole: a " /" in a string in it is no comment, and
+      // the tokens drop one that is (#2622).
+      const timed = (command?.[2] ?? "").trim();
+      statement = timed;
+      ({ text, language } = unprefixed(timed));
       continue;
-    } else if (!(argument === "" && READS_BARE.has(name)) && !(name === "w" && /^[01]$/.test(argument))) {
+    } else if (
+      !(argument === "" && READS_BARE.has(name)) &&
+      !(name === "w" && /^[01]$/.test(argument)) &&
+      // (`\v .q`, `\f .q`, `\a .`, `\b .ns` list a namespace's names, #2645.)
+      !(LISTS_NAMESPACE.has(name) && /^\.([A-Za-z][\w.]*)?$/.test(argument))
+    ) {
       // (`\w 0` and `\w 1` report the symbols; another number sets the limit.)
       found.add(`runs the system command \\${name}`);
     }
@@ -2113,6 +2176,11 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(what);
           continue;
         }
+        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634).
+        if (t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" && groupApplied(t, i - 1) && writes([valued(qText(t[i + 1].text))]).length > 0) {
+          found.add(`applies what ${k.text} makes of a string that changes the process`);
+          continue;
+        }
       }
       // `xasc`, `xdesc` and `xkey` on a table named by a symbol change it in
       // place: `` `a xasc `t ``, `` xasc[`a;`t] ``, and projected on the
@@ -2194,6 +2262,12 @@ function readStatement(statement: string, found: Set<string>): void {
         continue;
       }
       if (WRITERS.has(unqualified(k.text))) {
+        // `upsert` on a value gives a new table: on a name alone, the value it
+        // holds, or a table written out, `t upsert s`, `([]a:1 2) upsert s`;
+        // only a symbol or a handle names what it changes (#2644).
+        if (unqualified(k.text) === "upsert" && upsertsValue(t, i, held.at(-1))) {
+          continue;
+        }
         // `system` of a literal is read as the command it runs: `system "c"`
         // only reads, as `\c` does.
         const bracket = next?.text === "[" && next.kind === "open" ? 1 : 0;
@@ -2267,10 +2341,13 @@ function readStatement(statement: string, found: Set<string>): void {
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
         // Passed as a value instead - `value/["a:1"]`, `(value@)"a:1"`,
-        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766) - it runs what the
-        // expression around it gives it: each string there is read.
+        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766), and derived by
+        // `each` or `peach` in brackets, `(value each)x`, `@[get peach;x]`
+        // (#2627) - it runs what the expression around it gives it: each
+        // string there is read.
         let n = i + 1;
-        while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
+        const iterated = (by: Token | undefined): boolean => by?.kind === "name" && (by.text === "each" || by.text === "peach");
+        while ((t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) || (iterated(t[n]) && [")", ";"].includes(t[n + 1]?.text ?? ""))) n++;
         const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
         const byValue = unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval";
         const what =
@@ -2437,10 +2514,25 @@ function readStatement(statement: string, found: Set<string>): void {
       gateway(t, i, found);
       continue;
     }
+    // A function named by a symbol cast from a string made at run time and
+    // applied, `` (`$".q.",string`set) . (`a;1) ``: a name the guard cannot
+    // read (#2629). A string written out is read as the name it is (#2037).
+    // (Not `` `$() ``, the empty list cast, which names nothing.)
+    const madeCast = k.text === "`" && next?.text === "$" && !(t[i + 2]?.text === "(" && t[i + 3]?.text === ")") ? i + 2 : k.cast === true && next !== undefined && next.text !== ")" ? i + 1 : -1;
+    if (madeCast > 0 && t[i - 1]?.text === "(" && groupApplied(t, i - 1)) {
+      found.add("applies a function named by a symbol cast from what the guard cannot read");
+      continue;
+    }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
     // `` (get `.q.set)[`a;1] ``, `` `.q.system "x" ``.
     if (k.kind === "sym" && k.text.startsWith("`.") && CALLED.has(unqualified(k.text.slice(1)))) {
       found.add(`calls ${k.text.slice(1)}`);
+      continue;
+    }
+    // embedPy and PyKX named by a symbol so too: `` `.p.e "x" ``,
+    // `` get[`.pykx.pyexec] "x" ``, `` (`.pykx.pyexec) "x" `` (#2636).
+    if (k.kind === "sym" && /^`\.(p|pykx)\./.test(k.text)) {
+      found.add(`runs Python with ${k.text.slice(1)}`);
       continue;
     }
     // The amend or `!` passed as a value and applied to a list headed by a
@@ -2576,11 +2668,26 @@ function readStatement(statement: string, found: Set<string>): void {
     // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
     // Read as `value` reads them: a list is a tree, `0(@;`b;0;:;9)`, and
     // a call, `0(value;"a:1")` (#1768), and a string that only reads, reads.
-    if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
+    if (k.kind === "num" && /^-?0+[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
+      // Given to apply or a trap, `@[0;"a:1"]`, `.[0;enlist"a:1";h]`, it is
+      // applied to the argument after it (#2625); applied by `each` or
+      // `peach`, `0 each x`, `(0 each) x`, to each item of it (#2626).
+      const trapped = !wrapped && t[i - 1]?.text === "[" && t[i - 1].kind === "open" && t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text) && next?.text === ";";
+      const iterated = wrapped ? t[i + 2] : next;
+      const each = iterated?.kind === "name" && (iterated.text === "each" || iterated.text === "peach");
+      if (trapped || each) {
+        const after = trapped ? i + 1 : wrapped ? i + 2 : t[i - 1]?.text === "(" && t[i + 2]?.text === ")" ? i + 2 : i + 1;
+        const what = evaluates(t, after, true);
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} on handle 0`);
+          i = what.at;
+          continue;
+        }
+      }
       const last = wrapped ? i + 1 : i;
       const first = t[last + 1];
       // A function's result too, `0 raze("a:";"1")`, `0 {x}"a:1"` (#2204) - not
@@ -2615,6 +2722,19 @@ function readStatement(statement: string, found: Set<string>): void {
         }
       }
     }
+    // `-5!` is `parse`: of a lambda, applied, it runs it, `(-5!"{a::1}")[]`
+    // (#2634); `-9!` makes any value of bytes, a lambda too, which applied
+    // runs code the guard cannot read, `(-9!0x01..)[]` (#2633).
+    if (bang === i + 1 && (fn === "-5" || fn === "-9") && groupApplied(t, i - 1)) {
+      if (fn === "-9") {
+        found.add("applies a value -9! deserialises, which the guard cannot read");
+        continue;
+      }
+      if (t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" && writes([valued(qText(t[bang + 1].text))]).length > 0) {
+        found.add("applies what -5! makes of a string that changes the process");
+        continue;
+      }
+    }
     // `-11!` replays a log; `-11!(-1;..)` and `(-2;..)` only count and check it.
     if (bang > 0 && fn === "-11" && !(t[bang + 1]?.text === "(" && /^-[12]$/.test(t[bang + 2]?.text ?? ""))) {
       found.add("replays a log with -11!");
@@ -2628,6 +2748,12 @@ function readStatement(statement: string, found: Set<string>): void {
     // `-104!`, `.Q.Ls`, sets or clears a breakpoint in a function's code (#2276).
     if (bang > 0 && fn === "-104") {
       found.add("patches a function's code with -104!");
+      continue;
+    }
+    // `-36!` loads an encryption master key into the process; under `reval`
+    // it brought KDB-X down with SIGSEGV, so it is asked about (#2630).
+    if (bang > 0 && fn === "-36") {
+      found.add("loads an encryption master key with -36!");
       continue;
     }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {

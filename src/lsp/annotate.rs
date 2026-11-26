@@ -9,10 +9,11 @@
 //! the editor the statement to send, and a link goes where Go to Definition
 //! on the path goes.
 use super::navigate::{Sources, range};
-use super::{Lines, file_key, path_of};
-use q_lint_rs::{Mention, argument_slots, load_paths, mentions, typed_locals};
+use super::{Lines, file_key, path_of, starts_statement};
+use q_lint_rs::graph::Placement;
+use q_lint_rs::{Mention, argument_slots, load_paths, mentions, symbol_mentions, typed_locals};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// LSP's `InlayHintKind`s: a type, and a parameter.
 const TYPE: u8 = 1;
@@ -151,8 +152,8 @@ fn type_hints(params: &Value, sources: &Sources) -> Vec<Value> {
         .collect()
 }
 
-/// `textDocument/inlayHint`: at each argument of a bracketed call to a
-/// workspace function in the range, the name of the parameter it is passed
+/// `textDocument/inlayHint`: at each argument in the range of a bracketed
+/// call to a workspace function, the name of the parameter it is passed
 /// as - `f[a:1;b:2]` drawn over `f[1;2]`.
 ///
 /// Only for a function whose every definition declares its parameters in a
@@ -187,7 +188,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
     // The slots with their strings in them: in the code view a string is
     // blank, and an argument that is one would start after it (#2025).
     for call in argument_slots(text) {
-        if call.at < from || call.at > to {
+        // A hint is asked for by where it is drawn, as a type's is: an
+        // editor asks for the lines it shows, and a call that began above
+        // them still has arguments on them (#2952).
+        let drawn = |&(start, _): &(usize, usize)| from <= start && start <= to;
+        if !call.arguments.iter().any(drawn) {
             continue;
         }
         // A local's or q's own name is no mention; an indexed assignment,
@@ -211,7 +216,15 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         for (&(start, len), param) in call.arguments.iter().zip(declared.iter()) {
-            if len == 0 || text[start..start + len] == **param {
+            // A typed slot is shown by its name alone: `` x:`j: `` reads as
+            // an assignment (#2778). An empty slot, the second of
+            // `{[a;] a}`, names nothing (#2779).
+            let param = q_lint_rs::slot_pattern(param);
+            if len == 0
+                || param.is_empty()
+                || text[start..start + len] == *param
+                || !drawn(&(start, len))
+            {
                 continue;
             }
             hints.push(json!({
@@ -287,7 +300,8 @@ fn declared(
 /// A function a statement at column 0 defines, as a lens or a test runs
 /// it: the name as written at `at` for `len` bytes, the name q gives it
 /// once defined, the code that defines it (the statement, wrapped in
-/// `\d .ns` and `\d .` when it is written under `\d .ns`) and, for a test,
+/// `\d .ns` and `\d .` when it is written under `\d .ns`, or before the
+/// first `\d` of a file that runs in `.ns` alone) and, for a test,
 /// the call that runs it once defined and the code that defines the qUnit
 /// fixtures that call runs around it (#1590).
 pub(super) struct Runnable {
@@ -323,20 +337,52 @@ fn namespace_of(name: &str) -> Option<(&str, &str)> {
 const FIXTURES_BEFORE: [&str; 2] = ["beforeNamespace", "setUp"];
 const FIXTURES_AFTER: [&str; 2] = ["tearDown", "afterNamespace"];
 
+/// And those `.qunit.runNsTests` runs around all of a namespace's tests,
+/// once for each value its first `parameters*` gives (#2104).
+const FIXTURES_PARAMETERS: [&str; 3] = ["parameters", "beforeParameters", "afterParameters"];
+
+/// Whether a file uses qUnit: only there is a `setUp*` a fixture, and a
+/// `test*` of a namespace a test (#1591, #1743).
+pub(super) fn uses_qunit(text: &str) -> bool {
+    text.contains(".qunit.")
+}
+
+/// Whether `name`, as q has it, is a fixture qUnit calls for what it is
+/// named, in a file that uses qUnit: nothing reads it, and it is not dead.
+pub(super) fn is_fixture(name: &str) -> bool {
+    namespace_of(name).is_some_and(|(_, leaf)| {
+        FIXTURES_BEFORE
+            .iter()
+            .chain(&FIXTURES_AFTER)
+            .chain(&FIXTURES_PARAMETERS)
+            .any(|kind| leaf.starts_with(kind))
+    })
+}
+
 /// What qUnit's `.qunit.runTest` does with a test whose run takes longer,
 /// or more memory, than its namespace's `qunitConfig` allows (#2103).
 const OVER_CONFIG: &str = "exceeded max config time/mem";
 
-/// Each function a statement at column 0 of `text` defines, in order.
-pub(super) fn runnables(text: &str) -> Vec<Runnable> {
+/// Each function a statement at column 0 of `text` defines, in order, in
+/// a file its loaders put at `placement`.
+pub(super) fn runnables(text: &str, placement: &Placement) -> Vec<Runnable> {
     let mut out: Vec<Runnable> = vec![];
     let mut seen = HashSet::new();
     // A file that uses qUnit runs every `test*` of a namespace, as
     // `.qunit.runNsTests` does (#1591).
-    let qunit = text.contains(".qunit.");
+    let qunit = uses_qunit(text);
     // Read once: asked for each definition, the whole file was read again
     // for each (#1216).
     let contexts = q_lint_rs::contexts(text);
+    // Where a bare name written before the file's first `\d` lands when
+    // the file runs in one context and not at the root - loaded under
+    // `\d .lib`, or a KDB-X module, which runs in `.m.<name>`: defined at
+    // the root, it is a copy nothing else reads, of a body whose own bare
+    // names are not there (#2671).
+    let loaded = placement
+        .contexts
+        .first()
+        .filter(|_| !placement.root && placement.contexts.len() == 1);
     // A namespace's `qunitConfig`, where and as it is defined (#2103): not a
     // function, so no runnable, but sent with the tests it configures.
     let mut configs: Vec<(usize, String, String)> = vec![];
@@ -344,7 +390,7 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         let Some(definition) = &m.definition else {
             continue;
         };
-        if m.at != definition.start || !(m.at == 0 || text[..m.at].ends_with('\n')) {
+        if m.at != definition.start || !starts_statement(text, m.at) {
             continue;
         }
         let spelled = &text[m.at..m.at + m.len];
@@ -356,7 +402,8 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
                     .wrapping_sub(1),
             )
             .map(|(_, ns)| ns.clone())
-            .filter(|ns| !ns.is_empty() && ns != ".");
+            .filter(|ns| !ns.is_empty() && ns != ".")
+            .or_else(|| loaded.filter(|_| m.implicit).cloned());
         let code = match &context {
             Some(ns) => format!("\\d {ns}\n{statement}\n\\d ."),
             None => statement.to_string(),
@@ -364,7 +411,12 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         // Called by the name it has once defined: a bare one before the
         // file's first `\d` is wherever the process puts it, the root for a
         // query.
-        let name = if m.implicit { spelled } else { &m.name };
+        let placed = loaded.map(|ns| format!("{ns}.{spelled}"));
+        let name = match &placed {
+            Some(placed) if m.implicit => placed,
+            _ if m.implicit => spelled,
+            _ => &m.name,
+        };
         if !definition.function {
             if qunit
                 && namespace_of(name).is_some_and(|(_, leaf)| leaf == "qunitConfig")
@@ -498,7 +550,8 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
     };
     let lines = Lines::new(text);
     let mut lenses = vec![];
-    for run in runnables(text) {
+    let placement = sources.placement(&file_key(&path_of(uri)));
+    for run in runnables(text, &placement) {
         let at = range(&lines, run.at, run.len);
         let lens = |title: &str, code: String| {
             json!({"range": at, "command": {"title": title, "command": RUN_COMMAND,
@@ -517,8 +570,8 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
 
 /// `textDocument/codeLens`, the reference counts: above each function a
 /// statement at column 0 defines, how many places the indexed files read it
-/// (what Find All References lists without the assignments), which opens
-/// those references when clicked.
+/// (what Find All References lists without the assignments, a symbol that
+/// may be the name among them), which opens those references when clicked.
 ///
 /// One pass over the workspace answers every function of the document: a
 /// file is read only when it spells one of their names.
@@ -537,7 +590,7 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
         };
         if !definition.function
             || m.at != definition.start
-            || !(m.at == 0 || text[..m.at].ends_with('\n'))
+            || !starts_statement(text, m.at)
             || !seen.insert(m.at)
         {
             continue;
@@ -574,12 +627,51 @@ fn reference_lenses(params: &Value, sources: &Sources) -> Vec<Value> {
             continue;
         }
         let placement = sources.placement(file);
-        for m in mentions(&other).iter().filter(|m| m.definition.is_none()) {
+        let all = mentions(&other);
+        for m in all.iter().filter(|m| m.definition.is_none()) {
             let mut names: Vec<&str> = sources
                 .names(&other, m, &placement)
                 .iter()
                 .filter_map(|name| by_name.get_key_value(name.as_str()).map(|(k, _)| *k))
                 .collect();
+            if names.is_empty() {
+                continue;
+            }
+            names.sort_unstable();
+            names.dedup();
+            *by_names.entry(names).or_insert(0) += 1;
+        }
+        // And each symbol that may be one of the names, as the references
+        // the lens opens list it (#2679): by where it is, since one symbol
+        // may be the name in its context or at the root.
+        // The file is read once for the symbols it spells, not once for
+        // each name wanted.
+        let known: HashSet<usize> = all.iter().map(|m| m.at).collect();
+        let spelled: HashSet<&str> = other
+            .match_indices('`')
+            .filter_map(|(tick, _)| {
+                let rest = &other[tick + 1..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || "_.:/".contains(c)))
+                    .unwrap_or(rest.len());
+                leaves.get(&rest[..end]).copied()
+            })
+            .collect();
+        let mut symbols: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
+        for leaf in spelled {
+            for m in symbol_mentions(&other, leaf) {
+                if known.contains(&m.at) {
+                    continue;
+                }
+                symbols.entry(m.at).or_default().extend(
+                    sources
+                        .names(&other, &m, &placement)
+                        .iter()
+                        .filter_map(|name| by_name.get_key_value(name.as_str()).map(|(k, _)| *k)),
+                );
+            }
+        }
+        for (_, mut names) in symbols {
             if names.is_empty() {
                 continue;
             }
@@ -632,10 +724,8 @@ fn document_links(params: &Value, sources: &Sources) -> Value {
     load_paths(text)
         .into_iter()
         .filter_map(|(at, len)| {
-            let [file] = sources
-                .loaded(&key, &text[at..at + len], true)
-                .try_into()
-                .ok()?;
+            let load = super::navigate::as_run(text, at, &text[at..at + len]);
+            let [file] = sources.loaded(&key, &load, true).try_into().ok()?;
             Some(json!({
                 "range": range(&lines, at, len),
                 "target": sources.uri(&file),

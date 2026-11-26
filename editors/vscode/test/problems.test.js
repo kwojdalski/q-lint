@@ -422,6 +422,19 @@ process.exit(out.length > 0 ? 1 : 0);
   assert.strictEqual(git("status", "--porcelain", "--", "pkg"), "");
 });
 
+test("an uncommitted change to a baseline is a change to what the folder lints as: not clean (#2762)", async (t) => {
+  const { dir, git } = repo(t);
+  fs.writeFileSync(path.join(dir, "qlinter.toml"), 'baseline = "ci/b.json"\n');
+  fs.mkdirSync(path.join(dir, "ci"));
+  fs.writeFileSync(path.join(dir, "ci/b.json"), '{"qlinter-baseline": 1, "findings": [{"path": "../a.q", "code": "QE004", "line": "a=1", "count": 1}]}');
+  fs.writeFileSync(path.join(dir, "a.q"), "a=1\n");
+  git("add", ".");
+  git("commit", "-qm", "baselined");
+  assert.strictEqual((await head(dir)).clean, true);
+  fs.writeFileSync(path.join(dir, "ci/b.json"), '{"qlinter-baseline": 1, "findings": []}');
+  assert.strictEqual((await head(dir)).clean, false);
+});
+
 test("a virtual workspace folder is no directory to lint: the dashboard asks for a folder, and runs nothing (#1843)", async (t) => {
   stub.reset();
   fakePanels();

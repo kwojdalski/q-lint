@@ -43,7 +43,31 @@ test("a process defined on a loopback host listens on the loopback only, not on 
   assert.deepStrictEqual(plan("0.0.0.0"), ["-p", "47126"]);
   assert.strictEqual(listenAddress("box", 5), "5");
   // Its own -p is left as it is.
-  assert.deepStrictEqual(launchPlan({ ...proc("l", 1, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 5001, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+});
+
+test("launch arguments that set another port than the saved one are not started: q would listen where nothing looks (#3105)", async (t) => {
+  const own = (port, ...args) => launchPlan({ ...proc("l", port, { args }), host: "localhost" }, "q", undefined, "/home/me");
+  assert.deepStrictEqual(own(54743, "-p", "54744"), {
+    error: "l's launch arguments set -p 54744, not the port 54743 it is saved on, where it would be looked for: it was not started. Take -p out of the arguments, or save it on that port.",
+  });
+  for (const other of ["127.0.0.1:54744", "rp,54744", "-54744", "rp,box:54744", "0"]) {
+    assert.match(own(54743, "-s", "2", "-p", other).error, /launch arguments set -p .*, not the port 54743/, other);
+  }
+  // The saved port, however it is written, is its own to set; a service's
+  // name is not known to be another.
+  for (const same of ["54743", "127.0.0.1:54743", "rp,54743", "-54743", "localhost:054743", "kdb"]) {
+    assert.deepStrictEqual(own(54743, "-p", same).args, ["-p", same], same);
+  }
+  // Start Process says so, and starts and tracks nothing.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const [saved, other] = [await freePort(), await freePort()];
+  const { launcher, output } = await setUp(t, [proc("otherport", saved, { command: process.execPath, script: "fake.js", cwd: dir, args: ["-p", String(other)] })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("otherport");
+  await sleep(200);
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: otherport's launch arguments set -p ${other}, not the port ${saved} it is saved on, where it would be looked for: it was not started. Take -p out of the arguments, or save it on that port.`]]);
+  assert.deepStrictEqual([launcher.running(), output("otherport"), await accepts(other)], [[], "", false]);
 });
 
 test("a TorQ process on a loopback host listens on a bare port, where its stack reaches it by .z.h; its probe is its own address (#1742)", () => {
@@ -97,7 +121,7 @@ test("a launch definition starts its program with its script, -p and its argumen
     env: { KDBCODE: "code" },
   });
   // Its own program, cwd and -p; ~ is home.
-  const own = launchPlan(proc("a", 1, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
+  const own = launchPlan(proc("a", 6000, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
   assert.deepStrictEqual(own, { command: "/home/me/q/m64/q", args: ["/home/me/torq/x.q", "-p", "6000"], cwd: "/home/me/torq", env: {} });
   assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "127.0.0.1:7"], cwd: "/home/me", env: {} });
   // ~\ is home too, as Windows writes it (#1284), in the definition and in q-lint.qBinary.
@@ -117,9 +141,45 @@ test("a launch definition starts its program with its script, -p and its argumen
   assert.match(launchPlan(proc("c", 1), "q", "/w").error, /c has no launch definition/);
   assert.match(launchPlan({ ...proc("d", 1, {}), host: "rdb.example" }, "q", "/w").error, /only a local process can be started/);
   assert.match(launchPlan(proc("e", 1, { cwd: "rel" }), "q", undefined).error, /relative, and there is no workspace folder/);
-  assert.strictEqual(commandText({ command: "q", args: ["a b.q", "-p", "1"] }), 'q "a b.q" -p 1');
+  assert.strictEqual(commandText({ command: "q", args: ["a b.q", "-p", "1"] }, "linux"), "q 'a b.q' -p 1");
   assert.ok(isLocalHost("localhost") && isLocalHost("127.0.0.1") && isLocalHost("::1") && isLocalHost("MyBox", "mybox"));
   assert.ok(!isLocalHost("rdb.example", "mybox"));
+});
+
+test("the command line the output shows is the command that ran, to a shell it is pasted into (#3119)", () => {
+  const plan = { command: "/opt/q/q", args: ["a b", "$HOME", "x;y", "`sym", "*", "-e", "it's", "", "-p", "127.0.0.1:5010", "a=b,c@d%e+f"] };
+  assert.strictEqual(commandText(plan, "linux"), "/opt/q/q 'a b' '$HOME' 'x;y' '`sym' '*' -e 'it'\\''s' '' -p 127.0.0.1:5010 a=b,c@d%e+f");
+  // A shell reads it back as the words that were passed.
+  if (process.platform !== "win32") {
+    const { execFileSync } = require("node:child_process");
+    const read = execFileSync("/bin/sh", ["-c", `printf '%s\\n' ${commandText({ command: "x", args: plan.args }, "linux")}`], { encoding: "utf8" });
+    assert.deepStrictEqual(read.split("\n").slice(1, -1), plan.args);
+  }
+  // On Windows, as PowerShell reads one.
+  assert.strictEqual(commandText({ command: "C:\\q\\w64\\q.exe", args: ["a b", "$env:X", "it's", "-p", "5010"] }, "win32"), "C:\\q\\w64\\q.exe 'a b' '$env:X' 'it''s' -p 5010");
+});
+
+test("this machine by any spelling of it: its short name, the root's dot, a loopback address written short, long, mapped or in brackets (#3115)", () => {
+  for (const host of ["Mac", "mac.lan.", "MAC.LAN", "localhost.", "127.1", "127.0.1", "127.0.0.2", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "[::FFFF:7f00:1]", "0.0.0.0"]) {
+    assert.strictEqual(isLocalHost(host, "Mac.lan"), true, host);
+  }
+  // Another machine: one of another name or domain, an address that is no
+  // loopback, and the first number of this machine's address.
+  for (const [host, here] of [["mac2", "Mac.lan"], ["mac.other", "Mac.lan"], ["lan", "Mac.lan"], ["128.1", "Mac.lan"], ["::2", "Mac.lan"], ["::ffff:10.0.0.1", "Mac.lan"], ["127.0.0.256", "Mac.lan"], ["127", "Mac.lan"], ["10", "10.0.0.5"], ["", "Mac.lan"]]) {
+    assert.strictEqual(isLocalHost(host, here), false, host);
+  }
+  // And each is started where it was said to be: on the loopback, by the
+  // address in full, not on every interface (#1671).
+  assert.deepStrictEqual(
+    ["127.1", "127.0.513", "localhost.", "::ffff:127.0.0.3", "Mac"].map((host) => listenAddress(host, 5)),
+    ["127.0.0.1:5", "127.0.2.1:5", "127.0.0.1:5", "127.0.0.3:5", "5"],
+  );
+  assert.deepStrictEqual(["127.1", "::ffff:127.0.0.3", "localhost."].map(probeHost), ["127.0.0.1", "127.0.0.3", "127.0.0.1"]);
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 47126, {}), host: "127.1" }, "q", undefined, "/home/me").args, ["-p", "127.0.0.1:47126"]);
+  // ::1 by another spelling is still not started (#2130).
+  for (const host of ["[::1]", "0:0:0:0:0:0:0:1"]) {
+    assert.match(launchPlan({ ...proc("l", 47126, {}), host }, "q", undefined, "/home/me").error, /is at ::1, and q listens on IPv4 only/);
+  }
 });
 
 // A saved process's relative cwd or script is whichever workspace is open:
@@ -141,16 +201,23 @@ test("a relative cwd, or a relative script with no cwd, is from the workspace fo
 });
 
 test("a definition is read from the saved list and an import, never from a discovery server", () => {
-  const entry = { label: "a", host: "localhost", port: 1, launch: { command: "q", script: "s.q", args: "-t 1000 \"x y\"", env: { A: "1", "B-C": "no", D: 2 }, junk: 1 } };
+  const entry = { label: "a", host: "localhost", port: 1, launch: { command: "q", script: "s.q", args: "-t 1000 \"x y\"", env: { A: "1", "B=C": "no", D: 2 }, junk: 1 } };
   // A number is its text: D's 2 was dropped, as was 5010 from ["-p", 5010] (#2521).
   assert.deepStrictEqual(parseProcesses([entry], true).processes[0].launch, { command: "q", script: "s.q", args: ["-t", "1000", "x y"], env: { A: "1", D: "2" } });
   assert.deepStrictEqual(launchOf({ args: ["-p", 5010, true, null], env: { SLAVES: 4, X: null, Y: false } }), { args: ["-p", "5010", "true"], env: { SLAVES: "4", Y: "false" } });
   assert.strictEqual(parseProcesses([entry]).processes[0].launch, undefined);
+  // A variable's name is any the system takes, not an identifier only (#3112).
+  const named = { "ProgramFiles(x86)": "C:\\x86", "A.B": "1", "my-var": "2", OK: "3", __proto__: null };
+  assert.deepStrictEqual(launchOf({ env: { ...named, "": "x", "A=B": "x", "N\0": "x" } }).env, { "ProgramFiles(x86)": "C:\\x86", "A.B": "1", "my-var": "2", OK: "3" });
   assert.deepStrictEqual(splitArgs('-a "b c" d'), ["-a", "b c", "d"]);
   // A quote groups anywhere in a word, as a shell's does (#1695).
   assert.deepStrictEqual(splitArgs('-name="a b" -x "" c'), ["-name=a b", "-x", "", "c"]);
   assert.deepStrictEqual(splitArgs('  a"b c"d  e" '), ["ab cd", 'e"']);
   assert.deepStrictEqual(splitArgs(""), []);
+  // A pair of single quotes groups too, and each kind keeps the other (#3111).
+  assert.deepStrictEqual(splitArgs("-load 'my dir/rdb.q' -x 'c d'"), ["-load", "my dir/rdb.q", "-x", "c d"]);
+  assert.deepStrictEqual(splitArgs(`-e 'say "hi"' "it's" -n='a b' '' don't`), ["-e", 'say "hi"', "it's", "-n=a b", "", "don't"]);
+  assert.deepStrictEqual(launchOf({ args: "-load 'my dir/rdb.q'" }), { args: ["-load", "my dir/rdb.q"] });
   assert.deepStrictEqual(launchOf({}), {});
   assert.strictEqual(launchOf("q"), undefined);
 });
@@ -414,6 +481,9 @@ test("the Arguments box gives back the arguments it was filled with (#1430)", ()
   // An empty argument is shown quoted, so splitting the box keeps it.
   assert.strictEqual(argsText(["-e", "", "a b"]), '-e "" "a b"');
   assert.deepStrictEqual(argsFromText('-e "" "a b" -x', ["-e", "", "a b"]), ["-e", "", "a b", "-x"]);
+  // One with a single quote too, now that a pair of them groups (#3111).
+  assert.strictEqual(argsText(["it's", "that's"]), `"it's" "that's"`);
+  assert.deepStrictEqual(argsFromText(`"it's" "that's" -x`, ["it's", "that's"]), ["it's", "that's", "-x"]);
 });
 
 test("Stop Process ends what a wrapper script started too, and frees its port (#1672)", { skip: process.platform === "win32" ? "no process groups" : false }, async (t) => {
@@ -446,6 +516,109 @@ test("Stop Process ends what a wrapper left running after it exited (#1744)", { 
   assert.strictEqual(await Promise.race([stopped, sleep(8000).then(() => false)]), true);
   assert.deepStrictEqual(launcher.running(), []);
   assert.strictEqual(await accepts(port), false);
+});
+
+test("in a workspace not trusted, a launch with no working directory starts in the home directory, so no argument names the repository's file (#3094)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-ws-"));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-home-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  fs.writeFileSync(path.join(ws, "evil.q"), "");
+  const port = await freePort();
+  const { output } = await setUp(t, [proc("rdb", port, { command: process.execPath, script: path.join(dir, "fake.js"), args: ["evil.q"] })]);
+  const vscode = require("vscode");
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  Object.assign(process.env, { HOME: home, USERPROFILE: home });
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(ws), name: "ws", index: 0 }];
+  vscode.workspace.isTrusted = false;
+  t.after(() => {
+    vscode.workspace.isTrusted = true;
+    vscode.workspace.workspaceFolders = undefined;
+    for (const [k, v] of Object.entries(was)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  await stub.commands.get(LAUNCH_COMMANDS.start)("rdb");
+  await until(() => output("rdb").includes("listening"), "listening in rdb's output");
+  const cwd = output("rdb").match(/listening on \d+ in (.*) A=/)[1];
+  assert.strictEqual(fs.realpathSync(cwd), fs.realpathSync(home), output("rdb"));
+  assert.ok(output("rdb").includes(`[the workspace is not trusted: started in ${home}, not in ${ws}]`), output("rdb"));
+});
+
+test("a working directory that does not exist is what the error names, and ${workspaceFolder} before one is the folder (#3104)", async (t) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-")));
+  fs.mkdirSync(path.join(dir, "torq"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  fs.writeFileSync(path.join(dir, "file"), "");
+  const fake = { command: process.execPath, script: path.join(dir, "fake.js") };
+  const [a, b] = [await freePort(), await freePort()];
+  const { launcher, output } = await setUp(t, [proc("gone", a, { ...fake, cwd: path.join(dir, "renamed") }), proc("file", a, { ...fake, cwd: path.join(dir, "file") }), proc("var", b, { ...fake, cwd: "${workspaceFolder}/torq" })]);
+  const vscode = require("vscode");
+  const folders = vscode.workspace.workspaceFolders;
+  vscode.workspace.workspaceFolders = [{ uri: vscode.Uri.file(dir), name: "ws", index: 0 }];
+  t.after(() => (vscode.workspace.workspaceFolders = folders));
+  await stub.commands.get(LAUNCH_COMMANDS.start)("gone");
+  await stub.commands.get(LAUNCH_COMMANDS.start)("file");
+  assert.deepStrictEqual(stub.messages, [
+    ["error", `q-lint: gone's working directory ${path.join(dir, "renamed")} does not exist; it was not started.`],
+    ["error", `q-lint: file's working directory ${path.join(dir, "file")} is not a directory; it was not started.`],
+  ]);
+  assert.deepStrictEqual([launcher.running(), output("gone")], [[], ""]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("var");
+  await until(() => output("var").includes("listening"), "listening in var's output");
+  assert.match(output("var"), new RegExp(`listening on ${b} in ${path.join(dir, "torq")} A=`));
+  // As data: the folder alone, and only where it starts the path.
+  const cwd = (text, ...folder) => launchPlan(proc("v", 1, { cwd: text }), "q", folder.length > 0 ? folder[0] : "/w", "/home/me");
+  assert.deepStrictEqual([cwd("${workspaceFolder}").cwd, cwd("${workspaceFolder}/a/b").cwd, cwd("/x/${workspaceFolder}").cwd], ["/w", "/w/a/b", "/x/${workspaceFolder}"]);
+  assert.match(cwd("${workspaceFolder}/torq", undefined).error, /is relative, and there is no workspace folder/);
+  // Not trusted, it is the folder still: not started there (#1527).
+  assert.strictEqual(fromWorkspace({ cwd: "${workspaceFolder}/torq" }, "/home/me"), true);
+});
+
+test("Start Process gives q the PATH its launch definition adds to, not the text $PATH (#3102)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "env.js"), FAKE.replace('" A=" + process.env.A', '" PATH=" + process.env.PATH + " QH=" + process.env.QH + " L=" + process.env.L + " W=" + process.env.W'));
+  const port = await freePort();
+  const env = { PATH: `/opt/kx/bin${path.delimiter}$PATH`, QH: "${env:HOME}/q", L: "~/logs", W: "pa$word" };
+  const { output } = await setUp(t, [proc("envs", port, { command: process.execPath, script: "env.js", cwd: dir, env })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("envs");
+  await until(() => output("envs").includes("listening"), "listening in envs' output");
+  assert.ok(output("envs").includes(` PATH=/opt/kx/bin${path.delimiter}${process.env.PATH} QH=${process.env.HOME ?? ""}/q L=${path.join(os.homedir(), "logs")} W=pa$word\n`), output("envs"));
+});
+
+test("a program that ends at once is an error, never 'started ... on port' (#3103)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  // As q with no licence does: a line, and exit code 1.
+  fs.writeFileSync(path.join(dir, "nolic.js"), "console.log(\"'k4.lic\");\nprocess.exit(1);\n");
+  fs.writeFileSync(path.join(dir, "idle.js"), "setInterval(() => {}, 1000);\n");
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const [a, b, c] = [await freePort(), await freePort(), await freePort()];
+  const node = { command: process.execPath, cwd: dir };
+  const { launcher, output } = await setUp(t, [proc("nolic", a, { ...node, script: "nolic.js" }), proc("idle", b, { ...node, script: "idle.js" }), proc("fake", c, { ...node, script: "fake.js" })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("nolic");
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: nolic ended as soon as it started (exit code 1), before it listened on port ${a}: its output is in the "q: nolic" output channel.`]]);
+  await until(() => output("nolic").includes("ended"), "ended in nolic's output");
+  assert.match(output("nolic"), /'k4\.lic\n\[nolic ended: exit code 1\]\n$/);
+  assert.deepStrictEqual(launcher.running(), []);
+  // Started is said once it listens: by then it does.
+  await stub.commands.get(LAUNCH_COMMANDS.start)("fake");
+  assert.match(stub.messages.at(-1)[1], new RegExp(`^q-lint: started fake \\(pid \\d+\\) on port ${c}\\.$`));
+  assert.strictEqual(await accepts(c), true);
+  // Running, and not listening after a while: said as that, not as on its port.
+  launcher.startWaitMs = 300;
+  await stub.commands.get(LAUNCH_COMMANDS.start)("idle");
+  assert.strictEqual(stub.messages.at(-1)[0], "warning");
+  assert.match(stub.messages.at(-1)[1], new RegExp(`^q-lint: started idle \\(pid \\d+\\), which does not listen on port ${b} yet: its output is in the "q: idle" output channel\\.$`));
+  // Stopped from here while Start waits for it, it did not fail.
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("idle");
+  launcher.startWaitMs = 20_000;
+  const said = stub.messages.length;
+  const starting = stub.commands.get(LAUNCH_COMMANDS.start)("idle");
+  await until(() => launcher.running().some((r) => r.label === "idle"), "idle running");
+  await stub.commands.get(LAUNCH_COMMANDS.stop)("idle");
+  await starting;
+  assert.deepStrictEqual(stub.messages.slice(said), []);
 });
 
 test("a program that does not exist is one error, never 'started' (#1679)", async (t) => {

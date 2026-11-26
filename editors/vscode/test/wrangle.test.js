@@ -101,7 +101,10 @@ test("a filter on a column of strings matches the whole string, and offers no or
   assert.strictEqual(f("null", ""), "select from t where 0=count each b");
   assert.strictEqual(f("not null", ""), "select from t where 0<count each b");
   assert.strictEqual(f("like", '"x*"'), 'select from t where b like "x*"');
-  assert.strictEqual(f("in", '("yy";"xy")'), 'select from t where b in ("yy";"xy")');
+  // One string is the item looked for, not a list of characters (#3090).
+  assert.strictEqual(f("in", '("yy";"xy")'), 'select from t where b in {$[0h=type x;x;enlist x]}("yy";"xy")');
+  assert.strictEqual(f("in", '"xy"'), 'select from t where b in {$[0h=type x;x;enlist x]}"xy"');
+  assert.strictEqual(f("in", '"x","y"'), 'select from t where b in {$[0h=type x;x;enlist x]}("x","y")');
   // A one-character string is the list the grid shows it as, and a comma is kept in one test (#1412).
   assert.strictEqual(f("=", ',"x"'), 'select from t where b~\\:enlist "x"');
   assert.strictEqual(f("=", '"x","y"'), 'select from t where b~\\:("x","y")');
@@ -118,7 +121,15 @@ test("a cell edit is an update of the table, its rows found by the row's values,
     matchedBy: ["sym", "px", "note", "e"],
   });
   // A general column takes a list as long as the rows found.
-  assert.strictEqual(w.editStatement(payload(), 2, 0, ".ns.t", '"new"').code, 'update note:(count i)#enlist "new" from `.ns.t where (sym=`a),(px~\\:(1.5f)),(note~\\:("x y")),(e=`a)');
+  assert.strictEqual(w.editStatement(payload(), 2, 0, ".ns.t", '"new"').code, 'update note:(count i)#enlist ("new") from `.ns.t where (sym=`a),(px~\\:(1.5f)),(note~\\:("x y")),(e=`a)');
+  // In parentheses: a comma would start a second column, and :: alone make enlist a projection (#3078, #3079).
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"x","y"').code, 'update note:(count i)#enlist ("x","y") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", "::").code, "update note:(count i)#enlist (::) from `kt where (sym=`a)");
+  // A column of strings keeps a string: "x" alone is a char atom (#3080).
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", ' "x" ').code, 'update note:(count i)#enlist (enlist "x") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"\\""').code, 'update note:(count i)#enlist (enlist "\\"") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"x","y"').code, 'update note:(count i)#enlist ("x","y") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1, cells: [["a", "b"], ["1.5", ""], ['"x y"', "1"], ["a", "b"]] }), 2, 0, "kt", '"x"').code, 'update note:(count i)#enlist ("x") from `kt where (sym=`a)');
   // A keyed result is found by its keys alone.
   const keyed = w.editStatement(payload({ keys: 1 }), 1, 0, "kt", "2");
   assert.deepStrictEqual(keyed, { code: "update px:(2) from `kt where (sym=`a)", matchedBy: ["sym"] });
@@ -153,6 +164,40 @@ test("a cell edit is an update of the table, its rows found by the row's values,
   // A from in a comment or a string names no table (#1467).
   assert.strictEqual(w.guessTable("select from trade / was from quote"), "trade");
   assert.strictEqual(w.guessTable('select from trade where s like "from quote"'), "trade");
+});
+
+// `s=1 2` compares item by item, 'length against a column of lists, and
+// `s in 1 2` is 'type there.
+test("a filter on a general column matches the whole cell, and in takes one cell as the item looked for (#3091)", () => {
+  const f = (op, value) => w.stepCode({ kind: "filter", column: "s", op, value, general: true }, "t");
+  assert.strictEqual(f("=", "1 2"), "select from t where s~\\:1 2");
+  assert.strictEqual(f("<>", "1 2"), "select from t where not s~\\:1 2");
+  assert.strictEqual(f("=", "1,2"), "select from t where s~\\:(1,2)");
+  assert.strictEqual(f("in", "1 2"), "select from t where s in {$[0h=type x;x;enlist x]}1 2");
+  // Its other tests are as they were: only a column of strings counts its characters for a null.
+  assert.strictEqual(f("null", ""), "select from t where null s");
+  assert.strictEqual(f("like", '"a*"'), 'select from t where s like "a*"');
+});
+
+test("a like filter on a symbol column starts from the cell's text as a string, the pattern like takes (#3092)", () => {
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "like"), 'enlist "a"');
+  assert.strictEqual(w.filterValue(payload({ cells: [['a"b c', "b"], ["1.5", ""], ['"x y"', ',"z"'], ["a", "b"]] }), 0, 0, "like"), '"a\\"b c"');
+  // An enumeration is its symbols' text; a string is the literal it was.
+  assert.strictEqual(w.filterValue(payload(), 3, 1, "like"), 'enlist "b"');
+  assert.strictEqual(w.filterValue(payload(), 2, 0, "like"), '"x y"');
+  // Every other test starts from the cell's literal.
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "="), "`a");
+  assert.strictEqual(w.filterValue(payload(), 0, 0, "in"), "`a");
+});
+
+test("a column named i is refused: in q-sql i is the row's index, whatever the table holds (#3081, #3089)", () => {
+  assert.match(w.columnProblem("i"), /the column i cannot be named in q-sql \(i there is the row's index/);
+  assert.strictEqual(w.columnProblem("ix"), undefined);
+  // An edit would find its row by the index: (i~\:(1)) is the second row, not the one whose i is 1.
+  const table = { count: 2, keys: 0, names: ["i", "v"], types: [7, 7], cells: [["1", "0"], ["5", "5"]], raw: [[1, 0], [5, 5]], rank: [] };
+  assert.match(w.editStatement(table, 1, 0, "tt", "99").error, /the column i cannot be named in q-sql/);
+  assert.match(w.editStatement({ ...table, keys: 1, names: ["k", "i"] }, 1, 0, "tt", "99").error, /the column i cannot be named in q-sql/);
+  assert.strictEqual(w.editStatement({ ...table, keys: 1, names: ["k", "v"] }, 1, 0, "tt", "99").code, "update v:(99) from `tt where (k~\\:(1))");
 });
 
 test("an unwrapped grid's cell edit finds its row by a long past 2^53 exactly (#1276)", () => {

@@ -153,6 +153,95 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] each[neg;a]}\ng:{[a] 1+extracted[a]}\n",
         "g 1 2",
     ),
+    // `$[` is the conditional, a value wherever it stands (#2780).
+    (
+        "g:{[a] b:a*2; $[b>1;b;0]}\n",
+        "$[b>1;b;0]",
+        "extracted:{[b] $[b>1;b;0]}\ng:{[a] b:a*2; extracted[b]}\n",
+        "g 3",
+    ),
+    (
+        "g:{[a] 1+$[a>1;a;0]*2}\n",
+        "$[a>1;a;0]",
+        "extracted:{[a] $[a>1;a;0]}\ng:{[a] 1+extracted[a]*2}\n",
+        "g 3",
+    ),
+    // A column's name assigns nothing: a table literal's, a query's (#2780).
+    (
+        "g:{[a] ([] c:a)}\n",
+        "([] c:a)",
+        "extracted:{[a] ([] c:a)}\ng:{[a] extracted[a]}\n",
+        "g 1 2",
+    ),
+    (
+        "g:{[a] ([k:a] c:a; d:2*a)}\n",
+        "([k:a] c:a; d:2*a)",
+        "extracted:{[a] ([k:a] c:a; d:2*a)}\ng:{[a] extracted[a]}\n",
+        "g 1 2",
+    ),
+    (
+        "g:{[a] select c:a from ([]b:1 2)}\n",
+        "select c:a from ([]b:1 2)",
+        "extracted:{[a] select c:a from ([]b:1 2)}\ng:{[a] extracted[a]}\n",
+        "g 3 4",
+    ),
+    (
+        "g:{[a] select[1] c:a, d:b by e:b from ([]b:1 2)}\n",
+        "select[1] c:a, d:b by e:b from ([]b:1 2)",
+        "extracted:{[a] select[1] c:a, d:b by e:b from ([]b:1 2)}\ng:{[a] extracted[a]}\n",
+        "g 3 4",
+    ),
+    (
+        "g:{[a] 0!update c:a from ([]b:1 2)}\n",
+        "update c:a from ([]b:1 2)",
+        "extracted:{[a] update c:a from ([]b:1 2)}\ng:{[a] 0!extracted[a]}\n",
+        "g 3 4",
+    ),
+    // The call stays a token of its own after a name, a symbol or the `.`
+    // of an apply that the selection stood right after (#2791).
+    (
+        "g:{sum x}\nh:{[a;b] g(a;b)}\n",
+        "(a;b)",
+        "g:{sum x}\nextracted:{[a;b] (a;b)}\nh:{[a;b] g extracted[a;b]}\n",
+        "h[1;2]",
+    ),
+    (
+        "g:{x+y}\nh:{[a;b] g .(a;b)}\n",
+        "(a;b)",
+        "g:{x+y}\nextracted:{[a;b] (a;b)}\nh:{[a;b] g . extracted[a;b]}\n",
+        "h[1;2]",
+    ),
+    (
+        "h:{[a] a+count\"abc\"}\n",
+        "\"abc\"",
+        "extracted:{[] \"abc\"}\nh:{[a] a+count extracted[]}\n",
+        "h 1",
+    ),
+    (
+        "h:{[a] `x`y(a;0)}\n",
+        "(a;0)",
+        "extracted:{[a] (a;0)}\nh:{[a] `x`y extracted[a]}\n",
+        "h 1",
+    ),
+    (
+        "h:{[a] neg$[a>1;a;0]}\n",
+        "$[a>1;a;0]",
+        "extracted:{[a] $[a>1;a;0]}\nh:{[a] neg extracted[a]}\n",
+        "h 3",
+    ),
+    (
+        "h:{[a] 10 20 30(a;0)}\n",
+        "(a;0)",
+        "extracted:{[a] (a;0)}\nh:{[a] 10 20 30 extracted[a]}\n",
+        "h 2",
+    ),
+    // A glyph or a blank after the selection that assigns nothing (#2792).
+    (
+        "g:{[t] t[`x] , 1}\n",
+        "t[`x]",
+        "extracted:{[t] t[`x]}\ng:{[t] extracted[t] , 1}\n",
+        "g `x`y!1 2",
+    ),
 ];
 
 #[test]
@@ -212,6 +301,22 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
         ("g:{[n] n f/0}\n", "f/0", "adverb"),
         ("g:{[a;b] a {x,y}'b}\n", "{x,y}'b", "adverb"),
         ("g:{[l] count {x+y}/l}\n", "{x+y}/l", "adverb"),
+        // A column's name assigns nothing, but what a column holds may
+        // (#2780).
+        ("g:{[a] ([] c:(b:a))}\n", "([] c:(b:a))", "assigns"),
+        ("g:{[a] ([] c:a; b:a):1}\n", "([] c:a; b:a)", "assigned"),
+        (
+            "g:{[a] select c:a, d:(e:a) from ([]b:1 2)}\n",
+            "select c:a, d:(e:a) from ([]b:1 2)",
+            "assigns",
+        ),
+        (
+            "g:{[a;t] select c:a from t where b>d:1}\n",
+            "select c:a from t where b>d:1",
+            "assigns",
+        ),
+        ("g:{[a] $[a;b:1;2]}\n", "$[a;b:1;2]", "assigns"),
+        ("g:{[a] `select c:a}\n", "`select c:a", "assigns"),
         (
             "g:{[a;b;c;d;e;f;h;i] a+b+c+d+e+f+h+i}\n",
             "a+b+c+d+e+f+h+i",
@@ -231,6 +336,22 @@ fn a_selection_that_is_no_value_of_its_expression_is_refused() {
     assert!(e.contains("modified or assigned"), "{e}");
     let e = apply_nth("g:{[d] d[`a]:1; d}\n", "d", 1).unwrap_err();
     assert!(e.contains("assigned"), "{e}");
+    // An assignment through an operator, or after a blank (#2792).
+    for (source, selected, nth) in [
+        ("g:{[t] t[`x],:1; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x]+:1; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] :5; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] ,:5; t}\n", "t[`x]", 0),
+        ("g:{[t] t[`x] ::5; t}\n", "t[`x]", 0),
+        ("g:{v[0] :9; v}\n", "v[0]", 0),
+        ("g:{[t] t[`x],:1; t}\n", "t", 1),
+        ("g:{[t] t [`x] -:1; t}\n", "t", 1),
+        ("g:{[a;b] b:2; b _:1; a}\n", "b", 2),
+        ("g:{[a;b] b:2; b -:1; a}\n", "b", 2),
+    ] {
+        let e = apply_nth(source, selected, nth).unwrap_err();
+        assert!(e.contains("assigned"), "{source:?} / {selected:?}: {e}");
+    }
     let nine = "g:{[a;b;c;d;e;f;h;i] k:1; a+b+c+d+e+f+h+i+k}\n";
     let e = apply(nine, "a+b+c+d+e+f+h+i+k").unwrap_err();
     assert!(e.contains("at most 8"), "{e}");
@@ -251,5 +372,21 @@ fn the_definition_goes_above_the_statement_under_its_own_context() {
     assert_eq!(
         got,
         "f:{[a] a+1}\nextracted:{[a] a+1}\ng:{[a] extracted[a]}\n"
+    );
+}
+
+/// The new definition ends its line as the file ends its own: a CRLF file
+/// is left with no bare LF (#2794).
+#[test]
+fn the_definition_ends_its_line_as_the_file_does() {
+    let got = apply("a:1\r\nf:{[a;b] 1+a*b}\r\n", "a*b").unwrap();
+    assert_eq!(
+        got,
+        "a:1\r\nextracted:{[a;b] a*b}\r\nf:{[a;b] 1+extracted[a;b]}\r\n"
+    );
+    let got = apply("a:1\nf:{[a;b] 1+a*b}\n", "a*b").unwrap();
+    assert_eq!(
+        got,
+        "a:1\nextracted:{[a;b] a*b}\nf:{[a;b] 1+extracted[a;b]}\n"
     );
 }

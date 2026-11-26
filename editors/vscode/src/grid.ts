@@ -36,7 +36,11 @@
 //          float), and `("l";v)` for a general list of at most 200, each
 //          item `("f";x)`, `("e";x)`, such a pair, or its `-3!` text
 //          (#1502); `("s";b)` and `("S";bs)` for a symbol or symbols
-//          of a byte past ASCII, their bytes; `("c";(t;n))` for a minute, second, time, datetime
+//          of a byte past ASCII, or of a character that ends a symbol in
+//          `-3!`'s text (#3076), their bytes; `("u";text)` for a function
+//          `-3!` writes as q does not read back - one defined in q, a
+//          composition, a projection or a derived function of either -
+//          its text (#3084); `("c";(t;n))` for a minute, second, time, datetime
 //          or timestamp atom or vector of type `t` that `-3!` writes as q
 //          cannot read back - past 99 hours (`**`), finer than a
 //          millisecond, outside 1709-2290 - `n` its count (#2082); `()`
@@ -73,7 +77,7 @@
 // or a parameter. A partitioned table, which `sublist` refuses, is read by
 // row index with `.Q.ind`. A value it cannot shape gives q's error as a
 // string in `grid`, and the result is shown in the output instead.
-import { readAnswer, trapLines, type Answer } from "./query";
+import { LAID_TEXT, readAnswer, trapLines, type Answer } from "./query";
 
 /// The most nodes `GRID` sends of a dictionary or a nested list's tree.
 export const TREE_NODES = 2000;
@@ -95,23 +99,30 @@ function holdLiteral(token: string): string {
 }
 
 /// How `GRID` writes each column's cells, raw numbers and ranks, given the
-/// escapes `e` and the columns `c`; `PAGE` writes a page's the same way.
+/// escapes `e`, the columns `c` and their types `y`; `PAGE` writes a page's
+/// the same way. `y` is the type each column has in the whole table: q
+/// makes a vector of a general column's rows when those cut are all of one
+/// type, and they are written as a general column's all the same (#3068).
+/// The ranks are dense. A float column's share one only where the values
+/// are the same number, as `distinct` and `by` group them: `differ` takes
+/// floats within q's comparison tolerance as equal (#3070).
 const COLUMN_LINES = [
-  "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
-  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
-  "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
+  "          {[e;u;x]$[u within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
+  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e]'[y;c];",
+  "          {[u;c]$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            (u=11h)|u within 20 76h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
   "            (u=0h)|u within 77 98h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
   "              $[all 0b~/:r:.z.s each x;0b;(\"l\";@[r;w;:;-3!'x w:where 0b~/:r])];",
   "              99h=t;$[0b~r:.z.s(key x;value x);0b;(\"d\";r 1)];98h=t;$[0b~r:.z.s flip x;0b;(\"t\";r)];",
   "              200<count x;0b;",
-  "              -11h=t;$[any 127<\"i\"$\"x\"$s:string x;(\"s\";\"x\"$s);0b];",
-  "              11h=t;$[any 127<\"i\"$\"x\"$raze s:string x;(\"S\";\"x\"$s);0b];",
+  "              -11h=t;$[any(s in\"`;)]}!$#\")|127<\"i\"$\"x\"$s:string x;(\"s\";\"x\"$s);0b];",
+  "              11h=t;$[any(r in\"`;)]}!$#\")|127<\"i\"$\"x\"$r:raze s:string x;(\"S\";\"x\"$s);0b];",
+  "              t within 100 111h;$[{$[100h=t:type x;\"k)\"~2#-3!x;105h=t;1b;104h=t;any .z.s each value x;t within 106 111h;.z.s value x;0h=t;any .z.s each x;0b]}x;(\"u\";-3!x);0b];",
   "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
   "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
-  "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]} each c;",
-  "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
+  "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]}'[y;c];",
+  "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;$[type[x]in 8 9 15h;{(-1+sums g=til count g)g:x?x};{-1+sums differ x}]x i]};x;{[e]()}]} each c;",
 ];
 
 /// `GRID`, with the tree (`tree`) or without it (`()`): a tree is asked for
@@ -127,7 +138,7 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
   "{[s;size;limit]",
   ...trapLines(readOnly),
   " $[r 0;",
-  "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
+  `   \`ok\`type\`text\`grid!(1b;type r 1;${LAID_TEXT}[size;r 1];.[{[v;n]`,
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
   "     e:{1_-1_-3!x} each \"c\"$til 256;",
   "     t:$[98h=type v;v;",
@@ -150,9 +161,10 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
         `        ${HELD}:$[(n>0)&m>n;h,(enlist .z.w)!enlist(${holdLiteral(hold)};t);(enlist .z.w)_h];`,
       ]
     : []),
-  "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
-  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
+  "        y:$[p:1b~.Q.qp t;();type each $[count[cols t]=count distinct cols t;t cols t;value flip t]];",
+  "        t:$[p;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];if[p;y:type each c];",
+  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each y;",
   ...COLUMN_LINES,
   tree ? `          $[(0h=type v)|$[99h=type v;98h<>type key v;0b];g[g;e;${TREE_NODES};"";v];()])]]};` : "          ())]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
@@ -171,6 +183,10 @@ export const GRID_TREE_READ_ONLY = gridLambda(true, undefined, true);
 /// The rows `off` to `off+n` of the table `GRID` held for this client
 /// under the token `tok`, as `GRID`'s `grid` writes them but for its `keys`
 /// and `tree`: `count` is the rows held, and the ranks are the page's own.
+/// A general column holding other than strings is ranked over every row up
+/// to the page's last instead: q orders it by its values, which no cell's
+/// text sorts as (#3082), a char atom before the strings (#3069). Not a
+/// partitioned table's, read by row index.
 /// q's error as a string when it is not held, as after the process
 /// restarted or another result of this client replaced it.
 export const PAGE = [
@@ -179,10 +195,12 @@ export const PAGE = [
   `   h:@[value;\`${HELD};()!()];h:$[99h=type h;$[.z.w in key h;h .z.w;()];()];if[not tok~first h;'\`held];`,
   `   t:last h;if[not 98h=type t;'\`held];m:count t;e:{1_-1_-3!x} each "c"$til 256;`,
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
-  "   t:$[1b~.Q.qp t;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
-  "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
-  ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
+  "   y:type each d:$[p:1b~.Q.qp t;();$[count[cols t]=count distinct cols t;t cols t;value flip t]];",
+  "   t:$[p;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
+  "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];if[p;y:type each c];",
+  "   r:$[p;c;{[k;u;x;d]$[(u=0h)|u within 77 97h;$[all 10h=type each d:k sublist d;x;d];x]}[(\"j\"$off)+count j]'[y;c;d]];",
+  "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each y;",
+  ...COLUMN_LINES.map((line, i) => (i === COLUMN_LINES.length - 1 ? line.replace(/^ {7}/, "").replace(/ each c;$/, " each r)};") : line.replace(/^ {7}/, ""))),
   "   (tok;off;n);{x}]}",
 ].join("\n");
 
@@ -554,9 +572,11 @@ export function csvText(text: string): string {
 
 /// The grid as CSV: a header of the column names, then `rows` (indices, in
 /// the order shown) as their cells show them. Lines end in `\n`. Names
-/// and every cell go through `csvText`: a symbol or a string can be
-/// anything, and a numeric or temporal column holds `-0W` and `-0D01:00`,
-/// which are no number either.
+/// and a cell that is the user's text go through `csvText`: a symbol or a
+/// string can be anything. A numeric or temporal column's cell is q's own
+/// text or a name's format of it, and no formula: its `-0W`, `-0D01:00`
+/// and `-5.00%` are written as they are, as the rows above zero are
+/// (#3075, #3088).
 export function toCsv(grid: Grid, rows?: number[]): string {
   return csvLines(grid, rows).join("");
 }
@@ -566,8 +586,9 @@ export function toCsv(grid: Grid, rows?: number[]): string {
 export function csvLines(grid: Grid, rows?: number[]): string[] {
   const order = rows ?? [...Array(rowCount(grid)).keys()];
   const lines = [grid.columns.map((c) => csvField(csvText(c.name))).join(",") + "\n"];
+  const own = grid.columns.map((c) => c.numeric || c.temporal);
   for (const r of order) {
-    lines.push(grid.cells.map((column) => csvField(csvText(column[r] ?? ""))).join(",") + "\n");
+    lines.push(grid.cells.map((column, i) => csvField(own[i] ? (column[r] ?? "") : csvText(column[r] ?? ""))).join(",") + "\n");
   }
   return lines;
 }
@@ -815,8 +836,9 @@ function remember(rank: number[]): number[] {
 /// `payload` with `page`'s rows after its own. The ranks are ranked again
 /// over both - by the raw numbers where there are some, by the text where q
 /// sorts by it (symbols, chars, booleans, bytes, guids) - and are dropped
-/// for a column q could not sort. A page whose columns are not the
-/// payload's is refused.
+/// for a column q could not sort. A general column `PAGE` ranked over every
+/// row takes those ranks. A page whose columns are not the payload's is
+/// refused.
 export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
   if (page.names.length !== payload.names.length || page.names.some((n, i) => n !== payload.names[i] || page.types[i] !== payload.types[i])) {
     throw new Error("the rows held on the process are not this result's");
@@ -832,10 +854,15 @@ export function appendPage(payload: GridPayload, page: GridPage): GridPayload {
   });
   const rank = cells.map((column, i) => {
     const held = payload.cells[i].length;
+    // `PAGE` ranked a general column of other than strings over the rows
+    // held and its own (#3082).
+    if (payload.types[i] === 0 && held > 0 && page.rank[i].length === column.length) {
+      return page.rank[i];
+    }
     const ranked = payload.rank[i].length === held && page.rank[i].length === page.cells[i].length;
     // A general column of other than strings q ranked by its values, which
-    // no cell's text sorts as (#2452): unranked once paged, as one q could
-    // not sort.
+    // no cell's text sorts as (#2452): unranked when the page ranked only
+    // its own rows, as one q could not sort.
     if (!ranked || (payload.types[i] === 0 && column.some((cell) => !/^,?"/.test(cell)))) {
       return [];
     }

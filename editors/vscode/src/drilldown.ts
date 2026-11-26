@@ -26,9 +26,31 @@ export function templatesFor(templates: DrilldownTemplate[], name: string): Dril
   return templates.filter((t) => t.columns.length === 0 || t.columns.includes(name));
 }
 
+/// What q reads as one token: a string, a run of symbols, a number or a
+/// temporal atom.
+const TOKEN = /^(?:"(?:[^"\\]|\\.)*"|(?:`[A-Za-z0-9_.:]*)+|-?[0-9](?:[0-9A-Za-z.:]|e-)*)$/s;
+
+/// Whether `literal` is in one pair of parentheses from end to end.
+function grouped(literal: string): boolean {
+  let depth = 0;
+  for (let i = 0; literal.startsWith("(") && i < literal.length; i++) {
+    const ch = literal[i];
+    if (ch === '"') {
+      i += (/^"(?:[^"\\]|\\.)*"?/s.exec(literal.slice(i))?.[0].length ?? 1) - 1;
+    } else if ("([{".includes(ch)) {
+      depth++;
+    } else if (")]}".includes(ch) && --depth === 0) {
+      return i === literal.length - 1;
+    }
+  }
+  return false;
+}
+
 /// A literal as one operand: `` `$"a b" `` parenthesised, or q reads
-/// `` `$"a b" xasc t `` as `` `$("a b" xasc t) `` (#1570).
-const operand = (literal: string) => (literal.startsWith("`$") ? `(${literal})` : literal);
+/// `` `$"a b" xasc t `` as `` `$("a b" xasc t) `` (#1570), and so is any
+/// other that is not one token - `"G"$"..."`, `"u"$6000`, `enlist "x"`,
+/// `` `a`b!1 2 `` - which q would read with what follows it (#3072).
+const operand = (literal: string) => (TOKEN.test(literal) || grouped(literal) ? literal : `(${literal})`);
 
 /// `query` with the cell at `column`, `row` put in, or why it could not be.
 export function fillDrilldown(query: string, payload: GridPayload, column: number, row: number): { code: string } | { error: string } {

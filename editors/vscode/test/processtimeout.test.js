@@ -165,7 +165,7 @@ test("on Windows Interrupt Query sends nothing: kill() there ends q (#1250)", as
   for (const d of context.subscriptions) d.dispose?.();
   const { timeouts, live } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l.label), 1) });
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
-  live.isBusy = () => true;
+  live.queryRunning = () => true;
   assert.strictEqual(timeouts.interrupt(), undefined);
   assert.match(stub.messages.at(-1)[1], /cannot be interrupted on Windows.*Abort Current Query/);
   assert.deepStrictEqual(sent, []);
@@ -177,17 +177,39 @@ test("Interrupt Query with nothing running, or a process not started here, sends
   assert.strictEqual(timeouts.interrupt(), undefined);
   assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query is running."]);
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
-  live.isBusy = () => true;
+  live.queryRunning = () => true;
   assert.strictEqual(timeouts.interrupt(), undefined);
   assert.match(stub.messages.at(-1)[1], /was not started from here/);
   assert.deepStrictEqual(sent, ["a"]);
+});
+
+// Interrupt Query asked whether any call was out on the connection, so with
+// only the Process Explorer's read out it signalled the process: nothing of
+// the user's stopped, and the read failed with 'stop.
+test("Interrupt Query sends no signal while only a background read is out (#3034)", async (t) => {
+  const server = net.createServer((socket) => {
+    socket.on("error", () => {});
+    // The handshake is answered, and nothing after it.
+    socket.once("data", () => socket.write(Buffer.from([3])));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const sent = [];
+  const { live, timeouts } = await setUp(t, [{ label: "a", host: "127.0.0.1", port: server.address().port, tags: [] }], { interrupt: (l) => (sent.push(l.label), 1) });
+  assert.strictEqual(await live.connectTo("a"), true);
+  const read = live.borrow((connection) => connection.evaluate("tables[]"), "the Process Explorer's read");
+  read.catch(() => {});
+  assert.strictEqual(live.isBusy(), true);
+  assert.strictEqual(timeouts.interrupt(), undefined);
+  assert.deepStrictEqual(stub.messages.at(-1), ["info", "q-lint: no query is running."]);
+  assert.deepStrictEqual(sent, []);
 });
 
 test("turned off, both commands refuse and nothing is set or signalled; on again without a reload", async (t) => {
   const sent = [];
   const { live, timeouts } = await setUp(t, [{ label: "a", host: "h", port: 1, tags: [] }], { interrupt: (l) => (sent.push(l.label), 1) });
   live.activeProcess = () => ({ label: "a", host: "h", port: 1, tags: [] });
-  live.isBusy = () => true;
+  live.queryRunning = () => true;
   stub.config.user["query.processTimeout.enable"] = false;
   stub.config.user["query.cancelLocal.enable"] = false;
   stub.changeConfig("q-lint.query.processTimeout.enable");
