@@ -173,24 +173,41 @@ export interface Evaluated {
   precision: number;
 }
 
-/// Whether `q` holds a float or a real anywhere, which its text writes to `\P`.
+/// Whether `q` holds a float or a real anywhere, which its text writes to
+/// `\P`: a projection's arguments, a composition's or derived function's
+/// parts too (#2712). Walked with a stack of its own, not a frame a level:
+/// q holds values nested thousands deep (#2650).
 function holdsFloat(q: QValue): boolean {
-  switch (q.kind) {
-    case "atom":
-    case "vector":
-      return Math.abs(q.t) === 8 || Math.abs(q.t) === 9;
-    case "list":
-      return q.v.some(holdsFloat);
-    case "table":
-      return q.data.some(holdsFloat);
-    case "dict":
-      return holdsFloat(q.k) || holdsFloat(q.v);
-    // A projection's arguments, a composition's or derived function's parts (#2712).
-    case "func":
-      return (q.parts ?? []).some(holdsFloat);
-    default:
-      return false;
+  const todo: QValue[] = [q];
+  for (let x = todo.pop(); x !== undefined; x = todo.pop()) {
+    switch (x.kind) {
+      case "atom":
+      case "vector":
+        if (Math.abs(x.t) === 8 || Math.abs(x.t) === 9) {
+          return true;
+        }
+        break;
+      case "list":
+        for (const y of x.v) {
+          todo.push(y);
+        }
+        break;
+      case "table":
+        for (const c of x.data) {
+          todo.push(c);
+        }
+        break;
+      case "dict":
+        todo.push(x.k, x.v);
+        break;
+      case "func":
+        for (const p of x.parts ?? []) {
+          todo.push(p);
+        }
+        break;
+    }
   }
+  return false;
 }
 
 /// The process's `\P`, asked as a plain string with each run that shows a
@@ -218,6 +235,10 @@ export function inContextText(statement: string, context: string): string {
   return context === "." ? statement : `system${stringLiteral(`d ${context}`)};value ${qString(statement)}`;
 }
 
+/// What a value nested deeper than the codec can read is answered as: the
+/// statements ran (#2650).
+export const TOO_DEEP = "q-lint: the value is nested too deep to read here; the statements ran";
+
 /// Send `statements` as plain strings, each in order, stopping at the first
 /// q error, which is answered as q sent it, with no trace: the process sends
 /// none. Anything else - the connection closing, an abort - throws. A `\d`
@@ -233,6 +254,10 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
       if (error instanceof QError) {
         return { ok: false, error: error.message };
       }
+      // The codec reads a value a frame a level (#2650).
+      if (error instanceof RangeError) {
+        return { ok: false, error: TOO_DEEP };
+      }
       throw error;
     }
   }
@@ -245,6 +270,9 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
     // The codec's value of one is its path's characters (#2569).
     if (error instanceof ByReference) {
       return { ok: false, error: error.message };
+    }
+    if (error instanceof RangeError) {
+      return { ok: false, error: TOO_DEEP };
     }
     typed = undefined;
   }
