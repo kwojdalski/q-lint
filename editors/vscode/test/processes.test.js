@@ -212,3 +212,33 @@ test("a host that is none is skipped in a list read from elsewhere, and kept in 
   assert.ok(processTooltip(stored.processes[0]).includes("\n\nnot a host (A host only: the port is asked for next\\.): Edit Process changes it\n\n"));
   assert.doesNotMatch(processTooltip({ label: "a", host: "h", port: 1, tags: [] }), /not a host/);
 });
+
+test("a key of a listed process written as it is not read is said, not left out in silence (#3110)", () => {
+  const read = parseProcesses(
+    [
+      { label: "a", host: "h", port: 1, timeout: "30", user: 1001, launch: "q tick.q", credentialCommand: ["vault"], evaluation: "plain", gateway: true },
+      { label: "b", host: "h", port: 2, timeout: 86401 },
+      // Left out, null or blank is none, and no problem; nor is what is read.
+      { label: "c", host: "h", port: 3, timeout: null, user: " ", launch: null, credentialCommand: "", evaluation: null, gateway: [] },
+      { label: "d", host: "h", port: 4, timeout: 30, user: "me", launch: {}, credentialCommand: "vault", evaluation: "Direct", gateway: "rdb hdb" },
+    ],
+    true,
+  );
+  assert.deepStrictEqual(read.processes, [
+    { label: "a", host: "h", port: 1, tags: [] },
+    { label: "b", host: "h", port: 2, tags: [], timeout: 86400 },
+    { label: "c", host: "h", port: 3, tags: [] },
+    { label: "d", host: "h", port: 4, user: "me", tags: [], gateway: ["rdb", "hdb"], launch: {}, credentialCommand: "vault", timeout: 30, evaluation: "direct" },
+  ]);
+  assert.deepStrictEqual(read.problems, [
+    "Entry 1 (a): user is 1001, not text, so it was not read.",
+    "Entry 1 (a): gateway is true, not server types, a list or a string of names, so it was not read.",
+    'Entry 1 (a): launch is "q tick.q", not a launch definition, an object, so it was not read.',
+    'Entry 1 (a): credentialCommand is ["vault"], not a command, as text, so it was not read.',
+    'Entry 1 (a): timeout is "30", not a number of seconds above 0, so it was not read.',
+    'Entry 1 (a): evaluation is "plain", not "wrapped" or "direct", so it was not read.',
+    "Entry 2 (b): timeout is 86401, not a day or less, so 86400 was read.",
+  ]);
+  // A list that may run nothing is not told of what it would not read anyway.
+  assert.deepStrictEqual(parseProcesses([{ label: "a", host: "h", port: 1, launch: "q", credentialCommand: 1 }]).problems, []);
+});

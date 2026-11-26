@@ -221,6 +221,15 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       return;
     }
     seen.add(label);
+    // A key written but not as it is read is said, not left out in silence:
+    // the process then ran with no timeout, or no user and so no password,
+    // and the import counted it as read (#3110).
+    const unread = (key: string, expected: string, instead = "it was not read"): void => {
+      problems.push(`${where} (${label}): ${key} is ${JSON.stringify(e[key])}, not ${expected}, so ${instead}.`);
+    };
+    if (written(e.user) && typeof e.user !== "string") {
+      unread("user", "text");
+    }
     const tags = Array.isArray(e.tags)
       ? parseTags(e.tags.filter((t): t is string => typeof t === "string").join(","))
       : typeof e.tags === "string"
@@ -238,13 +247,19 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       ...(scripts && typeof e.initFile === "string" && e.initFile.trim() !== "" && !(typeof e.init === "string" && e.init.trim() !== "")
         ? { initFile: e.initFile.trim() }
         : {}),
-      ...extrasOf(e, scripts),
+      ...extrasOf(e, scripts, unread),
     });
     if (scripts && typeof e.init === "string" && e.init.trim() !== "" && typeof e.initFile === "string" && e.initFile.trim() !== "") {
       problems.push(`${where} (${label}) has both init and initFile: its init code was kept.`);
     }
   });
   return { processes, problems };
+}
+
+/// Whether a key of an entry was given a value: neither left out, null, nor
+/// a blank string, each of which is how a file writes "none".
+function written(value: unknown): boolean {
+  return value !== undefined && value !== null && !(typeof value === "string" && value.trim() === "");
 }
 
 /// An SSH destination as written, or undefined when it is none. A leading
@@ -360,13 +375,32 @@ type Extras = Pick<Process, "ssh" | "gateway" | "launch" | "credentialCommand" |
 /// command, timeout and evaluation of a process entry. `trusted`: from a
 /// source whose code may run (the saved list, an import, a trusted
 /// workspace), which alone may name an SSH host or a program to run.
-function extrasOf(e: Record<string, unknown>, trusted: boolean): Extras {
+/// `unread` is told each key that was written and could not be read
+/// (#3110), and a timeout over the day it is read as.
+function extrasOf(e: Record<string, unknown>, trusted: boolean, unread: (key: string, expected: string, instead?: string) => void): Extras {
   const ssh = trusted ? sshDestination(e.ssh) : undefined;
   const gateway = serverTypes(e.gateway);
   const launch = trusted ? launchOf(e.launch) : undefined;
   const credentialCommand = trusted ? credentialCommandOf(e.credentialCommand) : undefined;
   const timeout = timeoutOf(e.timeout);
   const evaluation = evaluationOf(e.evaluation);
+  if (gateway === undefined && written(e.gateway) && !(Array.isArray(e.gateway) && e.gateway.length === 0)) {
+    unread("gateway", "server types, a list or a string of names");
+  }
+  if (trusted && launch === undefined && written(e.launch)) {
+    unread("launch", "a launch definition, an object");
+  }
+  if (trusted && credentialCommand === undefined && written(e.credentialCommand)) {
+    unread("credentialCommand", "a command, as text");
+  }
+  if (timeout === undefined && written(e.timeout)) {
+    unread("timeout", "a number of seconds above 0");
+  } else if (timeout !== undefined && timeout !== e.timeout) {
+    unread("timeout", "a day or less", `${timeout} was read`);
+  }
+  if (evaluation === undefined && written(e.evaluation)) {
+    unread("evaluation", '"wrapped" or "direct"');
+  }
   return {
     ...(ssh !== undefined ? { ssh } : {}),
     ...(gateway !== undefined ? { gateway } : {}),
