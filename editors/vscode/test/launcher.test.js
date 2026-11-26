@@ -43,7 +43,31 @@ test("a process defined on a loopback host listens on the loopback only, not on 
   assert.deepStrictEqual(plan("0.0.0.0"), ["-p", "47126"]);
   assert.strictEqual(listenAddress("box", 5), "5");
   // Its own -p is left as it is.
-  assert.deepStrictEqual(launchPlan({ ...proc("l", 1, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+  assert.deepStrictEqual(launchPlan({ ...proc("l", 5001, { args: ["-p", "5001"] }), host: "localhost" }, "q", undefined, "/home/me").args, ["-p", "5001"]);
+});
+
+test("launch arguments that set another port than the saved one are not started: q would listen where nothing looks (#3105)", async (t) => {
+  const own = (port, ...args) => launchPlan({ ...proc("l", port, { args }), host: "localhost" }, "q", undefined, "/home/me");
+  assert.deepStrictEqual(own(54743, "-p", "54744"), {
+    error: "l's launch arguments set -p 54744, not the port 54743 it is saved on, where it would be looked for: it was not started. Take -p out of the arguments, or save it on that port.",
+  });
+  for (const other of ["127.0.0.1:54744", "rp,54744", "-54744", "rp,box:54744", "0"]) {
+    assert.match(own(54743, "-s", "2", "-p", other).error, /launch arguments set -p .*, not the port 54743/, other);
+  }
+  // The saved port, however it is written, is its own to set; a service's
+  // name is not known to be another.
+  for (const same of ["54743", "127.0.0.1:54743", "rp,54743", "-54743", "localhost:054743", "kdb"]) {
+    assert.deepStrictEqual(own(54743, "-p", same).args, ["-p", same], same);
+  }
+  // Start Process says so, and starts and tracks nothing.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-launch-"));
+  fs.writeFileSync(path.join(dir, "fake.js"), FAKE);
+  const [saved, other] = [await freePort(), await freePort()];
+  const { launcher, output } = await setUp(t, [proc("otherport", saved, { command: process.execPath, script: "fake.js", cwd: dir, args: ["-p", String(other)] })]);
+  await stub.commands.get(LAUNCH_COMMANDS.start)("otherport");
+  await sleep(200);
+  assert.deepStrictEqual(stub.messages, [["error", `q-lint: otherport's launch arguments set -p ${other}, not the port ${saved} it is saved on, where it would be looked for: it was not started. Take -p out of the arguments, or save it on that port.`]]);
+  assert.deepStrictEqual([launcher.running(), output("otherport"), await accepts(other)], [[], "", false]);
 });
 
 test("a TorQ process on a loopback host listens on a bare port, where its stack reaches it by .z.h; its probe is its own address (#1742)", () => {
@@ -97,7 +121,7 @@ test("a launch definition starts its program with its script, -p and its argumen
     env: { KDBCODE: "code" },
   });
   // Its own program, cwd and -p; ~ is home.
-  const own = launchPlan(proc("a", 1, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
+  const own = launchPlan(proc("a", 6000, { command: "~/q/m64/q", cwd: "~/torq", script: "x.q", args: ["-p", "6000"] }), "q", undefined, "/home/me");
   assert.deepStrictEqual(own, { command: "/home/me/q/m64/q", args: ["/home/me/torq/x.q", "-p", "6000"], cwd: "/home/me/torq", env: {} });
   assert.deepStrictEqual(launchPlan(proc("b", 7, {}), "q", undefined, "/home/me"), { command: "q", args: ["-p", "127.0.0.1:7"], cwd: "/home/me", env: {} });
   // ~\ is home too, as Windows writes it (#1284), in the definition and in q-lint.qBinary.

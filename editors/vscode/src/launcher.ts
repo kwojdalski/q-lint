@@ -176,6 +176,14 @@ export function launchPlan(
     script = scriptPath(launch.script, home, cwd);
   }
   const args = launch.args ?? [];
+  // Its own -p is the only one q gets ('-p for two), so the port it names
+  // is where q listens: on another than the saved one, the process was
+  // reported, probed, tracked and connected to where it was not (#3105).
+  const own = args.includes("-p") ? (args[args.indexOf("-p") + 1] ?? "") : undefined;
+  const ownPort = /^(?:rp,)?(?:.*:)?-?(\d+)$/.exec(own ?? "")?.[1];
+  if (ownPort !== undefined && Number(ownPort) !== process.port) {
+    return { error: `${process.label}'s launch arguments set -p ${own}, not the port ${process.port} it is saved on, where it would be looked for: it was not started. Take -p out of the arguments, or save it on that port.` };
+  }
   const named = launch.command ?? qBinary;
   const command = /^~([\\/]|$)/.test(named) ? scriptPath(named, home, undefined)! : find(named);
   if (command === undefined) {
