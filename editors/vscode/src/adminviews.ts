@@ -29,7 +29,7 @@ import { readLive } from "./liveconfig";
 import type { Process } from "./processes";
 import type { QConnection } from "./qclient";
 import { statements } from "./statements";
-import { TIMERS, intervalCode, intervalProblem, readTimers, toggleCode } from "./timers";
+import { TIMERS, intervalCode, intervalProblem, lastRunText, periodText, readTimers, toggleCode } from "./timers";
 import { plainMessage } from "./history";
 
 /// A row of either view: what it shows, and what its commands act on.
@@ -231,8 +231,8 @@ async function readTimerNodes(connection: QConnection): Promise<{ nodes: AdminNo
       },
       ...state.jobs.map((job) => ({
         label: job.description !== "" ? job.description : job.func,
-        description: `${job.active ? "" : "off · "}every ${job.period} · next ${job.nextrun}`,
-        tooltip: [`TorQ timer ${job.id}${job.active ? "" : " (off)"}`, `runs ${job.func}`, `every ${job.period}`, `next ${job.nextrun}`, `last ${job.lastrun}`].join("\n"),
+        description: `${job.active ? "" : "off · "}${periodText(job.period)} · next ${job.nextrun}`,
+        tooltip: [`TorQ timer ${job.id}${job.active ? "" : " (off)"}`, `runs ${job.func}`, periodText(job.period), `next ${job.nextrun}`, `last ${lastRunText(job.lastrun)}`].join("\n"),
         icon: job.active ? "play-circle" : "debug-pause",
         contextValue: job.active ? "torqTimerOn" : "torqTimerOff",
         job: { id: job.id, active: job.active },
