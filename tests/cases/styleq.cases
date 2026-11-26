@@ -453,6 +453,12 @@ ratio:{[tape] tape}
 / @return gaps
 gaps:{[fromts] fromts}
 
+=== QS007 QS007 profile: styleq | nor does an anonymous lambda inside another function's body make it another's (#2729)
+/ @param t table
+/ @param c column
+f:{[tbl;col] tbl col}
+g:{[x] {[t;c] t c}[x;`a]}
+
 === clean profile: styleq | the columns of a table literal written across lines are not assignments
 trades:([]
   trade_price:1.1 1.2;

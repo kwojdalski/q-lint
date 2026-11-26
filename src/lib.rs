@@ -9402,11 +9402,19 @@ fn lint_rules(
         // whose documentation is elsewhere - here. Lambdas sharing a
         // parameter list are common (KX ml's many `[config]` functions), and
         // each documented in place is not what a stray run describes.
+        //
+        // And only one a name at the left margin is given, which is what a
+        // block can sit above: an anonymous `{[t;c] ...}` inside another
+        // function's body has names in common with half the stale blocks
+        // there are, and documents none of them (#2729).
         let (sets, repeating) = undocumented.get_or_insert_with(|| {
             let mut found = Undocumented::default();
             for (b, _) in code.match_indices('{') {
-                let other = signature(code, source, b);
                 let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
+                if !re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*[ \t]*::?[ \t]*$").is_match(&code[at..b]) {
+                    continue;
+                }
+                let other = signature(code, source, b);
                 let documented = source[..at]
                     .lines()
                     .rev()
