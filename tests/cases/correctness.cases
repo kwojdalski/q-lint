@@ -1159,11 +1159,18 @@ r2:1b -1
 r3:0x01 -1
 r4:(1) -1
 
+=== QB010 profile: general | a literal atom before a negative literal that ends a lambda, and a byte in parentheses (q 5: each is 'type, #2697)
+f:{[] 1b -1}
+g:{[] "a" -1}
+r:(0x01) -1
+
 === clean profile: general | a literal list before one indexes it (q 5: " ", 0b, 0N) (#500)
 r1:"ab" -1
 r2:10b -1
 r3:(1 2) -1
 r5:s:"x \"a\" -1"
+f:{[] "ab" -1}
+r6:(0x0102) -1
 
 === QB022 | an update or delete on a table value, its result discarded (q 5: t unchanged; #1139)
 t:([]a:1 2;b:3 4)

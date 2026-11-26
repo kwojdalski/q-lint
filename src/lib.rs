@@ -8309,8 +8309,10 @@ fn lint_rules(
     // A literal atom is applied the same way: q 5 `"a" -1`, `1b -1`,
     // `0x01 -1` and `(1) -1` are each 'type, while `"ab" -1`, `10b -1` and
     // `(1 2) -1` index (#500). Read where strings are kept, with the atom's
-    // quote a real opening one and the minus code.
-    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b)[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])]|$)"#)
+    // quote a real opening one and the minus code. Before a lambda's `}` as
+    // well, and a byte in parentheses: q 5 `{[] 1b -1}[]` and `(0x01) -1`
+    // are 'type (#2697).
+    for m in re!(r#"(?m)("(?:[^"\\]|\\[0-7]{3}|\\.)"|[01]b|0x[0-9a-fA-F]{1,2}|\([ \t]*(?:"(?:[^"\\]|\\[0-7]{3}|\\.)"|-?\d+(?:\.\d*)?(?:e[+-]?\d+)?[hijef]?|[01]b|0x[0-9a-fA-F]{1,2})[ \t]*\))[ \t]+(-\d[A-Za-z0-9.:]*)[ \t\r]*(?:[;\])}]|$)"#)
         .captures_iter(&v.comments)
     {
         let atom = m.get(1).unwrap();
