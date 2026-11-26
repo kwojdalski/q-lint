@@ -68,6 +68,12 @@ export const EVALUATE_READ_ONLY: Evaluate = { value: "{reval(value;x)}", system:
 /// failing that, a line says so (#2651). Applied to the size and the value.
 export const LAID_TEXT = "{[size;v]@[.Q.S[\"j\"$size;0j];v;{[v;e]@[{enlist -3!x};v;{enlist\"q-lint: the value could not be laid out: '\",x}]}[v]]}";
 
+/// What `RUN` answers when a statement failed (`r`, as `trapLines` leaves
+/// it): the error, its trace, and the `\d` the process is in, which is where
+/// the statements that ran left it - nothing puts it back before the query
+/// ends (#2913).
+export const FAILED = '`ok`error`trace`context!(0b;r 1;r 2;string system"d")';
+
 /// `RUN`, its statements evaluated under `reval` when `readOnly`.
 function runLambda(readOnly: boolean): string {
   return [
@@ -75,7 +81,7 @@ function runLambda(readOnly: boolean): string {
     ...trapLines(readOnly),
     " $[r 0;",
     `   \`ok\`type\`text!(1b;type r 1;${LAID_TEXT}[size;r 1]);`,
-    "   `ok`error`trace!(0b;r 1;r 2)]}",
+    `   ${FAILED}]}`,
   ].join("\n");
 }
 
@@ -95,7 +101,7 @@ export function refusedByReval(error: string): boolean {
 
 export type Answer =
   | { ok: true; type: number; text: string[] }
-  | { ok: false; error: string; trace: string };
+  | { ok: false; error: string; trace: string; context?: string };
 
 /// The answer `RUN` gave, read from what the IPC client made of it. Throws
 /// when it is not one: a process that redefines `.Q.S` or `value` could
@@ -113,6 +119,7 @@ export function readAnswer(raw: unknown): Answer {
     ok: false,
     error: typeof r.error === "string" ? r.error : String(r.error),
     trace: typeof r.trace === "string" ? r.trace : "",
+    ...(typeof r.context === "string" ? { context: r.context } : {}),
   };
 }
 

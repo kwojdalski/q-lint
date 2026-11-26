@@ -80,8 +80,12 @@ export function registerRepl(
         panel.update(id, { ok: false, lines: ["Not run."] });
         return false;
       }
-      if (ran.answer.ok) {
-        namespaces.set(ran.process, contextAfter(script, namespace));
+      // A failed entry leaves the process where the statements that ran
+      // got to, which its answer names: a `\d` before the error holds, as
+      // at a console (#2913).
+      const left = ran.answer.ok ? contextAfter(script, namespace) : ran.answer.context;
+      if (left !== undefined) {
+        namespaces.set(ran.process, left);
       }
       panel.update(id, { process: ran.process, millis: ran.millis, ok: ran.answer.ok, lines: answerLines(ran) });
       return true;

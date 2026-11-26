@@ -146,6 +146,27 @@ test("a cell runs in the context a system[\"d .ns\"], or one beside other code, 
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
 });
 
+// q's console, given the same lines, answers (4;`undefined): the \d ran.
+test("the REPL keeps the \\d of an entry whose later statement failed, as q's console does (#2913)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { repl } = await setUp(t, q.port);
+  for (const unlimited of [false, true]) {
+    const ns = unlimited ? ".zz5" : ".zz9";
+    assert.strictEqual(await repl.enter(`\\d ${ns}\nbad:1+\`a`), "ran");
+    assert.strictEqual(repl.entries().at(-1).ok, false);
+    assert.strictEqual(await repl.enter("dd:4"), "ran");
+    // One that fails with no \d of its own stays where it was, and one that
+    // fails before its \d does not take it.
+    assert.strictEqual(await repl.enter("bad:1+`a\n\\d .zz6"), "ran");
+    assert.strictEqual(await repl.enter("ee:5"), "ran");
+    assert.strictEqual(await repl.enter("\\d ."), "ran");
+    assert.strictEqual(await repl.enter(`(${ns}.dd;${ns}.ee;@[value;\`dd;\`undefined];@[value;\`.zz6.ee;\`undefined])`), "ran");
+    assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "5", "`undefined", "`undefined"]);
+    await stub.commands.get("q-lint.toggleUnlimitedQuery")();
+  }
+});
+
 test("Run Query Again runs a REPL entry in the \\d it ran in, not in the root (#2915)", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());
