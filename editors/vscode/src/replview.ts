@@ -65,7 +65,7 @@ export function registerRepl(
       const kept = pushHistory(past(), code);
       await context.globalState.update(HISTORY_KEY, kept);
       // The input is cleared for a line it sent, not under a run from the editor (#1922).
-      panel.post({ type: uri === undefined ? "accepted" : "history", history: kept });
+      panel.post(uri === undefined ? { type: "accepted", history: kept, code } : { type: "history", history: kept });
       const id = panel.add({ code });
       // What was typed is made a script; code from the editor is one
       // already, which replScript would misread (#2284).

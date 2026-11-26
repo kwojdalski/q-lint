@@ -97,6 +97,14 @@ test("the REPL's keys: Enter and Tab ask the extension, Up and Down walk the his
   // Accepted: cleared, and the history given.
   page.send({ type: "accepted", history: ["f:{\n}", "newest", "older"] });
   assert.strictEqual(input.value, "");
+  // #2498: typed after Enter, before the answer: kept.
+  input.value = "y:2";
+  page.send({ type: "accepted", history: ["x:1", "f:{\n}", "newest", "older"], code: "x:1" });
+  assert.strictEqual(input.value, "y:2");
+  input.value = "x:1";
+  page.send({ type: "accepted", history: ["x:1", "f:{\n}", "newest", "older"], code: "x:1" });
+  assert.strictEqual(input.value, "");
+  page.send({ type: "accepted", history: ["f:{\n}", "newest", "older"] });
   assert.ok(page.key("ArrowUp"));
   assert.strictEqual(input.value, "f:{\n}");
   input.selectionStart = input.selectionEnd = 0;
