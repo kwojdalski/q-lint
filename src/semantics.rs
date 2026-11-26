@@ -2442,6 +2442,50 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
         .collect()
 }
 
+/// Each literal handle 0 given something to run, with where what it is
+/// given starts: `0 "f:{x+y}"`, `0("..")`, `0["..]`, `0@".."`, and `0 s` for
+/// a name, and `(0)`, `(neg 0)` and `(-0)` the same. Handle 0 is the process itself, and a string sent to it is
+/// evaluated as `value` evaluates it: KDB-X 5 runs `f:{x}`, `0 "f:{x+y}"`,
+/// `f[1;2]` to 3 (#3011). `view` is the code view, where a `0` in a string
+/// or a comment is blank; a `0` in a longer token (`10`, `0.5`, `a0`, `0:`)
+/// or closing a vector literal (`1 0 "ab"`, which indexes nothing and runs
+/// nothing) is no handle.
+fn handle_zero(view: &str, raw: &str) -> Vec<(usize, usize)> {
+    let token = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'`');
+    re!(r"0[ij]?")
+        .find_iter(view)
+        .filter(|m| !view[..m.start()].bytes().next_back().is_some_and(token))
+        .filter(|m| {
+            let before = &view[..m.start()];
+            let items = before.trim_end_matches([' ', '\t']);
+            let start = items.bytes().rposition(|b| !token(b)).map_or(0, |p| p + 1);
+            items.len() == before.len() || !items[start..].starts_with(|c: char| c.is_ascii_digit())
+        })
+        .filter_map(|m| {
+            // In brackets of its own, negated or not: `(neg 0) "a:1"`.
+            // Read back from the `0` by hand: a pattern anchored at the end
+            // of all the text before it starts from the top for each `0`.
+            let blanks = [' ', '\t'];
+            let open = view[..m.start()].trim_end_matches(blanks);
+            let open = open
+                .strip_suffix("neg")
+                .or(open.strip_suffix('-'))
+                .unwrap_or(open)
+                .trim_end_matches(blanks);
+            let end = open
+                .ends_with('(')
+                .then(|| re!(r"^[ \t]*\)").find(&view[m.end()..]))
+                .flatten()
+                .map_or(m.end(), |close| m.end() + close.end());
+            let given = re!(r#"^(?:[ \t]*[\[(@][ \t]*|[ \t]+)|^"#).find(&raw[end..])?;
+            let at = end + given.end();
+            raw[at..]
+                .starts_with(|c: char| c == '"' || c == '.' || c.is_ascii_alphabetic())
+                .then_some((m.start(), at))
+        })
+        .collect()
+}
+
 /// The places a name is reached by a value computed at run time, which no
 /// amount of reading resolves: `value "..."`, `get` of anything but a
 /// literal, a name built with `` ` sv ``, `set` into a computed name, a
@@ -2480,6 +2524,13 @@ fn dynamic(
         if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(after) {
             let loads = re!(r#"^[ \t]*(?:[\[(][ \t]*)?"\\\\l[ \t]"#).is_match(after);
             push(m.start(), if loads { "load" } else { "value" });
+        }
+    }
+    // Handle 0 runs a string as `value` does (#3011).
+    for (at, given) in handle_zero(view, raw) {
+        if raw[given..].starts_with('"') {
+            let loads = re!(r#"^"\\\\l[ \t]"#).is_match(&raw[given..]);
+            push(at, if loads { "load" } else { "value" });
         }
     }
     // `eval` and `reval` run a parse tree, whose names reading cannot see:
@@ -2653,6 +2704,20 @@ pub(crate) fn unnamed_writes<'c>(
             .filter(|m| boundary(comments, m.get(0).unwrap().start()))
             .map(|m| (m.get(1).unwrap().as_str(), m.get(2).unwrap().as_str()))
             .collect();
+    // Handle 0 is the process itself, and what it is sent it evaluates: a
+    // string, written there or held in a name the file binds to one
+    // (#3011).
+    found.extend(
+        handle_zero(code, raw)
+            .into_iter()
+            .filter(|&(_, given)| {
+                raw[given..].starts_with('"')
+                    || re!(r"^\.?[A-Za-z][A-Za-z0-9_.]*")
+                        .find(&raw[given..])
+                        .is_some_and(|n| strings.contains_key(n.as_str()))
+            })
+            .map(|(at, _)| (at, Unnamed::Evaluation)),
+    );
     for m in re!(r"\b(?:eval|value|get|system)\b").find_iter(code) {
         if !boundary(code, m.start()) {
             continue;

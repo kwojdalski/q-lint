@@ -343,6 +343,59 @@ fn a_k_line_stands_down_only_the_names_it_may_write() {
 }
 
 #[test]
+fn a_string_sent_to_handle_zero_is_evaluated() {
+    // #3011. Handle 0 is the process itself: KDB-X 5 runs `f:{x}`,
+    // `0 "f:{x+y}"`, `f[1;2]` to 3, and QA012 called it an error.
+    let rank = |evaluated: &str| {
+        let source = format!("f:{{x}}\n{evaluated}\nr:f[1;2]\n");
+        lint(&source, "t.q", Profile::Uqf)
+            .iter()
+            .any(|f| f.code == "QA012")
+    };
+    for evaluated in [
+        "0 \"f:{x+y}\"",
+        "0(\"f:{x+y}\")",
+        "0[\"f:{x+y}\"]",
+        "0@\"f:{x+y}\"",
+        "0i \"f:{x+y}\"",
+        "-0 \"f:{x+y}\"",
+        "(neg 0) \"f:{x+y}\"",
+        "a:count 0 \"f:{x+y}\"",
+        "s:\"f:{x+y}\"\n0 s",
+    ] {
+        assert!(!rank(evaluated), "{evaluated}");
+        let source = format!("{evaluated}\n");
+        let kinds: Vec<_> = q_lint_rs::references(&source, false)
+            .dynamic
+            .iter()
+            .map(|d| d.kind)
+            .collect();
+        assert!(
+            evaluated.contains("0 s") || kinds == ["value"],
+            "{evaluated}: {kinds:?}"
+        );
+    }
+    // No handle: a longer number, a list, a file verb, a string, a comment.
+    for other in [
+        "a:10 \"ab\"",
+        "a:1 0 \"ab\"",
+        "a:(0;\"f:{x+y}\")",
+        "a:x0 \"ab\"",
+        "h:0 0:\"ab\"",
+        "a:\"0 \\\"f:{x+y}\\\"\"",
+        "/ 0 \"f:{x+y}\"",
+    ] {
+        assert!(rank(other), "{other}");
+        assert!(
+            q_lint_rs::references(&format!("{other}\n"), false)
+                .dynamic
+                .is_empty(),
+            "{other}"
+        );
+    }
+}
+
+#[test]
 fn a_block_comment_folds_into_the_foreign_statement_an_indented_line_continues() {
     // #3010. KDB-X 5 hands `t)e`, `/`, `  f`, `\`, `  g` to `.t.e` as one
     // statement, "e\n/\n/  f\n/\n  g", and loads `k)f:{[a;b] a+`, `/`,
