@@ -1339,6 +1339,10 @@ function exactOf(q: QValue, depth = 0): unknown[] | false {
   if (cast !== undefined) {
     return ["c", cast];
   }
+  // A function `-3!` writes as q does not read back, as its text (#3084).
+  if (q.kind === "func" && unreadFunction(q)) {
+    return ["u", oneLine(q)];
+  }
   if (q.kind === "vector" && (q.t === 9 || q.t === 8) && q.v.length <= 200) {
     return [q.t === 9 ? "F" : "E", q.v];
   }
@@ -1357,6 +1361,20 @@ function exactOf(q: QValue, depth = 0): unknown[] | false {
     return dict === false ? false : ["t", dict];
   }
   return false;
+}
+
+/// Whether `-3!` writes the function `q` as q does not read back: one
+/// defined in q, `k){...}`, a composition, which loses its colons, or a
+/// projection or a derived function of either, as `GRID` tells them
+/// (#3084).
+function unreadFunction(q: QValue): boolean {
+  if (q.kind === "list") {
+    return q.v.some(unreadFunction);
+  }
+  if (q.kind !== "func") {
+    return false;
+  }
+  return q.t === 105 || (q.t === 100 ? (q.text ?? "").startsWith("k)") : (q.parts ?? []).some(unreadFunction));
 }
 
 /// Timestamps KDB-X reads a literal of: 1709.01.01 to 2290.12.31, in

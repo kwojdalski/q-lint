@@ -353,6 +353,18 @@ test("a symbol holding what ends one in -3!'s text copies through `$ from its by
   );
 });
 
+test("a function q writes as it does not read back is counted in the direct grid's copy, as in the wrapped grid's (#3084)", () => {
+  const { gridOfQ } = require("../out/qformat.js");
+  const { tableLiteral } = require("../out/qliteral.js");
+  const unread = (hex) => tableLiteral(gridOfQ(decode(Buffer.from(hex, "hex")), 100)).unread;
+  // KDB-X: -8!([] a:(til;1)), -8!([] a:(neg abs@;1)), -8!([] a:(sum;{x};+[1];(til;2)))
+  assert.strictEqual(unread("01000000460000006200630b000100000061000000010000000000020000006471000a00150000006b297b245b303e40783b21783b2760747970655d7df90100000000000000"), 1);
+  assert.strictEqual(unread("01000000380000006200630b000100000061000000010000000000020000006902000000650268020000006612651ff90100000000000000"), 1);
+  assert.strictEqual(unread("01000000690000006200630b00010000006100000001000000000004000000651964000a00030000007b787d68020000006601f901000000000000000000020000006471000a00150000006b297b245b303e40783b21783b2760747970655d7df90200000000000000"), 1);
+  // A table of none.
+  assert.strictEqual(unread("010000002d0000006200630b00010000006100000001000000000002000000f5613b6200f90100000000000000"), 0);
+});
+
 test("a general column's time q cannot read back as -3! writes it copies as a cast from its count, as the wrapped grid does (#2579)", () => {
   // KDB-X: -8! of each table, and the literal q reads back as it (~).
   const cases = [

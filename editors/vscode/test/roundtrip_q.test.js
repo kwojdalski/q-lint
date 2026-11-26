@@ -194,6 +194,28 @@ test("a result exported is read back as the value it is, on a real q", { skip },
     assert.strictEqual(json[0].f, Math.acos(-1));
   });
 
+  await t.test("a function q writes as it does not read back - one defined in q, a composition - is counted, and Copy as q says so (#3084)", async () => {
+    const note = /cell\(s\) hold a function q writes as it does not read back/;
+    for (const [code, unread] of [
+      ["([] a:(til;1))", 1],
+      ["([] a:(neg abs@;1))", 1],
+      ["([] a:(til each;xbar[5];('[til;count]);1))", 3],
+      ["([] a:((til;1);`a`b!(neg abs@;2);3))", 2],
+      // What q reads back is not counted.
+      ["([] a:(sum;{x};+[1];neg;+/;1))", 0],
+      ['([] a:("k){x}";`k;{[k](k){x}};1))', 0],
+    ]) {
+      const g = await grid(code);
+      assert.strictEqual(tableLiteral(g).unread, unread, code);
+      const notes = exportResult("q", g, -1).notes.join();
+      assert.strictEqual(note.test(notes), unread > 0, `${code}: ${notes}`);
+      if (unread === 0) {
+        const same = await connection.query(statements(`(${code})~${tableLiteral(g).code}`), SIZE);
+        assert.deepStrictEqual(same.text, ["1b"], code);
+      }
+    }
+  });
+
   await t.test("a symbol of bytes that are no UTF-8 exports as its characters, not U+FFFD (#2083)", async () => {
     const json = JSON.parse(exportResult("json", await grid('([k:`$("caf\\351";"ok")] s:`$("\\377x";"caf\\303\\251"))'), -1).data.toString("utf8"));
     assert.deepStrictEqual(json, [{ k: "café", s: "\u00ffx" }, { k: "ok", s: "café" }]);

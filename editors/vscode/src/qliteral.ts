@@ -248,11 +248,19 @@ export function plainName(name: string): boolean {
 /// 0001 to 9999.
 const READS_YEAR = /^(?!0000)\d{4}\./;
 
+/// A cell's literal. `cut`: the text was cut at 200 characters or at `\c`,
+/// so the literal is not the value. `unread`: it holds a function `-3!`
+/// writes as q does not read back - `k){...}` for one defined in q, a
+/// composition without its colons - so q does not read the literal (#3084).
+export interface Literal {
+  literal: string;
+  cut: boolean;
+  unread?: boolean;
+}
+
 /// One cell's literal. `text` is q's text of it, as `GRID` sent it;
 /// `raw` its number, when `GRID` sent one (undefined when it did not).
-/// `cut`: the text was cut at 200 characters or at `\c`, so the literal is
-/// not the value.
-export function atomLiteral(type: number, text: string, raw: unknown): { literal: string; cut: boolean } {
+export function atomLiteral(type: number, text: string, raw: unknown): Literal {
   const ok = (literal: string) => ({ literal, cut: false });
   if (raw === null && NULLS[type] !== undefined) {
     return ok(NULLS[type]);
@@ -380,7 +388,7 @@ function floatText(x: unknown, real: boolean): string {
 /// each item its own such pair or, holding none, its `-3!` text,
 /// `("d";(k;v))` for a dictionary and `("t";d)` for a table. Undefined
 /// for anything else.
-export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } | undefined {
+export function exactLiteral(raw: unknown[]): Literal | undefined {
   const [tag, v] = raw;
   if (raw.length !== 2) {
     return undefined;
@@ -427,8 +435,14 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
     }
     return { literal: `"${letter}"$${items.length === 1 ? "enlist " : ""}${items.join(" ")}${suffix}`, cut: false };
   }
+  // A function q does not read back as -3! writes it: its text, said to
+  // be so (#3084).
+  if (tag === "u" && typeof v === "string") {
+    return { literal: v, cut: v.endsWith(".."), unread: true };
+  }
   if (tag === "l" && Array.isArray(v) && v.length > 0) {
     let cut = false;
+    let unread = false;
     const items: string[] = [];
     for (const x of v) {
       const item = Array.isArray(x) ? exactLiteral(x) : typeof x === "string" ? atomLiteral(0, x, false) : undefined;
@@ -436,9 +450,10 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
         return undefined;
       }
       cut ||= item.cut;
+      unread ||= item.unread === true;
       items.push(item.literal);
     }
-    return { literal: items.length === 1 ? lone(items[0]) : `(${items.join(";")})`, cut };
+    return { literal: items.length === 1 ? lone(items[0]) : `(${items.join(";")})`, cut, ...(unread ? { unread } : {}) };
   }
   // A dictionary, its keys in parentheses unless they are one already, and
   // a table as its dictionary flipped (#1746).
@@ -447,11 +462,12 @@ export function exactLiteral(raw: unknown[]): { literal: string; cut: boolean } 
     if (k === undefined || w === undefined) {
       return undefined;
     }
-    return { literal: `${/^\(.*\)$/.test(k.literal) ? k.literal : `(${k.literal})`}!${w.literal}`, cut: k.cut || w.cut };
+    const unread = k.unread === true || w.unread === true;
+    return { literal: `${/^\(.*\)$/.test(k.literal) ? k.literal : `(${k.literal})`}!${w.literal}`, cut: k.cut || w.cut, ...(unread ? { unread } : {}) };
   }
   if (tag === "t" && Array.isArray(v)) {
     const d = exactLiteral(v);
-    return d === undefined ? undefined : { literal: `flip ${d.literal}`, cut: d.cut };
+    return d === undefined ? undefined : { ...d, literal: `flip ${d.literal}` };
   }
   return undefined;
 }
@@ -489,6 +505,8 @@ export interface QTable {
   total: number;
   /// Cells cut at 200 characters or at `\c`, whose literal is not their value.
   cut: number;
+  /// Cells holding a function q does not read back as `-3!` writes it.
+  unread: number;
 }
 
 /// The expression that rebuilds the grid's `rows` (indices, in the order
@@ -507,6 +525,7 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
   const held = payload.cells[0]?.length ?? 0;
   const order = rows ?? [...Array(held).keys()];
   let cut = 0;
+  let unread = 0;
   const columns = payload.names.map((_, i) => {
     const type = payload.types[i];
     const cells = payload.cells[i];
@@ -514,6 +533,7 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
     const items = order.map((r) => {
       const atom = atomLiteral(type, cells[r] ?? "", raw === undefined ? undefined : raw[r]);
       cut += atom.cut ? 1 : 0;
+      unread += atom.unread === true ? 1 : 0;
       return atom.literal;
     });
     return columnLiteral(type, items);
@@ -549,7 +569,7 @@ export function tableParts(payload: GridPayload, rows?: number[]): Omit<QTable, 
       parts.push(")");
     }
   }
-  return { parts, rows: order.length, total: payload.count, cut };
+  return { parts, rows: order.length, total: payload.count, cut, unread };
 }
 
 /// The cells of `rows` cut at 200 characters or at `\c`, whose text is not

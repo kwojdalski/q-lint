@@ -765,3 +765,18 @@ test("an export is written in parts: past V8's longest string it is still the wh
   assert.match(toHtml({ ...payload, cells: [[], [], []], raw: [[], [], []] }, 2), /<tbody>\n\n<\/tbody>\n<\/table><\/body><\/html>\n$/);
   assert.strictEqual(toJson({ ...payload, cells: [[], [], []], raw: [[], [], []] }), "[]\n");
 });
+
+test("a cell of a function q writes as it does not read back is counted, and Copy as q says so (#3084)", () => {
+  // As GRID sends one: ("u";its text), in a list too.
+  const k = "k){$[0>@x;!x;'`type]}";
+  const p = { count: 3, keys: 0, names: ["a"], types: [0], cells: [[k, `(${k};1)`, "{x}"]], raw: [[["u", k], ["l", [["u", k], "1"]], false]], rank: [[]] };
+  assert.strictEqual(atomLiteral(0, k, ["u", k]).unread, true);
+  assert.strictEqual(atomLiteral(0, "{x}", false).unread, undefined);
+  assert.strictEqual(tableLiteral(p).unread, 2);
+  assert.strictEqual(tableLiteral(p, [2]).unread, 0);
+  const note = "2 cell(s) hold a function q writes as it does not read back (one defined in q, or a composition)";
+  assert.ok(exportResult("q", p, -1).notes.includes(note));
+  assert.deepStrictEqual(exportResult("q", p, -1, [2]).notes, []);
+  // The other formats write the cell's text, which is all they say it is.
+  assert.deepStrictEqual(exportResult("json", p, -1).notes, []);
+});

@@ -36,7 +36,11 @@
 //          float), and `("l";v)` for a general list of at most 200, each
 //          item `("f";x)`, `("e";x)`, such a pair, or its `-3!` text
 //          (#1502); `("s";b)` and `("S";bs)` for a symbol or symbols
-//          of a byte past ASCII, their bytes; `("c";(t;n))` for a minute, second, time, datetime
+//          of a byte past ASCII, or of a character that ends a symbol in
+//          `-3!`'s text (#3076), their bytes; `("u";text)` for a function
+//          `-3!` writes as q does not read back - one defined in q, a
+//          composition, a projection or a derived function of either -
+//          its text (#3084); `("c";(t;n))` for a minute, second, time, datetime
 //          or timestamp atom or vector of type `t` that `-3!` writes as q
 //          cannot read back - past 99 hours (`**`), finer than a
 //          millisecond, outside 1709-2290 - `n` its count (#2082); `()`
@@ -108,6 +112,7 @@ const COLUMN_LINES = [
   "              200<count x;0b;",
   "              -11h=t;$[any(s in\"`;)]}!$#\")|127<\"i\"$\"x\"$s:string x;(\"s\";\"x\"$s);0b];",
   "              11h=t;$[any(r in\"`;)]}!$#\")|127<\"i\"$\"x\"$r:raze s:string x;(\"S\";\"x\"$s);0b];",
+  "              t within 100 111h;$[{$[100h=t:type x;\"k)\"~2#-3!x;105h=t;1b;104h=t;any .z.s each value x;t within 106 111h;.z.s value x;0h=t;any .z.s each x;0b]}x;(\"u\";-3!x);0b];",
   "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
   "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
   "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]} each c;",
