@@ -308,6 +308,20 @@ u:{value \"1\"}
 }
 
 #[test]
+fn a_path_joined_from_a_list_written_out_is_not_dynamic() {
+    // KDB-X: `` ` sv (`:dir;`file) `` is `` `:dir/file ``, a path as
+    // `` ` sv `:dir,`file `` is (#2816). A name joined so is still one.
+    let source = "\
+a:` sv (`:dir;`file)
+b:` sv ( `:dir;`file)
+c:` sv ((`:dir);`file)
+d:` sv (`ns;`file)
+";
+    let g = graph(&[("paths.q", source)], false);
+    assert_eq!(kinds(&g, "paths.q"), [(4, "sv")]);
+}
+
+#[test]
 fn value_of_a_name_holding_a_symbol_is_dynamic_like_get() {
     // #142. q 5 (KDB-X, .z.K 5, .z.k 2026.07.23): `get~value` is 1b - both
     // are `.:` - and after `x:42; nm:`x`, `value nm` and `get nm` are both

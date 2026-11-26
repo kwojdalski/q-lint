@@ -2175,9 +2175,12 @@ fn dynamic(
             push(m.start(), "get");
         }
     }
-    // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path.
+    // `` ` sv `` joins parts into a name - or, before `` `: ``, into a path,
+    // in a list written out too: KDB-X's `` ` sv (`:dir;`file) `` is
+    // `` `:dir/file `` (#2816).
     for m in re!(r"`[ \t]+sv\b").find_iter(view) {
-        if !next(m.end()).starts_with("`:") {
+        let parts = next(m.end()).trim_start_matches(['(', ' ', '\t']);
+        if !parts.starts_with("`:") {
             push(m.start(), "sv");
         }
     }
