@@ -2028,9 +2028,9 @@ fn atomic_each(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     }
 }
 
-/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while` copies
-/// all of `r` on every pass, so the loop takes time quadratic in its count.
-/// Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
+/// QV003. `r:r,x` or `r:raze(r;x)` in the body of a `do` or `while`, or in a
+/// `while`'s condition, copies all of `r` on every pass, so the loop takes
+/// time quadratic in its count. Measured in KDB-X, 10, 20 and 40 thousand passes of `r:r,til 10`: 52,
 /// 205 and 818 ms, against 2.5, 5.5 and 11 ms for `r,:til 10`, which
 /// appends in place, and for `raze f each`.
 ///
@@ -2050,13 +2050,20 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             continue;
         };
         let body = &code[open + 1..close - 1];
-        // The count or condition comes first, then the body.
+        // The count or condition comes first, then the body. A `do`'s count
+        // runs once; a `while`'s condition runs on every pass, as its body
+        // does, and `while[n>count r:r,i; ...]` copies `r` on each (#2944).
         let Some(semi) = first_at_depth_zero(body, b';') else {
             continue;
         };
-        let start = open + 1 + semi + 1;
-        // Names the body has given a value not joined from themselves.
-        let mut fresh = std::collections::HashSet::new();
+        let in_body = open + 1 + semi + 1;
+        let start = if l.as_str().starts_with("while") {
+            open + 1
+        } else {
+            in_body
+        };
+        // Each assignment, and whether it joins its name to more.
+        let mut assigned = vec![];
         let mut lambdas = LambdaDepth::new(code, start);
         for a in
             re!(r"(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]*:[ \t]*").captures_iter(&code[start..close - 1])
@@ -2066,23 +2073,41 @@ fn append_in_loop(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) 
             if !crate::boundary(code, at) || strings.at(at) || lambdas.inside(at) {
                 continue;
             }
-            // Directly after a `:` is a compound or nested assignment.
-            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
-            if !joins_itself(rhs, name.as_str()) {
-                fresh.insert(name.as_str());
+            // In a query's phrase `p:p,0` names a column, and its `,` starts
+            // the next one: q 5 gives `select p:p,0 by sym from t` the
+            // columns `p` and `x`, joined to nothing (#2925).
+            if crate::query_clause(code, at).is_some() {
                 continue;
             }
-            if !fresh.contains(name.as_str()) && reported.insert(at) {
+            // Directly after a `:` is a compound or nested assignment.
+            let rhs = &code[start + a.get(0).unwrap().end()..close - 1];
+            assigned.push((at, name.as_str(), joins_itself(rhs, name.as_str())));
+        }
+        // Names the loop has given a value not joined from themselves. The
+        // condition comes after the body on every pass but the first, so
+        // what the body gives a fresh value is fresh there too.
+        let mut fresh = std::collections::HashSet::new();
+        let after_body: std::collections::HashSet<&str> = assigned
+            .iter()
+            .filter(|(at, _, joins)| *at >= in_body && !joins)
+            .map(|(_, name, _)| *name)
+            .collect();
+        for (at, name, joins) in assigned {
+            if !joins {
+                fresh.insert(name);
+                continue;
+            }
+            let reset = fresh.contains(name) || (at < in_body && after_body.contains(name));
+            if !reset && reported.insert(at) {
                 out.push(Finding::at(
                     path,
                     source,
                     at,
                     "QV003",
                     format!(
-                        "Assigning `{0}` from `{0}` joined to more copies all of `{0}` on every \
-                         pass of the loop, so it takes time quadratic in its count: `{0},:` \
-                         appends in place",
-                        name.as_str()
+                        "Assigning `{name}` from `{name}` joined to more copies all of `{name}` \
+                         on every pass of the loop, so it takes time quadratic in its count: \
+                         `{name},:` appends in place"
                     ),
                 ));
             }

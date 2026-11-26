@@ -101,6 +101,22 @@ f:{r:(); do[n; r:r,til 10]; r}
 === QV003 | raze of itself in a while loop
 f:{r:(); i:0; while[i<n; r:raze(r;g i); i+:1]; r}
 
+=== QV003 | in a while's condition, which runs on every pass as the body does (KDB-X: 20k and 40k passes 36 and 106 ms; with ,: 5 ms, #2944)
+h:{[n] r:(); i:0; while[n>count r:r,i; i+:1]; r}
+
+=== clean | a do's count runs once, and a condition that gives a fresh value leaves the body joining to that
+f:{[n] r:(); do[count r:r,n; r,:1]; r}
+g:{[x] while[count r:f x; r:r,1; x-:1]; r}
+
+=== clean | in a query's phrase `p:p,0` is the column `p` and then the column `0`, joined to nothing (q 5: columns p and x, #2925)
+f:{[n;t] do[n; t:select p:p,0 by sym from t]; t}
+g:{[n;t] r:(); do[n; r:exec p:p,0 from t]; r}
+h:{[n;t] do[n; t:update p:p,0 from t where s:s,1]; t}
+
+=== QV003 | a join in parentheses in a query, or to a query, is still a join
+f:{[n;t] r:(); do[n; t:select from t where p in (r:r,n)]; r}
+g:{[n;t] r:(); do[n; r:r,select from t]; r}
+
 === clean | appending in place, and raze each
 f:{r:(); do[n; r,:til 10]; r}
 g:{raze h each til n}
