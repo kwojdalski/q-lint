@@ -48,7 +48,7 @@ import {
 import { open } from "node:fs/promises";
 import { isProduction } from "./agent";
 import { coverageByFile, coveragePlan, coverageSummary, definedNames, neverCounted, uncountedNote, type CoveragePlan, type SourceFile } from "./coverage";
-import { DRIFT, DRIFT_BATCH, readDrift, type ProcessState } from "./definitions";
+import { DRIFT, DRIFT_BATCH, modulePathOf, readDrift, type ProcessState } from "./definitions";
 import { editorFeatureOff, editorFeatureOn, type EditorFeature, type Server } from "./editorfeatures";
 import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRestored, restoreApart, restoreExpression, type Restored } from "./instrument";
 import type { Live } from "./live";
@@ -730,7 +730,8 @@ class QTests {
     for (const uri of found) {
       try {
         const open = dirty.get(uri.toString());
-        out.push({ uri: uri.toString(), text: open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8") });
+        const text = open !== undefined ? open.getText() : Buffer.from(await workspace.fs.readFile(uri)).toString("utf8");
+        out.push({ uri: uri.toString(), text, path: modulePathOf(uri.fsPath, workspace.asRelativePath?.(uri, false)) });
       } catch {
         // Gone since it was listed.
       }

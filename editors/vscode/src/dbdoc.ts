@@ -123,8 +123,9 @@ export function readDoc(raw: unknown): DbDoc {
 
 /// The comment block written right above each function a q file defines,
 /// its comment characters taken off: `/// text`, `/ text`, and a `/` ...
-/// `\` block. By name, as `definitions` names them.
-export function qdocs(source: string): Map<string, string> {
+/// `\` block. By name, as `definitions` names them: a KDB-X module's in the
+/// context `path`, the file's in its workspace, gives it (#2917).
+export function qdocs(source: string, path?: string): Map<string, string> {
   const lines = source.split(/\r?\n/);
   // Each line's block comment depth before it: block comments nest (#1817).
   // A `/` or `\` opens or closes one only at the margin: indented, as in a
@@ -133,7 +134,7 @@ export function qdocs(source: string): Map<string, string> {
   const depth: number[] = [];
   lines.reduce((d, line, i) => ((depth[i] = d), blockDepth(d, trimBlanks(line))), 0);
   const out = new Map<string, string>();
-  for (const def of definitions(source)) {
+  for (const def of definitions(source, path)) {
     const above: string[] = [];
     for (let i = def.line - 1; i >= 0; i--) {
       const line = lines[i].trim();
@@ -264,11 +265,11 @@ export function docHtml(doc: DbDoc, process: string, at: string, docs: Map<strin
   return out.join("\n");
 }
 
-/// The qdoc of every function in `files`, each read by `read`, the first
-/// file to document a name winning. A file that cannot be read is skipped,
+/// The qdoc of every function in `files`, each read by `read` and named as
+/// in a file at `path` (`qdocs`), the first file to document a name winning. A file that cannot be read is skipped,
 /// and only it: one unreadable file ended the reading, and every file after
 /// it went undocumented (#1542).
-export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>): Promise<Map<string, string>> {
+export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => Promise<string>, path?: (file: F) => string): Promise<Map<string, string>> {
   const docs = new Map<string, string>();
   for (const file of files) {
     let text: string;
@@ -277,7 +278,7 @@ export async function workspaceDocs<F>(files: readonly F[], read: (file: F) => P
     } catch {
       continue;
     }
-    for (const [name, doc] of qdocs(text)) if (!docs.has(name)) docs.set(name, doc);
+    for (const [name, doc] of qdocs(text, path?.(file))) if (!docs.has(name)) docs.set(name, doc);
   }
   return docs;
 }

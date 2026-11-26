@@ -449,6 +449,24 @@ test("export: block comments nest as the cell nests them, so the script runs wha
   assert.deepStrictEqual(statements(script), ["b:2", "c:3", "d:4"]);
 });
 
+test("export: a / and a no-break space or a form feed is a line comment, as q reads it, and no \\ is added that would end the script (#2906)", () => {
+  const { statements } = require("../out/statements.js");
+  for (const blank of ["\u00a0", "\f"]) {
+    const cells = [
+      { kind: "code", source: `a:1\n/${blank}\nb:2` },
+      { kind: "code", source: "c:3" },
+    ];
+    const script = exportScript(cells);
+    assert.strictEqual(script, `a:1\n/${blank}\nb:2\n\nc:3\n`);
+    assert.deepStrictEqual(statements(script), ["a:1", "b:2", "c:3"]);
+  }
+  // A lone `\` and such a character is no end of the cell either: q runs
+  // it as a system command, and the script keeps it as it is.
+  assert.strictEqual(exportScript([{ kind: "code", source: "a:1\n\\\u00a0\nb:2" }]), "a:1\n\\\u00a0\nb:2\n");
+  // In a markdown cell it closes nothing, and needs no indent.
+  assert.strictEqual(exportScript([{ kind: "markdown", source: "x\n\\\u00a0" }]), "/\nx\n\\\u00a0\n\\\n");
+});
+
 test("fields this extension does not know are kept on an output, an item and a run too", () => {
   // Saved by a later q-lint, or another tool: the README promises a save of
   // what was opened writes the same file.

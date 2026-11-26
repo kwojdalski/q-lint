@@ -3,11 +3,13 @@
 // reload on save (#934). Free of any `vscode` import, so node tests it;
 // `driftview.ts` is the VS Code around it.
 //
-// A definition is a top-level statement `name:{...}` whose lambda is the
-// whole of its right-hand side: `f:{x}[1]` (a projection) or `f:g` is not
-// one. Statements are cut as `statements.ts` cuts them - as q loads a
-// script - and `\d .ns` lines, or `system "d .ns"`, move the context, so
-// `f:{}` after `\d .ns` defines `.ns.f`. The lambda's text is the file's,
+// A definition is a top-level `name:{...}` whose lambda is the whole of its
+// right-hand side: `f:{x}[1]` (a projection) or `f:g` is not one, nor is
+// `f::{x}`, which at the top level makes a view. Statements are cut as
+// `statements.ts` cuts them - as q loads a script - and each expression `;`
+// separates in one is read alone: `h:{x};k:{y}` defines both (#2921).
+// `\d .ns` lines, or `system "d .ns"`, move the context, so `f:{}` after
+// `\d .ns` defines `.ns.f`. The lambda's text is the file's,
 // `{` to its `}`, blank and comment lines inside it kept, as q keeps them in
 // `last value f`.
 //
@@ -27,7 +29,7 @@
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
 import { ORIGINAL } from "./instrument";
-import { contextSwitch, scriptCode, statementSpans } from "./statements";
+import { contextLeft, scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
   check: "q-lint.checkDrift",
@@ -43,7 +45,9 @@ export interface Definition {
   endLine: number;
 }
 
-const NAME = /^(\.?[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)*)\s*:\s*\{/;
+/// A name assigned a lambda. After a dot q takes a digit or `_` first too:
+/// `.ns._g`, `.ns.1a` (#2921).
+const NAME = /^(\.?[A-Za-z]\w*(?:\.\w+)*)\s*:\s*\{/;
 /// Where the lambda that opens at `open` in `text` closes, by `charKinds`'
 /// code characters; -1 when it does not.
 function closing(text: string, kinds: string, open: number): number {
@@ -66,30 +70,64 @@ function closing(text: string, kinds: string, open: number): number {
 /// on the process is another (`k){x}`), so it is no definition here.
 const PROMPTS = /^(?:[qkK]\))*q\)[ \t]*/;
 
-/// The definition `lines` (one statement, from `line`) make in context
-/// `ctx`, or undefined when it is not a function definition. Behind `q)`
-/// prompts it is one all the same (#3009).
-function definitionOf(lines: string[], line: number, ctx: string): Definition | undefined {
-  const text = lines.join("\n").replace(PROMPTS, "");
-  const m = NAME.exec(text);
+/// Where each expression of the statement `text` starts and ends: those `;`
+/// separates at its top level, by `charKinds`' code characters, the first
+/// from behind any `q)` prompts (#3009). A system command, or a statement in
+/// another language (`k)f:{x};g:{y}`), is one.
+function expressions(text: string, kinds: string): [number, number][] {
+  const prompts = PROMPTS.exec(text)?.[0].length ?? 0;
+  if (/^(?:\\|[A-Za-z]\))/.test(text.slice(prompts))) {
+    return [[0, text.length]];
+  }
+  const out: [number, number][] = [];
+  let depth = 0;
+  let from = prompts;
+  for (let i = prompts; i < text.length; i++) {
+    if (kinds[i] !== "c") {
+      continue;
+    }
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{") {
+      depth++;
+    } else if (c === ")" || c === "]" || c === "}") {
+      depth--;
+    } else if (c === ";" && depth === 0) {
+      out.push([from, i]);
+      from = i + 1;
+    }
+  }
+  out.push([from, text.length]);
+  return out;
+}
+
+/// The definition the expression `from` to `to` of the statement `text`
+/// makes in context `ctx`, or undefined when it is not a function
+/// definition. Behind `q)` prompts it is one all the same (#3009). Its
+/// `line` and `endLine` are offsets in `text` here, which `definitions`
+/// makes lines.
+function definitionOf(text: string, kinds: string, [from, to]: [number, number], ctx: string): Definition | undefined {
+  let start = from;
+  while (start < to && /\s/.test(text[start])) {
+    start++;
+  }
+  const m = NAME.exec(text.slice(start, to));
   if (m === null) {
     return undefined;
   }
-  const open = m[0].length - 1;
-  const kinds = charKinds(text);
+  const open = start + m[0].length - 1;
   const close = closing(text, kinds, open);
-  if (close < 0) {
+  if (close < 0 || close >= to) {
     return undefined;
   }
-  // Only blanks, a `;` or a comment may follow the lambda.
-  for (let i = close + 1; i < text.length; i++) {
-    if (kinds[i] === "c" && !/[\s;]/.test(text[i])) {
+  // Only blanks or a comment may follow the lambda.
+  for (let i = close + 1; i < to; i++) {
+    if (kinds[i] === "c" && !/\s/.test(text[i])) {
       return undefined;
     }
   }
   const short = m[1];
   const name = short.startsWith(".") || ctx === "" ? short : `.${ctx}.${short}`;
-  return { name, text: text.slice(open, close + 1), line, endLine: line + lines.length - 1 };
+  return { name, text: text.slice(open, close + 1), line: start, endLine: to };
 }
 
 /// Whether a statement assigns `export`, `export:` or `export,:`, alone or
@@ -118,6 +156,20 @@ export function moduleContext(path: string): string | undefined {
   return `.m.${parts[0]}${parts.slice(1).map((p) => `.0${p}`).join("")}`;
 }
 
+/// The path `definitions` names a module's context by, for the file at
+/// `fsPath`: `relative`, its path in its workspace folder; outside every
+/// folder - where VS Code gives the whole path back, or none - as the
+/// language server takes such a file, its own name, with its directory's
+/// for an `init.q`. Every reader of a file's definitions that names them to
+/// a process passes it, or a module's `f` is asked for in the root (#2917).
+export function modulePathOf(fsPath: string, relative: string | undefined): string {
+  if (relative !== undefined && relative !== fsPath) {
+    return relative;
+  }
+  const parts = fsPath.split(/[\\/]/);
+  return parts.slice(/^init\.[qk]$/.test(parts[parts.length - 1] ?? "") ? -2 : -1).join("/");
+}
+
 /// The functions `source` defines, in order, cut as q loads the script
 /// (`statements.ts`), so a lambda's text is what loading it gives: blank and
 /// comment lines inside kept, a block comment's lines as comment lines.
@@ -131,20 +183,40 @@ export function definitions(source: string, path?: string): Definition[] {
   let switched = false;
   let ctx = "";
   for (const { text, start } of statementSpans(scriptCode(source))) {
-    const lines = text.split("\n");
-    const opened = contextSwitch(text);
+    module ||= EXPORT.test(text);
+    // No lambda is assigned in most statements, a table's literal among them.
+    const kinds = /:\s*\{/.test(text) ? charKinds(text) : undefined;
+    const cut = kinds === undefined ? [] : expressions(text, kinds);
+    // The last expression with anything in it ends on the statement's last line.
+    const last = cut.reduce((found, [from, to], i) => (/\S/.test(text.slice(from, to)) ? i : found), -1);
+    // Offsets are made lines in one pass, as they only grow.
+    let line = start;
+    let at = 0;
+    const lineOf = (offset: number): number => {
+      for (; at < offset; at++) {
+        line += text[at] === "\n" ? 1 : 0;
+      }
+      return line;
+    };
+    cut.forEach((span, i) => {
+      // One after a `system "d .ns"` of its own statement is defined there.
+      const moved = i > 0 && text.includes("system") ? contextLeft(text.slice(0, span[0])) : undefined;
+      const found = definitionOf(text, kinds!, span, moved === undefined ? ctx : moved === "." ? "" : moved.slice(1));
+      if (found === undefined) {
+        return;
+      }
+      found.line = lineOf(found.line);
+      found.endLine = lineOf(i === last ? text.length : found.endLine);
+      out.push(found);
+      if (!switched && moved === undefined && !found.name.startsWith(".")) {
+        implicit.add(found);
+      }
+    });
+    // After it: `a:1;system "d .ns"` switches for the lines below (#2916).
+    const opened = contextLeft(text);
     if (opened !== undefined) {
       ctx = opened === "." ? "" : opened.slice(1);
       switched = true;
-      continue;
-    }
-    module ||= EXPORT.test(text);
-    const found = definitionOf(lines, start, ctx);
-    if (found !== undefined) {
-      out.push(found);
-      if (!switched && !found.name.startsWith(".")) {
-        implicit.add(found);
-      }
     }
   }
   const context = module && path !== undefined ? moduleContext(path) : undefined;

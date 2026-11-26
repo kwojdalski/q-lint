@@ -317,6 +317,8 @@ test("an answer is read, and anything else is refused", () => {
     error: "type",
     trace: "  [1] 1+`a",
   });
+  // The \d a failed query left the process in, where the lambda says (#2913).
+  assert.strictEqual(readAnswer({ ok: false, error: "type", trace: "", context: ".ns" }).context, ".ns");
   assert.throws(() => readAnswer(42), /something other than a query result/);
   assert.throws(() => readAnswer(null), /something other than a query result/);
 });

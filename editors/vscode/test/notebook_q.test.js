@@ -406,6 +406,17 @@ test("an exported notebook loads past a cell whose first line is an indented \\\
   }
 });
 
+test("an exported notebook loads the cells after one that holds a / and a no-break space or a form feed (#2906)", { skip }, async (t) => {
+  // A line comment to q: closed as a block comment, its `\\` ended the
+  // script, and no later cell was loaded.
+  for (const blank of ["\u00a0", "\f"]) {
+    const cells = [`a:1\n/${blank}\nb:2`, "c:a+b"];
+    const { cells: ran, script } = await ranAndLoaded(t, cells, "(a;b;@[value;`c;`none])");
+    assert.deepStrictEqual(script, ran, JSON.stringify(cells));
+    assert.deepStrictEqual(ran, ["1 2 3"]);
+  }
+});
+
 test("an exported cell that opens with an indented comment does not continue the cell above (#1935)", { skip }, async (t) => {
   for (const cells of [
     ["f:{x+1}", " / note\n g:3"],

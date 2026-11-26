@@ -131,3 +131,19 @@ test("a cell's or a REPL line's {{placeholders}} are asked for, as Run Query ask
   assert.strictEqual(await runText(live, "select from t where sym={{sym}}"), undefined);
   assert.strictEqual(kept(live).length, 1);
 });
+
+test("a run under a \\d is kept behind it, and labelled by its own first line (#2915)", async (t) => {
+  const { historyLabel } = require("../out/history.js");
+  const live = await setUp(t);
+  // The pane shows what was typed; the history keeps where it ran.
+  const ran = await runText(live, "dd:{x+1}", undefined, ".zz8");
+  assert.strictEqual(ran.code, "dd:{x+1}");
+  assert.deepStrictEqual(kept(live)[0], ["rdb", "ok", undefined, "\\d .zz8\ndd:{x+1}"]);
+  assert.strictEqual(historyLabel(live.history()[0].code), "dd:{x+1}");
+  // A \d of its own says where it runs, and the root needs none.
+  await runText(live, "\\d .", undefined, ".zz8");
+  assert.strictEqual(kept(live)[0][3], "\\d .");
+  assert.strictEqual(historyLabel("\\d ."), "\\d .");
+  await runText(live, "dd 1");
+  assert.strictEqual(kept(live)[0][3], "dd 1");
+});

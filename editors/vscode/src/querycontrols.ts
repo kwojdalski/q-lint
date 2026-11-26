@@ -25,13 +25,13 @@
 // is refused before it sends.
 import { attrText, consoleLines, gridOf, gridOfQ, cutLines, formatQ, formatValue, vectorText } from "./qformat";
 import { ByReference, decode, type QValue } from "./qdecode";
-import { readAnswer, trapLines, type Answer } from "./query";
+import { FAILED, readAnswer, trapLines, type Answer } from "./query";
 import type { GridAnswer } from "./grid";
 import { QError, type DirectMode } from "./qclient";
 import type { Process } from "./processes";
 import { iconsEscaped } from "./history";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
-import { contextSwitch } from "./statements";
+import { contextLeft } from "./statements";
 import { SHARED_SOURCE } from "./discovery";
 import { isGatewayCall } from "./gateway";
 import { qString, stringLiteral } from "./qliteral";
@@ -125,7 +125,7 @@ function unlimitedLambda(readOnly: boolean): string {
     "   $[t within 1 19h;`ok`type`text`value`attr`precision!(1b;t;();$[t within 12 19h;\"jiifjiii\"[t-12h]$r 1;t=10h;\"x\"$r 1;r 1];attr r 1;system\"P\");",
     "     (t within 20 76h)&type[e] within 1 19h;`ok`type`text`value`attr`vtype`domain`eattr`precision!(1b;t;();$[type[e] within 12 19h;\"jiifjiii\"[type[e]-12h]$e;e];attr e;type e;key r 1;attr r 1;system\"P\");",
     `     \`ok\`type\`text!(1b;t;{[s;x]$[any(s like"*..*")&(-1+last system"c")<=count each s;"\\n"vs -1_${LAID_OUT}[${FULL_TEXT};0W;x];s]}[.Q.S["j"$size;0j] r 1;r 1])];`,
-    "   `ok`error`trace!(0b;r 1;r 2)]}",
+    `   ${FAILED}]}`,
   ].join("\n");
 }
 
@@ -291,7 +291,7 @@ export async function evaluateAll(connection: Evaluator, statements: string[]): 
   for (const statement of statements) {
     try {
       last = await connection.evaluate(inContextText(statement, context));
-      context = contextSwitch(statement) ?? context;
+      context = contextLeft(statement) ?? context;
     } catch (error) {
       if (error instanceof QError) {
         return { ok: false, error: error.message };

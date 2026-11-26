@@ -847,3 +847,11 @@ test("a workspace file that cannot be read is skipped, and the files after it st
   const docs = await workspaceDocs(Object.keys(files), read);
   assert.deepStrictEqual([...docs], [["f", "adds one"], ["g", "doubles"]]);
 });
+
+// The process lists a module's f as .m.mymod.f: its qDoc was kept under f.
+test("a KDB-X module's qDoc is kept under the name the process holds the function by (#2917)", async () => {
+  const module = "/ adds one\nf:{x+1}\nexport:([f])\n";
+  assert.deepStrictEqual([...qdocs(module, "mymod/init.q")], [[".m.mymod.f", "adds one"]]);
+  const docs = await workspaceDocs(["mymod/init.q", "a.q"], async (f) => (f === "a.q" ? "/ doubles\ng:{2*x}\n" : module), (f) => f);
+  assert.deepStrictEqual([...docs], [[".m.mymod.f", "adds one"], ["g", "doubles"]]);
+});

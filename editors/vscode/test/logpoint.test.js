@@ -28,14 +28,13 @@ test("a function a coverage run holds takes no logpoint until the run is over", 
   assert.deepStrictEqual(sent, [DRIFT]);
 });
 
-function setup() {
+function setup(text = "/ lib\nsq:{x*x}\n\\d .fx\nmid:{[b;a] (b+a)%2}\n", file = "/w/lib.q") {
   stub.reset();
-  const text = "/ lib\nsq:{x*x}\n\\d .fx\nmid:{[b;a] (b+a)%2}\n";
   const lines = text.split("\n");
   const decorated = [];
   vscode.window.createTextEditorDecorationType = () => ({ disposed: false, dispose() { this.disposed = true; } });
   vscode.window.activeTextEditor = {
-    document: { languageId: "q", getText: () => text, lineAt: (i) => ({ range: { line: i }, text: lines[i] }) },
+    document: { uri: vscode.Uri.file(file), languageId: "q", getText: () => text, lineAt: (i) => ({ range: { line: i }, text: lines[i] }) },
     selection: { active: { line: 3 } },
     setDecorations: (_d, ranges) => decorated.push(ranges.map((r) => r.range.line)),
   };
@@ -112,6 +111,18 @@ test("Add Logpoint wraps the function at the cursor through the guard and marks 
   assert.deepStrictEqual(s.sent.slice(-1), [[LOG_REMOVE, "sq"]]);
   assert.deepStrictEqual(s.api.marked(), []);
   assert.deepStrictEqual(s.live.guarded, [LOG_ADD, LOG_ADD, LOG_REMOVE, LOG_REMOVE]);
+});
+
+// The process holds a module's `f` as `.m.mymod.f`: a logpoint on `f` was
+// one on a name it does not have.
+test("Add Logpoint names a KDB-X module's function in the module's context (#2917)", async (t) => {
+  const s = setup("/ a module\nhlp:{x+1}\nexport:([hlp])\n\n", "/w/mymod/init.q");
+  vscode.workspace.asRelativePath = (uri) => uri.fsPath.replace(/^\/w\//, "");
+  t.after(() => delete vscode.workspace.asRelativePath);
+  vscode.window.activeTextEditor.selection = { active: { line: 1 } };
+  await stub.commands.get(LOGPOINT_COMMANDS.add)();
+  assert.deepStrictEqual(s.sent, [[LOG_ADD, ".m.mymod.hlp"]]);
+  assert.deepStrictEqual(s.api.marked(), [1]);
 });
 
 test("Add Logpoint takes a function named as a symbol, `.fx.mid, as the name .fx.mid (#2649)", async () => {
