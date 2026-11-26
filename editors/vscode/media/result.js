@@ -2313,6 +2313,39 @@
       }
       state.id = m.id;
     }
+    if (typeof state.names === "string" && names !== state.names) {
+      // The same result run again with other columns, as a watched query's
+      // is (#3071): what was set on a column goes with its name to where
+      // the column now is, and is dropped with a column that is gone.
+      const now = m.grid.columns.map(function (c) { return c.name; });
+      const to = state.names.split("\u0000").map(function (name, i, was) {
+        // A name held twice: its first to the first, its second to the next.
+        let nth = was.slice(0, i).filter(function (n) { return n === name; }).length;
+        return now.findIndex(function (n) { return n === name && nth-- === 0; });
+      });
+      const at = function (i) { return Number.isInteger(i) && i >= 0 && to[i] >= 0 ? to[i] : -1; };
+      const filters = [];
+      (state.filters || []).forEach(function (text, i) {
+        if (text && at(i) >= 0) {
+          filters[at(i)] = text;
+        }
+      });
+      state.filters = filters;
+      state.sort = state.sort && at(state.sort.column) >= 0 ? { column: at(state.sort.column), descending: state.sort.descending } : null;
+      if (Array.isArray(state.columns)) {
+        const picked = state.columns.map(at).filter(function (i) { return i >= 0; }).sort(function (a, b) { return a - b; });
+        // Every ticked column gone: the chart's own choice, as for a new result.
+        state.columns = picked.length === 0 && state.columns.length > 0 ? null : picked;
+      }
+      const p = state.pivot;
+      state.pivot = p && at(p.row) >= 0 && (p.column < 0 || at(p.column) >= 0) && (p.value < 0 || at(p.value) >= 0)
+        ? Object.assign({}, p, { row: at(p.row), column: at(p.column), value: at(p.value) })
+        : null;
+      state.y2 = at(state.y2);
+      state.mapSize = at(state.mapSize);
+      state.mapColour = at(state.mapColour);
+      state.names = names;
+    }
     Object.keys(state.saved).forEach(function (id) {
       if (kept.indexOf(id) < 0 || id === m.id) {
         delete state.saved[id];
