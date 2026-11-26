@@ -32,11 +32,18 @@ export type ChartKind = (typeof CHART_KINDS)[number];
 const DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 const isNumber = (s: string) => DECIMAL.test(s.trim()) && Number.isFinite(Number(s));
 
+/// An infinity or a null as q's `csv 0:` writes one among numbers (`0w`,
+/// `-0w`, `0W`, `-0W`, `0n`, `0N`), or as other tools do (`inf`, `nan`):
+/// no value to plot, and no reason to read its column as text (#3127).
+const GAP = /^([+-]?0w|0n|[+-]?inf|nan)$/i;
+const isGap = (s: string) => GAP.test(s.trim());
+
 /// A grid of named columns of text cells: numeric where every non-empty
-/// cell is a number, and `numbers` (by column) does not say it holds none.
+/// cell is a number or a gap among them, and `numbers` (by column) does
+/// not say it holds none.
 export function gridOf(names: string[], cells: string[][], numbers?: boolean[]): Grid {
   const columns: Column[] = names.map((name, i) => {
-    const numeric = (numbers?.[i] ?? true) && cells[i].some((c) => c.trim() !== "") && cells[i].every((c) => c.trim() === "" || isNumber(c));
+    const numeric = (numbers?.[i] ?? true) && cells[i].some(isNumber) && cells[i].every((c) => c.trim() === "" || isNumber(c) || isGap(c));
     return { name, type: numeric ? 9 : 11, typeName: numeric ? "float" : "symbol", key: false, numeric, temporal: false };
   });
   return {

@@ -99,6 +99,23 @@ test("a column of hex, binary or octal ids is text, not the numbers JavaScript r
   }
 });
 
+test("an infinity or a null as q's csv writes one is a gap in a numeric column, not a reason to read it as text (#3127)", async () => {
+  // `:c1.csv 0: csv 0: ([] t:til 5; v:1 0w 3 -0w 0n; n:1 0W 3 -0W 0N)
+  const q = gridFromCsv("t,v,n\n0,1,1\n1,0w,0W\n2,3,3\n3,-0w,-0W\n4,,\n");
+  assert.deepStrictEqual(q.columns.map((c) => c.numeric), [true, true, true]);
+  assert.deepStrictEqual(q.values[1], [1, null, 3, null, null]);
+  assert.deepStrictEqual(q.values[2], [1, null, 3, null, null]);
+  assert.deepStrictEqual(q.cells[1], ["1", "0w", "3", "-0w", ""], "the cells are the file's");
+  assert.deepStrictEqual(gridFromCsv("a\n1\n0n\n0N\ninf\n-inf\nNaN\n").values[0], [1, null, null, null, null, null]);
+  const said = await cli("c1.csv", "t,v\n0,1\n1,0w\n2,3\n3,-0w\n4,\n", ["--y", "v"]);
+  assert.deepStrictEqual(said, { code: 0, said: said.said });
+  assert.match(said.said, /^wrote /);
+  // A gap makes no column of words numeric, nor one of gaps alone.
+  assert.strictEqual(gridFromCsv("a\n0w\nw\n").columns[0].numeric, false);
+  assert.strictEqual(gridFromCsv("a\n0w\n0n\n").columns[0].numeric, false);
+  assert.strictEqual(gridFromCsv("a\n1\n0wx\n").columns[0].numeric, false);
+});
+
 test("a candlestick draws the four columns --y names as its open, high, low and close, and refuses another count (#3126)", async () => {
   const csv = "t,volume,vwap,o1,h1,l1,c1\n09:00,100,10,10,12,9,11\n09:01,200,11,11,13,10,12\n09:02,300,12,12,13,11,11\n";
   const texts = (svg) => [...svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]);
