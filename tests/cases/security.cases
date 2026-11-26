@@ -26,6 +26,17 @@ password:"hunter2"
 === QX002 | under a namespace, any of the usual spellings
 .cfg.apiKey:"abc123"
 
+=== QX002 | a key by any of its usual names, not only an API key (#2737)
+secretKey:"wJalrXUtnFEMI"
+accessKey:"AKIAIOSFODNN7"
+private_key:"MIIEvQIBADANBg"
+.aws.clientKey:"abc123"
+
+=== clean | a key that is no credential: a table's, a dictionary's, a sort's (#2737)
+primaryKey:"sym"
+sortKey:"time"
+tableKey:"id"
+
 === clean | a prompt is a message, not a secret
 passwordPrompt:"Enter password"
 

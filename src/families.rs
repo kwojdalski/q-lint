@@ -178,7 +178,7 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
 fn credentials(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let options = crate::options::current();
     let secret = options.name_pattern.as_ref().unwrap_or(re!(
-        r"(?i)(?:password|passwd|pwd|secret|token|api_?key|credentials?)$"
+        r"(?i)(?:password|passwd|pwd|secret|token|(?:api|secret|access|private|client)_?key|credentials?)$"
     ));
     let message = re!(
         r"(?i)prompt|msg|message|label|text|field|name|hint|key[s]?name|file|path|url|env|var|col"
