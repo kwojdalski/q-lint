@@ -113,6 +113,20 @@ fn a_multi_byte_blank_before_an_assigned_name_does_not_panic() {
     }
 }
 #[test]
+fn a_no_break_space_before_a_tables_colon_does_not_panic() {
+    // `only_end + 1` was the middle of the two-byte space, where
+    // `past_blanks` sliced: exit 101 and every other file's findings lost
+    // (#2864). The second is the fuzz case it was minimised from.
+    for source in [
+        "t\u{a0}:([] a:1 2 3)\nr:select from t where a>1\n",
+        "t\u{a0}:([])select from t where",
+        "t\u{3000}:([] c:\"ab\")\nr:select from t where c=\"a\"\n",
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        assert!(found.iter().any(|f| f.code == "QE012"), "{source:?}");
+    }
+}
+#[test]
 fn a_typed_slot_that_swallows_the_closing_brace_does_not_panic() {
     // A brace auto-closed after `{[a:` is typed: q 5 refuses it with '} (#732).
     let f = lint("f:{[a:}]", "t.q", Profile::General);

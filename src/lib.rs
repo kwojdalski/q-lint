@@ -2605,8 +2605,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                     b'}' => depth -= 1,
                     _ => {}
                 }
+                // On bytes: `i` may sit inside a character past ASCII - an
+                // NBSP, an `é` - which no slice of the text may start in.
                 let word = depth == 1
-                    && text[i..].starts_with(name.as_str())
+                    && bytes[i..].starts_with(name.as_bytes())
                     && (i == 0
                         || !(bytes[i - 1].is_ascii_alphanumeric()
                             || b"_.`".contains(&bytes[i - 1])))
@@ -3467,7 +3469,13 @@ fn empty_pattern(source: &str, code: &str, comments: &str, at: usize) -> bool {
 /// Where the next token after `at` starts, past the blanks of its statement
 /// (`blank!`): across a line break only into the indented line that continues
 /// it. Where the statement ends at a line break, the offset of a line break.
+/// An `at` inside a character - one past a name that a no-break space
+/// follows - is read as the end of that character.
 pub(crate) fn past_blanks(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
     at + re!(concat!("^", blank!(), "*"))
         .find(&text[at..])
         .map_or(0, |m| m.end())

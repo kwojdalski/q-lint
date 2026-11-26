@@ -5684,7 +5684,10 @@ fn char_column_patterns(
     if only_start != 0 && !code[..only_start].ends_with('\n') {
         return out;
     }
-    let value = crate::past_blanks(code, only_end + 1);
+    // Past the character after the name, which `\s` lets be a no-break
+    // space, two bytes wide.
+    let after = code[only_end..].chars().next().map_or(1, char::len_utf8);
+    let value = crate::past_blanks(code, only_end + after);
     let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
         return out;
     };
