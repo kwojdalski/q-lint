@@ -211,24 +211,63 @@ fn literal(s: &str) -> Option<Literal> {
 
 /// QB026. A literal pair of bounds whose first item is above its second, as
 /// the two items written: q 5 `5 within 10 1` is 0b, and so is every value,
-/// since `within` asks for low <= x <= high. Only a pair of numbers, or of
-/// temporals spelt alike - `2024.01.10 2024.01.01`, `10:00 09:30` - whose
-/// fixed-width digits then order as their text does. A null or an
-/// infinity, a symbol, or anything not a literal is left alone.
-fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
+/// since `within` asks for low <= x <= high. A pair of numbers, infinities
+/// among them (`0w -0w`, `0W 1`), or of temporals spelt alike -
+/// `2024.01.10 2024.01.01`, `10:00 09:30` - whose fixed-width digits then
+/// order as their text does; or a pair of symbols or of characters, which q
+/// orders by their bytes (`"za"`, `` `z`a ``, #2680). The pair may be a
+/// general list, `(10;1)` (#2681). A null, or anything not a literal, is
+/// left alone. The two items come back as written, for the message.
+fn reversed_bounds(s: &str) -> Option<(String, String)> {
     let mut s = s.trim();
     while s.starts_with('(') && matching(s, 0, b'(', b')') == Some(s.len()) {
         s = s[1..s.len() - 1].trim();
     }
-    let items: Vec<&str> = s.split_whitespace().collect();
+    // Two characters, as one string or as a general list of two.
+    let char_atom = re!(r#"^"([^"\\])"$"#);
+    if let Some(pair) = re!(r#"^"([^"\\])([^"\\])"$"#).captures(s) {
+        let (low, high) = (&pair[1], &pair[2]);
+        return (low > high).then(|| (format!("\"{low}\""), format!("\"{high}\"")));
+    }
+    // Two symbols: `` `z`a `` or `` `z `a ``.
+    if let Some(pair) = re!(r"^`([A-Za-z0-9_.:]*)[ \t]*`([A-Za-z0-9_.:]*)$").captures(s) {
+        let (low, high) = (&pair[1], &pair[2]);
+        return (low > high).then(|| (format!("`{low}"), format!("`{high}")));
+    }
+    let items: Vec<&str> = if s.contains(';') {
+        slots(s).into_iter().map(str::trim).collect()
+    } else {
+        s.split_whitespace().collect()
+    };
     let [low, high] = items[..] else {
         return None;
     };
+    if let (Some(a), Some(b)) = (char_atom.captures(low), char_atom.captures(high)) {
+        return (a[1] > b[1]).then(|| (low.to_string(), high.to_string()));
+    }
+    let symbol = re!(r"^`[A-Za-z0-9_.:]*$");
+    if symbol.is_match(low) && symbol.is_match(high) {
+        return (low > high).then(|| (low.to_string(), high.to_string()));
+    }
+    // A number, or an infinity ordered as one: `-0w` below every number and
+    // `0w` above it. Two infinities of one sign are left alone, since `0W`
+    // and `0w` differ only by a promotion.
     let number = re!(r"^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+|E\d+)?$");
-    let suffixed = high.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(high);
-    if number.is_match(low) && number.is_match(suffixed) {
-        let (a, b) = (low.parse::<f64>().ok()?, suffixed.parse::<f64>().ok()?);
-        return (a > b).then_some((low, high));
+    let value = |t: &str| -> Option<f64> {
+        let t = t.strip_suffix(['h', 'i', 'j', 'e', 'f']).unwrap_or(t);
+        match t {
+            "0w" | "0W" => Some(f64::INFINITY),
+            "-0w" | "-0W" => Some(f64::NEG_INFINITY),
+            _ if number.is_match(t) => t.parse::<f64>().ok(),
+            _ => None,
+        }
+    };
+    // In a vector only the last item carries the type letter.
+    let unsuffixed = |t: &str| !t.ends_with(['h', 'i', 'j', 'e', 'f']);
+    if (unsuffixed(low) || s.contains(';'))
+        && let (Some(a), Some(b)) = (value(low), value(high))
+    {
+        return (a > b).then(|| (low.to_string(), high.to_string()));
     }
     let temporal = re!(
         r"^(?:\d{4}\.\d\d(?:\.\d\d(?:[DT](?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)?)?|\d\d:\d\d(?::\d\d(?:\.\d*)?)?|\d+D(?:\d\d(?::\d\d(?::\d\d(?:\.\d*)?)?)?)?)$"
@@ -239,7 +278,7 @@ fn reversed_bounds(s: &str) -> Option<(&str, &str)> {
         && temporal.is_match(suffixed)
         && shape(low) == shape(suffixed)
         && low > suffixed)
-        .then_some((low, high))
+        .then(|| (low.to_string(), high.to_string()))
 }
 
 /// A call to one of the checked builtins: where it starts, which builtin,
@@ -601,6 +640,23 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
                     "{name} accepts at most {max_arity} argument(s), but this {} supplies {}",
                     if projection { "call" } else { "complete call" },
                     args.len()
+                ),
+            );
+            continue;
+        }
+        // A projection of `within` with its bounds given is already always
+        // false wherever it is applied: `within[;10 1]` (#2681).
+        if name == "within"
+            && projection
+            && args.len() == 2
+            && let Some((low, high)) = reversed_bounds(args[1])
+        {
+            report(
+                &mut out,
+                "QB026",
+                format!(
+                    "within takes its bounds low then high, and {low} is above {high}, so \
+                     nothing is within them and this is always false: swap the two"
                 ),
             );
             continue;
