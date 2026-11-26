@@ -3027,6 +3027,49 @@ fn a_context_switched_on_a_k_line_is_followed() {
 }
 
 #[test]
+fn a_context_switched_in_each_spelling_q_runs_is_followed_by_the_outline() {
+    // #2967. KDB-X 5 defines `.qux.d` after each of these lines and `d:1`:
+    // `@[system;"d .x";::]` then `g:{x}` leaves `key `.x` as `` ``g ``. The
+    // loads written these ways were followed and the switches were not, so
+    // the outline, workspace/symbol and Go to Definition put `d` at the root.
+    for switch in [
+        "system[\"d .qux\"]",
+        "system@\"d .qux\"",
+        "system (\"d .qux\")",
+        "@[system;\"d .qux\";::]",
+        "value \"\\\\d .qux\"",
+        "q)system \"d .qux\"",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let a = format!("{switch}\nd:1\n\\d .\ngg:2\n");
+        let b = "\\l a.q\nr:.qux.d+gg\n";
+        let mut server = Server::start(dir.path(), &[("a.q", &a), ("b.q", b)]);
+        let reply = server.request("workspace/symbol", json!({"query": ""}));
+        let mut names: Vec<&str> = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{switch}: {reply}"))
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".qux.d", "gg", "r"], "{switch}: {reply}");
+        let defined: Vec<String> = mentions(&a)
+            .iter()
+            .filter(|m| m.definition.is_some())
+            .map(|m| m.name.clone())
+            .collect();
+        assert_eq!(defined, [".qux.d", "gg"], "{switch}");
+        let uri = server.open(dir.path(), "b.q", b);
+        let reply = server.ask("textDocument/definition", &uri, b, ".qux.d", 2, Value::Null);
+        assert_eq!(
+            places(&reply["result"]),
+            [place("a.q", 1, 0, 1)],
+            "{switch}: {reply}"
+        );
+    }
+}
+
+#[test]
 fn a_context_switched_after_several_language_prefixes_is_followed() {
     // #2194. q reads any run of `q)` and `k)` before a command as the
     // command: on KDB-X 5, each of these lines then `d:1` and `\d .` leaves
