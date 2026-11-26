@@ -340,6 +340,19 @@ test("a symbol past UTF-8 shows its bytes' characters and copies as them, as the
   assert.strictEqual(shown(Buffer.from("f563c3a900", "hex")), "`cé");
 });
 
+test("a symbol holding what ends one in -3!'s text copies through `$ from its bytes, as the wrapped grid does (#3076)", () => {
+  // KDB-X: -8!([] a:(`$"a;b";1)), -8!([] a:(`$("a`b";"x");1)), -8!([] a:((`$("a)b";"c"))!1 2;1))
+  assert.deepStrictEqual(copied("010000002d0000006200630b00010000006100000001000000000002000000f5613b6200f90100000000000000"), {
+    cells: [["`a;b", "1"]],
+    literal: '([] a:(`$"a;b";1))',
+  });
+  assert.strictEqual(copied("01000000340000006200630b000100000061000000010000000000020000000b0002000000616062007800f90100000000000000").literal, '([] a:((`$"a`b";`x);1))');
+  assert.strictEqual(
+    copied("010000004b0000006200630b00010000006100000001000000000002000000630b000200000061296200630007000200000001000000000000000200000000000000f90100000000000000").literal,
+    '([] a:((`$"a)b";`c)!1 2;1))',
+  );
+});
+
 test("a general column's time q cannot read back as -3! writes it copies as a cast from its count, as the wrapped grid does (#2579)", () => {
   // KDB-X: -8! of each table, and the literal q reads back as it (~).
   const cases = [

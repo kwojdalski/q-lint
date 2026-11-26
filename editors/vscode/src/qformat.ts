@@ -1325,12 +1325,15 @@ function exactOf(q: QValue, depth = 0): unknown[] | false {
   if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
     return [q.t === -9 ? "f" : "e", q.v];
   }
-  // A symbol past ASCII as its bytes, or symbols as theirs (#2578).
-  if (q.kind === "atom" && q.t === -11 && q.bytes !== undefined) {
-    return ["s", q.bytes];
+  // A symbol past ASCII as its bytes, or symbols as theirs (#2578), and
+  // one holding what ends a symbol in -3!'s text (#3076).
+  const ends = (v: Item): boolean => /[`;)\]}!$#]/.test(String(v ?? ""));
+  const utf8 = (v: Item): number[] => [...Buffer.from(String(v ?? ""), "utf8")];
+  if (q.kind === "atom" && q.t === -11 && (q.bytes !== undefined || ends(q.v))) {
+    return ["s", q.bytes ?? utf8(q.v)];
   }
-  if (q.kind === "vector" && q.t === 11 && q.bytes !== undefined && q.v.length <= 200) {
-    return ["S", q.bytes.map((b, i) => (b === false ? [...Buffer.from(String(q.v[i] ?? ""), "utf8")] : b))];
+  if (q.kind === "vector" && q.t === 11 && (q.bytes !== undefined || q.v.some(ends)) && q.v.length <= 200) {
+    return ["S", q.v.map((v, i) => q.bytes?.[i] || utf8(v))];
   }
   const cast = castOf(q);
   if (cast !== undefined) {
