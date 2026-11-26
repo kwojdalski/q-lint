@@ -195,6 +195,36 @@ fn a_bare_slash_after_a_foreign_line_opens_a_block_comment() {
     assert!(lint("k)gk:2\n/ note\n  (\n", "t.q", Profile::Style).is_empty());
 }
 
+#[test]
+fn the_last_prefix_of_a_run_names_the_language() {
+    // #2989. KDB-X 5 runs `q)k)a:#1 2 3` as k (a is 3), `q)q)b:1` as q and
+    // hands `q)t)1+1` to `.t.e` as `1+1`: a run of prefixes is read past
+    // whole, and its last one says whose the line is. Only the first `q)`
+    // was, so the rest was read as q and its `)` reported.
+    for foreign in ["q)k)a:#1 2 3\n", "q)t)f(\n", "q)q)k)a:#(1;2\n  )]\n"] {
+        let findings = lint(foreign, "t.q", Profile::Style);
+        assert!(findings.is_empty(), "{foreign:?}: {findings:?}");
+    }
+    assert!(lint("q)q)b:1\nshow b\n", "t.q", Profile::General).is_empty());
+    // What follows a run that ends in `q)` is q, and is read as q.
+    let findings = lint("q)q)f:{]\n", "t.q", Profile::Style);
+    assert_eq!(
+        (&*findings[0].code, findings[0].line, findings[0].column),
+        ("QE001", 1, Some(8))
+    );
+    let findings = lint("q)k)q)f:{[desc] desc}\n", "t.q", Profile::Style);
+    assert_eq!((&*findings[0].code, findings[0].line), ("QF001", 1));
+    // #2990. A capital is a prefix too: with `.K.e` defined KDB-X 5 hands
+    // `K)select * from (t` to it, as it hands `t)` to `.t.e`.
+    for foreign in ["K)select * from (t\n", "q)K)a:(\n", "T)x]\n  y)\n"] {
+        let findings = lint(foreign, "t.q", Profile::Style);
+        assert!(findings.is_empty(), "{foreign:?}: {findings:?}");
+    }
+    // The q after such a line is still read.
+    let findings = lint("K)a:(\nf:{]\n", "t.q", Profile::Style);
+    assert_eq!((&*findings[0].code, findings[0].line), ("QE001", 2));
+}
+
 /// The cases here were settled by running each one through a real q 4.x and
 /// asking it what the lambda's parameters actually are (`value value`), not by
 /// reading the reference manual. q accepts more in a parameter list than one

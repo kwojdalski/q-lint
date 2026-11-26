@@ -4616,12 +4616,15 @@ pub(crate) fn foreign_continues(line: &str, rest: &str) -> bool {
                 .find(|l| !l.trim().is_empty() && !comment(l))
                 .is_some_and(|l| l.starts_with([' ', '\t']))
 }
-/// The length of the run of language prefixes, `q)` and `k)` as many as
-/// are written, that `line` opens with: q reads `q)k)\d .ns` as `\d .ns`
-/// (#2194), as the extension's guard does (#2034).
+/// The length of the run of language prefixes that `line` opens with, as
+/// many as are written and of any letter: q reads `q)k)\d .ns` as `\d .ns`
+/// (#2194), as the extension's guard does (#2034), and the last prefix of a
+/// run names the language of what follows - KDB-X 5 runs `q)k)a:#1 2 3` as
+/// k, `q)q)b:1` as q and hands `q)t)1+1` to `.t.e` as `1+1` (#2989).
 pub(crate) fn language_prefixes(line: &str) -> usize {
+    let bytes = line.as_bytes();
     let mut n = 0;
-    while line[n..].starts_with("q)") || line[n..].starts_with("k)") {
+    while bytes.get(n).is_some_and(u8::is_ascii_alphabetic) && bytes.get(n + 1) == Some(&b')') {
         n += 2;
     }
     n
@@ -4635,13 +4638,14 @@ pub(crate) fn system_command(line: &str) -> bool {
 /// indented continuation of the one before. It starts a statement, so the
 /// rules see a `;` in its place: q 5 runs `q)a:2.5` and then refuses
 /// `q)r:string a 0` with 'type (#585). A `q)\` command is read as a command
-/// already, and keeps its blank.
+/// already, and keeps its blank; so does a `q)k)` line, which is k's.
 fn prompts_start_statements(source: &str, v: &mut Views) {
     let mut at = 0;
     for line in source.split_inclusive('\n') {
         if line.starts_with("q)")
             && !line[language_prefixes(line)..].starts_with('\\')
             && v.code.as_bytes().get(at) == Some(&b' ')
+            && v.foreign_offsets.binary_search(&at).is_err()
         {
             v.code.replace_range(at..at + 1, ";");
             v.comments.replace_range(at..at + 1, ";");
@@ -4797,13 +4801,22 @@ fn lex_line(
     if st.foreign && !foreign_continues(line, rest) {
         st.foreign = false;
     }
+    let run = if st.string.is_none() {
+        language_prefixes(line)
+    } else {
+        0
+    };
+    // A command after a run of prefixes is the command, as q reads
+    // `q)k)\d .ns` (#2194).
+    let commanded = line[run..].starts_with('\\');
     if !st.ended && st.block == 0 && st.string.is_none() {
         // Any `x)` line is another language: q hands it to `.x.e`, which
         // is how `p)` reaches embedPy and `k)` reaches k, and a test
-        // harness may define `.t.e` for `t)`. `q)` is q itself, and its
-        // prefix is stripped below instead.
-        if bytes.len() >= 2 && bytes[0].is_ascii_lowercase() && bytes[0] != b'q' && bytes[1] == b')'
-        {
+        // harness may define `.t.e` for `t)` - or `.K.e` for `K)`, a capital
+        // being a prefix as well (#2990). `q)` is q itself, and its prefix is
+        // stripped below instead; after it the last prefix of the run is the
+        // one that says, so `q)k)a:#1 2 3` is k and `q)q)b:1` is q (#2989).
+        if run > 0 && (bytes[0] != b'q' || bytes[run - 2] != b'q' && !commanded) {
             st.foreign = true;
         }
         if st.foreign {
@@ -4813,18 +4826,7 @@ fn lex_line(
             return;
         }
     }
-    // A command after a run of prefixes is the command, as q reads
-    // `q)k)\d .ns` (#2194).
-    let prefix = if st.string.is_none() && line.starts_with("q)") {
-        let run = language_prefixes(line);
-        if line[run..].starts_with('\\') {
-            run
-        } else {
-            2
-        }
-    } else {
-        0
-    };
+    let prefix = if bytes.first() == Some(&b'q') { run } else { 0 };
     // `\t` and `\ts` run their argument as q, so its strings and its
     // comment are masked as on any other line (#222); the command itself
     // stays, for the rules that read system commands.
