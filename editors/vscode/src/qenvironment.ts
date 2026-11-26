@@ -52,7 +52,11 @@ export async function dotenvFor(from?: Uri): Promise<Record<string, string>> {
   if (!read.enabled || workspace.isTrusted === false) {
     return {};
   }
-  const folder = (from && workspace.getWorkspaceFolder(from)) ?? workspace.workspaceFolders?.[0];
+  // The folder a q terminal for `from` starts in: its own on disk, else the
+  // first on disk. A virtual one's fsPath (vscode-vfs) read the local disk
+  // at a path that is not it (#2528).
+  const own = from && workspace.getWorkspaceFolder(from);
+  const folder = (own?.uri.scheme === "file" ? own : undefined) ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file");
   const file = expandHome(read.file, os.homedir());
   const base = folder?.uri.fsPath;
   if (!path.isAbsolute(file) && typeof base !== "string") {
