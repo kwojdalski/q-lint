@@ -54,7 +54,7 @@ import { guardDeclined, installLambda, leftInstrumented, readInstalled, readRest
 import type { Live } from "./live";
 import type { Process } from "./processes";
 import { readAnswer } from "./query";
-import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, parseSnapshot, sameResult, type Snapshot } from "./snapshot";
+import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, parseSnapshot, sameResult, snapshotCut, type Snapshot } from "./snapshot";
 import { statements } from "./statements";
 import {
   RERUN_FAILED,
@@ -697,6 +697,13 @@ class QTests {
       outcome(item, "errored", text);
     } else if (!done.value.ok) {
       const text = `'${done.value.error}`;
+      const message = new TestMessage(text);
+      message.location = at;
+      run.failed(item, message, Date.now() - started);
+      outcome(item, "failed", text);
+    } else if (snapshotCut(done.value.text) !== undefined) {
+      // The same text then says nothing of the part past the cut (#2454).
+      const text = `the result is ${snapshotCut(done.value.text)}, so the snapshot cannot check all of it`;
       const message = new TestMessage(text);
       message.location = at;
       run.failed(item, message, Date.now() - started);
