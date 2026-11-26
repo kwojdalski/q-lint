@@ -632,7 +632,10 @@ export function cliProcess(name: string, listed: Process[], user?: string, tls =
     const port = Number(m[2]);
     // The loopback is one host however it is named: localhost, 127.x, ::1 (#1739).
     const same = (h: string): string => (/^(localhost|127(\.\d{1,3}){3}|::1|\[::1\])$/i.test(h) ? "localhost" : h.toLowerCase());
-    const tags = [...new Set(listed.filter((p) => same(p.host) === same(host) && p.port === port).flatMap((p) => p.tags))];
+    const at = listed.filter((p) => same(p.host) === same(host) && p.port === port);
+    const tags = [...new Set(at.flatMap((p) => p.tags))];
+    // Direct as the list has it, as its tags are taken (#2491).
+    direct ||= at.some((p) => p.evaluation === "direct");
     return {
       label: name,
       host,
