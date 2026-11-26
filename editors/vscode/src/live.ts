@@ -89,6 +89,7 @@ import { QueryControls } from "./controls";
 import { ParameterCache } from "./paramcachecontrol";
 import { DASHBOARDS_KEY, parseDashboards, retargetedTiles } from "./dashboard";
 import { SCHEDULES_KEY, parseSchedules, retargetedSchedules } from "./schedule";
+import { moveScratch } from "./scratch";
 import { CONTROL_COMMANDS, FILE_CONNECTIONS_KEY, UNLIMITED, UNLIMITED_READ_ONLY, armTimeout, directMode, evaluationText, limits, readUnlimited, runUnwrapped, timedOutError, withBinding } from "./querycontrols";
 import { elapsedText, finishedText, readProgress, shouldNotify } from "./progress";
 import {
@@ -1757,6 +1758,8 @@ export class Live {
     await this.context.globalState.update(RELABELS_KEY, log);
     await this.context.workspaceState.update(RELABELS_APPLIED_KEY, log[log.length - 1].n);
     await this.retarget(from, to);
+    // Its scratch buffer is by label too, in storage every window shares (#2405).
+    moveScratch(this.context.globalStorageUri?.fsPath, from, to);
   }
 
   /// The renames and deletions made in other workspaces since this one's
