@@ -2894,6 +2894,34 @@ fn a_client_that_waits_for_registration_is_asked_to_watch_files() {
     assert_eq!(server.shutdown_and_exit(), 0);
 }
 
+/// The baseline in force accepts a file's QE001 in the editor as it does on
+/// the command line: what is new in the file is shown, where passing over
+/// the QE001 left the document with no diagnostics at all (#2750).
+#[test]
+fn a_baselined_qe001_does_not_hide_the_rest_of_its_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("qlinter.toml"), "baseline = \"b.json\"\n").unwrap();
+    let held = "{\"qlinter-baseline\": 1, \"findings\": [\n  {\"code\":\"QE001\",\
+                \"count\":1,\"line\":\"x:(1;2\",\"path\":\"a.q\"}\n]}\n";
+    std::fs::write(root.join("b.json"), held).unwrap();
+    let mut server = Server::spawn(&root, &["--lsp"]);
+    server.initialize();
+    let uri = file_uri(&root.join("a.q"));
+    server.open(&uri, "x:(1;2\ng:{x+1}\n");
+    assert!(server.diagnostics_for(&uri).is_empty(), "baselined");
+    server.change(&uri, 2, "x:(1;2\ng:{x+1}\nf:{[count] count}\n");
+    let found = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&found), ["QF001"], "{found:?}");
+    assert_eq!(found[0]["range"]["start"]["line"], 2, "{found:?}");
+    // And a bracket left open since is the document's one finding again.
+    server.change(&uri, 3, "x:(1;2\ng:{x+1}\nf:{[count] count}\ny:(3;4\n");
+    let found = server.diagnostics_for(&uri);
+    assert_eq!(codes_of(&found), ["QE001"], "{found:?}");
+    assert_eq!(found[0]["range"]["start"]["line"], 3, "{found:?}");
+    assert_eq!(server.shutdown_and_exit(), 0);
+}
+
 #[test]
 fn a_baseline_is_watched_by_a_client_without_relative_patterns() {
     // A client that registers watchers but takes no pattern rooted

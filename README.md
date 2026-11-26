@@ -343,6 +343,13 @@ baseline that is missing or is not one is an error (exit 2), not a run that
 silently reports everything; the language server says so once and shows
 every finding.
 
+A file whose brackets do not balance reports its first QE001 and nothing
+else. A baseline that holds that QE001 accepts it as a `noqa` on its line
+would: the file's next QE001 reports, and behind the last of them every other
+rule, so what is new in the file is new. `--write-baseline` therefore writes
+what stands behind such a file's QE001 as well, more than the run without it
+prints, and reading the baseline back reports nothing.
+
 ### The q version check: `--target-version`
 
 `target-version = "4.0"` in a configuration (per folder, as every key is), or

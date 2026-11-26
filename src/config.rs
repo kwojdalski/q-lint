@@ -61,7 +61,7 @@ use crate::baseline::Baseline;
 use q_lint_rs::{
     Finding, Profile, RULES, Target, Workspace, lint_every_rule,
     options::{self, OptionsScope, RuleOptions},
-    version_reported_for,
+    structure_findings, version_reported_for,
 };
 use std::{
     cell::RefCell,
@@ -177,7 +177,7 @@ pub struct Overrides {
     /// `--baseline FILE`, over the configuration's.
     pub baseline: Option<PathBuf>,
     /// Use no baseline at all: `--write-baseline`, which writes every
-    /// finding, and an editor that turned baselines off.
+    /// finding - those behind a file's QE001 too, see `Policy::lint`.
     pub no_baseline: bool,
 }
 
@@ -654,22 +654,52 @@ impl Policy {
             None => false,
         };
         let target = self.target(&settings);
-        let mut found = {
-            let _options = OptionsScope::install(settings.options.clone());
-            let _target = q_lint_rs::TargetScope::install(target);
-            lint_every_rule(source, path, ws, structure)
-        };
-        found.retain(|f| {
+        let kept = |f: &Finding| {
             !(conflict && OPPOSITE.contains(&f.code.as_str()))
                 && version_reported_for(&f.code, target)
                 && self.selected(&settings, &f.code)
                 && !per_file_ignored(&settings, &f.code, file)
                 && !self.test_exempt(&settings, &f.code, file)
-        });
+        };
+        let run = |structure: bool| {
+            let _options = OptionsScope::install(settings.options.clone());
+            let _target = q_lint_rs::TargetScope::install(target);
+            let mut found = lint_every_rule(source, path, ws, structure);
+            found.retain(kept);
+            found
+        };
+        let mut found = run(structure);
+        // A file whose brackets do not balance reports its first QE001 and
+        // nothing else, until a `noqa` accepts that one: then the next, and
+        // behind the last every other rule. A baseline accepts it as a
+        // `noqa` does. It passed over the QE001 and left it at that, so the
+        // file reported nothing at all, whatever was added to it (#2750).
+        let stopped = structure && matches!(&found[..], [only] if only.code == "QE001");
+        let unbalanced = || {
+            let mut every = structure_findings(source, path);
+            every.retain(kept);
+            every
+        };
+        // And a baseline being written holds what stands behind it, or the
+        // run that reads it back would report as new what was there all
+        // along.
+        if stopped && self.overrides.no_baseline {
+            found = unbalanced();
+            found.extend(run(false));
+        }
         if let Some(file) = self.baseline_file(&settings) {
             match &*self.baseline(&file) {
                 Ok(b) => {
-                    let n = b.filter(path, source, &mut found);
+                    let mut n = b.filter(path, source, &mut found);
+                    if stopped && found.is_empty() {
+                        found = unbalanced();
+                        n = b.filter(path, source, &mut found);
+                        found.truncate(1);
+                        if found.is_empty() {
+                            found = run(false);
+                            n += b.filter(path, source, &mut found);
+                        }
+                    }
                     self.baselined.set(self.baselined.get() + n);
                 }
                 // A missing or broken baseline is the run's error: reporting

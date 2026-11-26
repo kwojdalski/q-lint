@@ -75,6 +75,62 @@ fn a_baseline_hides_todays_findings_and_shows_new_ones() {
 /// "N finding(s) in M file(s)" is what the baseline holds: M counted every
 /// file linted, so one finding in a tree of six read "in 6 file(s)", which
 /// the editor's Write Lint Baseline dialog repeated (#2770).
+/// A baseline accepts a QE001 as a `noqa` does: the next one reports, and
+/// behind the last every other rule. It passed over the QE001 and stopped
+/// there, so a file whose brackets did not balance on the day reported
+/// nothing at all, errors q refuses included, until they did (#2750).
+#[test]
+fn a_baselined_qe001_does_not_hide_what_is_new_in_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let isolated = |args: &[&str]| run(d, &[&["--isolated"], args].concat());
+    let code = |c: &str, line| (c.to_string(), line);
+    fs::write(d.join("a.q"), "x:(1;2\ng:{x+1}\n").unwrap();
+    let (status, _, err) = isolated(&["--write-baseline", "b.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 1 finding(s) in 1 file(s)"), "{err}");
+    let (status, found, err) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    let new = "x:(1;2\ng:{x+1}\nf:{[count] count}\nh:{[sum] sum}\n";
+    fs::write(d.join("a.q"), new).unwrap();
+    let (status, found, err) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!(
+        (status, found),
+        (Some(1), vec![code("QF001", 3), code("QF001", 4)]),
+        "{err}"
+    );
+    assert!(
+        err.contains("1 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+    // What `--ignore QE001` reports there, no more.
+    let (_, ignored, _) = isolated(&["--ignore", "QE001", "a.q"]);
+    assert_eq!(ignored, vec![code("QF001", 3), code("QF001", 4)]);
+    // A second bracket left open is new, and stops the file as the first did.
+    fs::write(d.join("a.q"), format!("{new}y:(3;4\n")).unwrap();
+    let (status, found, _) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(1), vec![code("QE001", 5)]));
+
+    // A baseline written over such a file holds what stands behind its
+    // QE001, which the run prints nothing of: read back, nothing is new.
+    let both = "x:(1;2\ng:{[count] count}\ny:(3;4\nk:{[sum] sum}\n";
+    fs::write(d.join("c.q"), both).unwrap();
+    let (_, found, _) = isolated(&["c.q"]);
+    assert_eq!(found, vec![code("QE001", 1)]);
+    let (status, _, err) = isolated(&["--write-baseline", "c.json", "c.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 4 finding(s) in 1 file(s)"), "{err}");
+    let (status, found, err) = isolated(&["--baseline", "c.json", "c.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    assert!(
+        err.contains("4 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+    fs::write(d.join("c.q"), format!("{both}m:{{[til] til}}\n")).unwrap();
+    let (status, found, _) = isolated(&["--baseline", "c.json", "c.q"]);
+    assert_eq!((status, found), (Some(1), vec![code("QF001", 5)]));
+}
+
 #[test]
 fn a_written_baseline_counts_the_files_it_holds() {
     let dir = tempfile::tempdir().unwrap();
