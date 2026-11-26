@@ -68,6 +68,18 @@ export function readTimers(raw: unknown): TimerState {
   return { interval, ts: typeof r.ts === "string" ? r.ts : "", torq: r.torq === true, jobs };
 }
 
+/// How often a job runs, as the views write it: TorQ's one-off jobs
+/// (`.timer.once`, `.timer.one`) have the period `0Nn`, which runs once
+/// (#2593).
+export function periodText(period: string): string {
+  return period === "" || period === "0Nn" ? "once" : `every ${period}`;
+}
+
+/// When a job last ran: `never` for one not yet run (`0Np`).
+export function lastRunText(lastrun: string): string {
+  return lastrun === "" || lastrun === "0Np" ? "never" : lastrun;
+}
+
 /// The q that turns TorQ job `id` on or off.
 export function toggleCode(id: number, active: boolean): string {
   return `update active:${active ? "1b" : "0b"} from \`.timer.timer where id=${Math.trunc(id)}i`;

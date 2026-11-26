@@ -18,6 +18,7 @@
 // by funcsource_q.test.js.
 import { FULL_TEXT } from "./qtext";
 import { bytes } from "./tableinfo";
+import { periodText } from "./timers";
 
 export const MONITOR = [
   "{[]",
@@ -123,7 +124,7 @@ export function monitorTree(raw: unknown, process: string): InfoNode[] {
     { label: ".z.ts", description: typeof r.ts === "string" && r.ts !== "" ? r.ts : "not set" },
     ...torq.map((t): InfoNode => ({
       label: `.timer ${String(t.id ?? "")}`,
-      description: [t.active === "1b" ? "active" : t.active === "0b" ? "inactive" : "", t.period ? `every ${String(t.period)}` : "", t.nextrun ? `next ${String(t.nextrun)}` : ""]
+      description: [t.active === "1b" ? "active" : t.active === "0b" ? "inactive" : "", t.period ? periodText(String(t.period)) : "", t.nextrun ? `next ${String(t.nextrun)}` : ""]
         .filter((s) => s !== "")
         .join(" · "),
       tooltip: String(t.description ?? ""),

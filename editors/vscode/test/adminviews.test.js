@@ -17,7 +17,7 @@ const { Live } = require("../out/live.js");
 const { QConnection } = require("../out/qclient.js");
 const { ADMIN_COMMANDS, ADMIN_VIEWS, adminOff, readAdmin } = require("../out/admin.js");
 const { clientDescription, closeCode, readClients } = require("../out/clients.js");
-const { intervalCode, intervalProblem, readTimers, toggleCode } = require("../out/timers.js");
+const { intervalCode, intervalProblem, lastRunText, periodText, readTimers, toggleCode } = require("../out/timers.js");
 const { AdminView, registerAdminViews } = require("../out/adminviews.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -46,6 +46,11 @@ test("the timers answer, and the q a change sends", () => {
     timers: { id: [1, 2], active: [true, false], period: ["0D00:00:15", "0D00:01"], nextrun: ["a", "b"], lastrun: ["0Np", "0Np"], description: ["flush", "end of day"], func: ["({x+1};1)", "(`.u.end;`x)"] },
   });
   assert.deepStrictEqual(state.jobs[1], { id: 2, active: false, period: "0D00:01", nextrun: "b", lastrun: "0Np", description: "end of day", func: "(`.u.end;`x)" });
+  // #2593: TorQ's one-off jobs have the period 0Nn, and one not yet run the lastrun 0Np.
+  assert.strictEqual(periodText("0Nn"), "once");
+  assert.strictEqual(periodText("0D00:01"), "every 0D00:01");
+  assert.strictEqual(lastRunText("0Np"), "never");
+  assert.strictEqual(lastRunText("2026.11.25D10:00:00.000000000"), "2026.11.25D10:00:00.000000000");
   assert.strictEqual(toggleCode(2, true), "update active:1b from `.timer.timer where id=2i");
   assert.strictEqual(intervalCode(500), 'system "t 500"');
   assert.strictEqual(intervalProblem("0"), undefined);
@@ -200,6 +205,7 @@ test("Timers lists \\t and the TorQ jobs; a job is turned off and \\t set; on a 
   assert.deepStrictEqual(rows.map((r) => [r.label, r.contextValue]), [["q timer (\\t)", "qTimer"], ["flush", "torqTimerOn"], ["end of day", "torqTimerOff"]]);
   assert.strictEqual(rows[0].description, "off");
   assert.match(rows[1].description, /^every 0D00:00:15\.000000000 · next /);
+  assert.match(rows[1].tooltip, /\nlast never$/);
   // Guarded: the guard asks; declined, unchanged.
   stub.picks.push(undefined);
   assert.strictEqual(await stub.commands.get(ADMIN_COMMANDS.toggleTimer)(rows[1]), false);
