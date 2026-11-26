@@ -594,6 +594,24 @@ test("a double-clicked cell offers its drill-down templates, filled in, and runs
   assert.strictEqual(ran.length, 2);
 });
 
+// Query a Tag's merged result is shown under `tag <tag>`: a drill-down ran
+// on that label, no process, and was refused (#2374). Each row's own
+// process is in its first column.
+test("a drill-down from a merged tag result runs on the process of the row clicked (#2374)", async () => {
+  const fake = fakeVscode({ "results.drilldownTemplates": [{ label: "next", query: "select from t where c>{{value}}" }] });
+  const modes = loadModes(fake);
+  const ran = [];
+  modes.setRunner(async (code, process) => ran.push([code, process]));
+  fake.vscode.window.showQuickPick = async (items) => items[0];
+  const grid = { count: 2, keys: 0, names: ["process", "c"], types: [11, 7], cells: [["rdb1", "rdb2"], ["10", "20"]], raw: [[null, null], [10, 20]], rank: [[0, 1], [0, 1]] };
+  modes.show({ process: "tag prod", code: "t", millis: 1, merged: true, answer: { ok: true, type: 98, text: [], grid } }, live());
+  assert.strictEqual(modes.current().merged, true);
+  const { RESULT_VIEW } = require("../out/liveconfig.js");
+  await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 1, row: 1 });
+  await fake.vscode.commands[RESULT_VIEW.drillDown]({ webviewSection: "cell", column: 1, row: 0 });
+  assert.deepStrictEqual(ran, [["select from t where c>20", "rdb2"], ["select from t where c>10", "rdb1"]]);
+});
+
 test("Save Result Chart asks the page for the chart and writes the image it sends to the file given (#926)", async () => {
   const fake = fakeVscode();
   const modes = loadModes(fake);

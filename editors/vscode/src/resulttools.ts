@@ -145,6 +145,10 @@ export class ResultTools {
       void window.showInformationMessage("q-lint: no result yet. Run a query in grid mode first, then wrangle its result.");
       return;
     }
+    if (shown.merged) {
+      void window.showInformationMessage(plainMessage(`q-lint: the result of ${shown.process} merges several processes' rows; run the query on one process to wrangle it.`));
+      return;
+    }
     const wrangle = this.wrangleOf(shown);
     if (typeof wrangle === "string") {
       void window.showInformationMessage(plainMessage(`q-lint: the result on show cannot be wrangled: ${wrangle}. Wrangle a result of a single expression, such as select from t.`));
@@ -294,6 +298,11 @@ export class ResultTools {
     }
     if (shown === undefined || typeof column !== "number" || typeof row !== "number" || shown.payload.names[column] === undefined) {
       void window.showInformationMessage("q-lint: right-click a cell of the result grid and choose Edit Cell to change it on its process.");
+      return;
+    }
+    // Its rows are several processes', under a process column of q-lint's (#2374).
+    if (shown.merged) {
+      void window.showInformationMessage(plainMessage(`q-lint: the result of ${shown.process} merges several processes' rows; run the query on one process to edit its cells.`));
       return;
     }
     const { payload, process } = shown;

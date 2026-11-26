@@ -405,3 +405,16 @@ test("Show Schema Diagram draws the tables and links in a panel with no script; 
   assert.match(infos().at(-1), /connect to a q process first/);
   assert.deepStrictEqual(none.live.sent, []);
 });
+
+// Query a Tag's merged result is shown under `tag <tag>`, no process: a
+// wrangle step or cell edit went to runOnProcess, which refused with
+// "no q process is labelled \"tag prod\"" (#2374).
+test("Wrangle Result and Edit Cell on a merged tag result say it is several processes' and send nothing (#2374)", async () => {
+  const { live } = setUp();
+  live.shown = { process: "tag prod", code: "select from t", merged: true, payload: { ...payload, names: ["process", "sym", "px"], types: [11, 11, 9], cells: [["rdb1", "rdb2"], ...payload.cells], raw: [[], ...payload.raw] } };
+  await run(RESULT_VIEW.wrangle);
+  await run(RESULT_VIEW.editCell, { webviewSection: "cell", column: 2, row: 0 });
+  assert.deepStrictEqual(live.ran, []);
+  assert.match(infos().at(-2), /tag prod merges several processes' rows; run the query on one process to wrangle it/);
+  assert.match(infos().at(-1), /tag prod merges several processes' rows; run the query on one process to edit its cells/);
+});
