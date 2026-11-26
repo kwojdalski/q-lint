@@ -2057,3 +2057,18 @@ test("handle 0 written with extra zeros is handle 0: the string is evaluated the
   }
   assert.deepStrictEqual(writes('00"count t"'), []);
 });
+
+test("the expression after \\t or \\ts is read whole: a \" /\" in a string in it hides nothing (#2622)", () => {
+  assert.deepStrictEqual(writes('\\t count " /";zz::1'), ["assigns zz"]);
+  assert.deepStrictEqual(writes('\\ts {x} " /";`zz set 1'), ["calls set"]);
+  assert.deepStrictEqual(writes('\\t "a /b";hdel `:f'), ["calls hdel"]);
+  // A comment after it is still none of it.
+  assert.deepStrictEqual(writes("\\t count t /zz::1"), []);
+});
+
+test("\\v, \\f, \\a and \\b given a namespace list its names: a read (#2645)", () => {
+  for (const code of ["\\v .q", "\\f .q", "\\a .", "\\b .ns", "\\v .a.b", 'system "v .q"', 'system "f .q"']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+  assert.deepStrictEqual(writes("\\v x"), ["runs the system command \\v"]);
+});

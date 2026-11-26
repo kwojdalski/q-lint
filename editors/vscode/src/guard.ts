@@ -246,6 +246,9 @@ const EVALUATORS = new Set(["value", "get", "eval", "reval", ".h.val"]);
 const CALLED = new Set([...WRITERS, ...EVALUATORS, "hopen", "xasc", "xdesc", "xkey"]);
 /// System commands that only read a setting when they are given no argument.
 const READS_BARE = new Set([..."abBcCdeEfgoOpPrsSTvwWz_", "cd"]);
+/// System commands that list a namespace's names given one: variables,
+/// functions, tables and views.
+const LISTS_NAMESPACE = new Set([..."vfab"]);
 
 /// The tokens of one statement: strings and symbols whole, a comment (a `/`
 /// after a space, to the end of its line) dropped.
@@ -1887,10 +1890,18 @@ function readStatement(statement: string, found: Set<string>): void {
     if (name === "t" && !text.startsWith("\\t:") && /^\d+$/.test(argument)) {
       found.add("sets the timer with \\t");
     } else if (name === "t" || name === "ts") {
-      statement = argument;
-      ({ text, language } = unprefixed(argument));
+      // The expression whole: a " /" in a string in it is no comment, and
+      // the tokens drop one that is (#2622).
+      const timed = (command?.[2] ?? "").trim();
+      statement = timed;
+      ({ text, language } = unprefixed(timed));
       continue;
-    } else if (!(argument === "" && READS_BARE.has(name)) && !(name === "w" && /^[01]$/.test(argument))) {
+    } else if (
+      !(argument === "" && READS_BARE.has(name)) &&
+      !(name === "w" && /^[01]$/.test(argument)) &&
+      // (`\v .q`, `\f .q`, `\a .`, `\b .ns` list a namespace's names, #2645.)
+      !(LISTS_NAMESPACE.has(name) && /^\.([A-Za-z][\w.]*)?$/.test(argument))
+    ) {
       // (`\w 0` and `\w 1` report the symbols; another number sets the limit.)
       found.add(`runs the system command \\${name}`);
     }
