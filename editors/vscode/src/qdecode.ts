@@ -98,6 +98,16 @@ const LONG_INF = 9223372036854775807n;
 /// Bytes each item of a simple list of type `t` takes; 0 for a symbol.
 const WIDTH = [0, 1, 16, 0, 1, 2, 4, 8, 4, 8, 1, 0, 8, 4, 4, 8, 8, 4, 4, 4];
 
+/// The primitives KDB-X sends as a lambda's text in context `Q`, by that
+/// text: its console writes their names (#2711).
+const Q_LAMBDAS: Readonly<Record<string, string>> = Object.assign(Object.create(null) as Record<string, string>, {
+  "{cov[x;y]}": "cov",
+  "{cor[x;y]}": "cor",
+  "{var x}": "var",
+  "{dev x}": "dev",
+  "{hopen x}": "hopen",
+});
+
 /// q's primitives by type (101 unary, 102 binary, 103 iterator) and index,
 /// as KDB-X prints each: `-9!0x010000000a000000650d` is `#:`.
 const PRIMITIVES: readonly (readonly string[])[] = [
@@ -192,9 +202,13 @@ export function decode(message: Buffer): QValue {
     }
     if (t >= 100) {
       if (t === 100) {
-        symbol();
+        const context = symbol();
         const text = value();
-        return { kind: "func", t, ...(text.kind === "chars" ? { text: text.v.toString("utf8") } : {}) };
+        const body = text.kind === "chars" ? text.v.toString("utf8") : undefined;
+        // KDB-X sends these primitives as lambdas in context Q, and writes
+        // them by name (#2711).
+        const named = context === "Q" && body !== undefined ? Q_LAMBDAS[body] : undefined;
+        return { kind: "func", t, ...(named !== undefined ? { text: named } : body !== undefined ? { text: body } : {}) };
       }
       if (t <= 103) {
         const index = b.readUInt8(pos++);

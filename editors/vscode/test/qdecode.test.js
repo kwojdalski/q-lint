@@ -396,3 +396,15 @@ test("a table's attribute, and its names' list's, are written where -3! writes t
   // In a list, as a console item or a grid cell writes it.
   assert.strictEqual(oneLine(decode(message("\x00\x00", Buffer.from([2, 0, 0, 0]), Buffer.from(cases[0][0], "hex"), long(1)))), "(`s#+(,`a)!,`s#1 2;1)");
 });
+
+test("cov, cor, var, dev and hopen, sent as lambdas in context Q, show by name as q prints them (#2711)", () => {
+  // -8! of each on KDB-X.
+  const sent = (hex) => formatQ(decode(Buffer.from(hex, "hex")), undefined).join("\n");
+  assert.strictEqual(sent("010000001b0000006451000a000a0000007b636f765b783b795d7d"), "cov");
+  assert.strictEqual(sent("010000001b0000006451000a000a0000007b636f725b783b795d7d"), "cor");
+  assert.strictEqual(sent("01000000180000006451000a00070000007b76617220787d"), "var");
+  assert.strictEqual(sent("01000000180000006451000a00070000007b64657620787d"), "dev");
+  assert.strictEqual(sent("010000001a0000006451000a00090000007b686f70656e20787d"), "hopen");
+  // A lambda of another context keeps its text: `{var x}` defined in .a.
+  assert.strictEqual(sent("01000000180000006461000a00070000007b76617220787d"), "{var x}");
+});
