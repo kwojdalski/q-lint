@@ -132,3 +132,14 @@ test("a year before 1000 is labelled in four digits, as q writes it (#3146)", ()
   assert.strictEqual(C.temporalLabel(12, -730119 * 86400e9), "0001.01.01D00:00:00");
   assert.strictEqual(C.temporalLabel(14, 9820), "2026.11.20");
 });
+
+test("a saved scatter over row numbers ticks whole rows, and a saved histogram whole counts, as on screen (#3142, #3143)", () => {
+  const look = { colours: ["#f00"] };
+  const texts = (svg) => [...svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]);
+  const grid = { columns: [{ name: "s", numeric: false, type: 11 }, { name: "v", numeric: true, type: 9 }], cells: [["a", "b", "c"], ["1", "3", "2"]], values: [null, [1, 3, 2]] };
+  const scatter = texts(C.chartSvg(grid, [0, 1, 2], "scatter", C.chartData(grid, [0, 1, 2], "scatter", [1], 20), look, {}));
+  assert.deepStrictEqual(scatter.slice(scatter.indexOf("3") + 1, scatter.indexOf("row")), ["0", "1", "2"]);
+  const list = { columns: [{ name: "v", numeric: true, type: 9 }], cells: [["1", "1", "2", "4"]], values: [[1, 1, 2, 4]] };
+  const counts = texts(C.chartSvg(list, [0, 1, 2, 3], "histogram", C.chartData(list, [0, 1, 2, 3], "histogram", [0], 3), look, {}));
+  assert.deepStrictEqual(counts.slice(0, counts.indexOf("1 - 2")), ["0", "1", "2"]);
+});

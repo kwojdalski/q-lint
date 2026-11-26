@@ -502,7 +502,8 @@
     };
     const axis = function (sets) {
       const s = span(sets);
-      const t = ticks(s.lo, s.hi);
+      // A histogram's axis counts values: whole numbers, as on screen (#3143).
+      const t = ticks(s.lo, s.hi, kind === "histogram");
       const lo = Math.min(s.lo, t.values[0]);
       const hi = Math.max(s.hi, t.values[t.values.length - 1]);
       // Halved, so a span past the largest double does not overflow.
@@ -535,7 +536,9 @@
         hi = 1;
       }
       const x0 = grid.columns[0];
-      const t = ticks(lo, hi, x0 && x0.temporal && UNITS.indexOf(x0.type) >= 0);
+      // Row numbers are whole, as a date's days are: no tick at row 0.5 (#3142).
+      const rowAxis = byRow(grid) || !grid.values[0];
+      const t = ticks(lo, hi, rowAxis || (x0 && x0.temporal && UNITS.indexOf(x0.type) >= 0));
       const a = Math.min(lo, t.values[0]);
       const b = Math.max(hi, t.values[t.values.length - 1]);
       xOf = function (x) { return left + (b === a ? pw / 2 : ((x / 2 - a / 2) / (b / 2 - a / 2)) * pw); };
