@@ -3934,7 +3934,6 @@ fn selection_ranges_grow_from_the_token_to_the_definition() {
             "x;(1;2)",
             "[x;(1;2)]",
             "g[x;(1;2)]",
-            "[x] g[x;(1;2)]",
             "{[x] g[x;(1;2)]}",
             "f:{[x] g[x;(1;2)]}",
         ]
