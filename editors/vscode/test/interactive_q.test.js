@@ -146,6 +146,20 @@ test("a cell runs in the context a system[\"d .ns\"], or one beside other code, 
   assert.deepStrictEqual(repl.entries().at(-1).lines, ["4", "`undefined"]);
 });
 
+test("Run Query Again runs a REPL entry in the \\d it ran in, not in the root (#2915)", { skip }, async (t) => {
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const { live, repl } = await setUp(t, q.port);
+  assert.strictEqual(await repl.enter("\\d .zz8"), "ran");
+  assert.strictEqual(await repl.enter("dd:{x+1}"), "ran");
+  assert.strictEqual(await repl.enter("\\d ."), "ran");
+  const entry = live.history().find((e) => e.code.endsWith("dd:{x+1}"));
+  await stub.commands.get("q-lint.rerunQuery")(entry);
+  assert.deepStrictEqual(live.history()[0].code, "\\d .zz8\ndd:{x+1}");
+  assert.strictEqual(await repl.enter("(.zz8.dd 1;@[value;`dd;`undefined])"), "ran");
+  assert.deepStrictEqual(repl.entries().at(-1).lines, ["2", "`undefined"]);
+});
+
 test("code Smart Send gives the REPL runs as the editor has it, a block comment in a lambda no code (#2284)", { skip }, async (t) => {
   const q = await startQ("");
   t.after(() => q.stop());

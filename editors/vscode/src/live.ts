@@ -80,7 +80,7 @@ import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHea
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
-import { blockAt, contextAfter, inContext, scriptCode, selectionCode, statements } from "./statements";
+import { blockAt, contextAfter, contextSwitch, inContext, scriptCode, selectionCode, statements } from "./statements";
 import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
@@ -4103,7 +4103,11 @@ export class Live {
       entry = picked?.entry;
     }
     if (entry !== undefined) {
-      await this.run(entry.code);
+      // The `\d` an entry is kept behind is its context again, not code the
+      // guard is asked about (#2915).
+      const [head, ...rest] = statements(entry.code);
+      const context = rest.length > 0 ? contextSwitch(head) : undefined;
+      await (context === undefined ? this.run(entry.code) : this.run(rest.join("\n"), undefined, undefined, undefined, context));
     }
   }
 
