@@ -771,3 +771,31 @@ test("a query that waited for a connect that was disconnected, or failed, is not
   assert.deepStrictEqual(asked, []);
   assert.deepStrictEqual(live.history(), []);
 });
+
+// The line a Run Line runs from was kept in one field until `run` took it,
+// after the connect a bound file's first query makes: a second Run Line
+// during that connect put its line there, and the first query's result was
+// drawn beside the second line.
+test("two Run Lines during a bound file's connect each draw their result at their own line (#3022)", async (t) => {
+  const a = await fakeQ((sent) => ({ ok: true, type: -7, text: [JSON.stringify(sent).includes("10*10") ? "100" : "2"] }), 300);
+  t.after(() => a.close());
+  const { context, live } = await setUp(t, [proc("a", a.port)]);
+  const lines = ["1+1", "10*10"];
+  const uri = vscode.Uri.file("/w/bound.q");
+  context.workspaceState.get = (key, fallback) => (key === "q-lint.fileConnections" ? { [uri.toString()]: "a" } : fallback);
+  const editor = {
+    document: { uri, version: 1, languageId: "q", lineAt: (line) => ({ text: lines[line] }), getText: () => lines.join("\n") },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  vscode.window.activeTextEditor = editor;
+  t.after(() => (vscode.window.activeTextEditor = undefined));
+  const answers = [];
+  live.onDidAnswer((answered) => answers.push([answered.line, answered.answer.text]));
+  const first = stub.commands.get("q-lint.queryCurrentLine")();
+  await until(() => a.logins.length === 1);
+  editor.selection = { active: { line: 1 }, isEmpty: true };
+  const second = stub.commands.get("q-lint.queryCurrentLine")();
+  await Promise.all([first, second]);
+  assert.deepStrictEqual(answers[0], [0, ["2"]], JSON.stringify(answers));
+  assert.ok(answers.every(([line, text]) => (line === 0) === (text[0] === "2")), JSON.stringify(answers));
+});

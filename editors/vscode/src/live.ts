@@ -158,6 +158,8 @@ export interface HistoryEntry {
 }
 
 type From = "line" | "selection" | "block" | "file";
+/// The editor line a Run Line or Run Selection is run from.
+type Origin = { uri: string; line: number; version?: number };
 
 /// The code a query or a send takes from `editor`: the selection, the
 /// statement the cursor is in, or its line. Undefined when the cursor is on
@@ -732,9 +734,6 @@ export class Live {
   /// or saved query deleted or renamed - for an open dashboard to draw them
   /// again (#2550).
   readonly onDidChangeTiles = this.tiles.event;
-  /// The line a Run Line or Run Selection is running from, until `run`
-  /// takes it.
-  private origin: { uri: string; line: number; version?: number } | undefined;
   private readonly status: StatusBarItem;
   private readonly output: OutputChannel;
   private readonly processesView: ProcessesView;
@@ -2930,18 +2929,18 @@ export class Live {
     const { selection } = editor;
     // The last line of a selection that ends at a line's start is the one before.
     const last = selection.isEmpty ? selection.active.line : selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line - 1 : selection.end.line;
-    this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
-    try {
-      await this.queryCode(code, editor.document.uri, serverTypes);
-    } finally {
-      this.origin = undefined;
-    }
+    // Handed down with the query, not left in a field for `run` to take: a
+    // second Run Line during the first's connect put its own line there,
+    // and the first's result was drawn beside it (#3022).
+    const origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
+    await this.queryCode(code, editor.document.uri, serverTypes, origin);
   }
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
-  /// sends its definition here.
-  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
+  /// sends its definition here. `origin`: the line a Run Line or Run
+  /// Selection is running from, where its inline result is drawn.
+  async queryCode(code: string, uri: Uri, serverTypes?: string[], origin?: Origin): Promise<void> {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
@@ -2966,7 +2965,7 @@ export class Live {
     } else if (serverTypes !== undefined && serverTypes.length > 0 && isGatewayOwn(code)) {
       void window.showInformationMessage(plainMessage(`q-lint: this code reads the gateway's own state, so it runs on the gateway itself, not on ${serverTypes.join(", ")}. .gw.syncexec written out sends it to them.`));
     }
-    await this.run(retyped ?? code, undefined, serverTypes ?? named);
+    await this.run(retyped ?? code, undefined, serverTypes ?? named, undefined, origin);
   }
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
@@ -3893,9 +3892,8 @@ export class Live {
   /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
   /// reads it as written. `mode` shows the result as a grid or a chart
   /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
-  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
-    const origin = as === undefined ? this.origin : undefined;
-    this.origin = undefined;
+  /// `origin`: the editor line the query was run from (`queryCode`).
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode, origin?: Origin): Promise<void> {
     const asked = this.active ?? this.connectingAs;
     const askedOn = this.setting(readAdmin).processTimeout;
     const first = await this.ready(effectiveTimeout(asked, this.controls.settings().timeout, askedOn), timeoutSource(asked, askedOn), undefined, as !== undefined);
