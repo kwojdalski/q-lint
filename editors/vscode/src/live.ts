@@ -602,8 +602,9 @@ export class Stopped extends Error {
 }
 
 /// What `Live.runApart` throws when it is cancelled before its connection
-/// opens: nothing was sent to the process, so its caller records no run.
-/// Its message is the connect's own (#1926).
+/// opens, or while its connect script runs: the query was not sent to the
+/// process, so its caller records no run. Its message is the connect's own
+/// (#1926), or `cancelled` (#3016).
 export class NotSent extends Error {}
 
 export class Live {
@@ -3802,7 +3803,12 @@ export class Live {
     };
     let disarm = armTimeout(timeout, expire);
     try {
-      await this.runConnectScript(connection, process, undefined, options.unattended === true);
+      // Cancelled in its connect script, the script did not fail, and the
+      // query was not sent: no warning, and no run to record (#3016).
+      await this.runConnectScript(connection, process, () => signal?.aborted === true, options.unattended === true);
+      if (signal?.aborted) {
+        throw new NotSent("cancelled");
+      }
       const configuration = workspace.getConfiguration("q-lint");
       const settings = readLive((key, fallback) => configuration.get(key, fallback));
       const unlimited = this.controls.unlimited || options.whole === true;
@@ -3836,7 +3842,7 @@ export class Live {
       disarm = armTimeout(timeout, expire);
       return await connection.queryGrid(cut, consoleSize, gridLimit);
     } catch (error) {
-      throw timedOut ? new Error(timedOutError(timeout)) : signal?.aborted ? new Error("cancelled") : error;
+      throw timedOut ? new Error(timedOutError(timeout)) : error instanceof NotSent ? error : signal?.aborted ? new Error("cancelled") : error;
     } finally {
       disarm();
       signal?.removeEventListener("abort", stop);

@@ -323,6 +323,33 @@ test("cancelling Query a Tag while a process connects records no run for it", as
   assert.strictEqual(payload.cells[payload.names.indexOf("error")][1], "cancelled");
 });
 
+// One still in its connect script when the cancel came: the closed
+// connection was said as the script failing, and a run recorded as aborted
+// for a query that was never sent.
+test("cancelling Query a Tag while a process runs its connect script warns of no failed script and records no run (#3016)", async (t) => {
+  const { fakeQ: scripted, SILENT } = require("./fakeq.js");
+  const a = await fakeQ(table([1]));
+  // The connect script is never answered.
+  const slow = await scripted((m) => (JSON.stringify(m).includes("blocks") ? SILENT : table([2])()));
+  t.after(() => (a.close(), slow.close()));
+  const { live, across } = await setUp(t, [proc("a", a.port, ["eu"]), { ...proc("slow", slow.port, ["eu"]), init: "blocks[]" }]);
+  const listeners = [];
+  const token = { isCancellationRequested: false, onCancellationRequested: (f) => (listeners.push(f), { dispose() {} }) };
+  const withProgress = vscode.window.withProgress;
+  vscode.window.withProgress = async (options, task) => (options.cancellable ? task({ report() {} }, token) : withProgress(options, task));
+  t.after(() => (vscode.window.withProgress = withProgress));
+  const running = stub.commands.get("q-lint.queryTag")("eu", "select from t");
+  for (let i = 0; i < 100 && (live.history().length < 1 || slow.sent.length < 1); i++) await new Promise((r) => setTimeout(r, 20));
+  token.isCancellationRequested = true;
+  listeners.forEach((f) => f());
+  await running;
+  assert.deepStrictEqual(stub.messages.filter(([kind]) => kind !== "info"), []);
+  assert.deepStrictEqual(live.history().map((h) => `${h.process} ${h.outcome}`), ["a ok"]);
+  assert.strictEqual(slow.sent.length, 1, "only the connect script was sent");
+  const { payload } = across.state().tag;
+  assert.strictEqual(payload.cells[payload.names.indexOf("error")][1], "cancelled");
+});
+
 // Each read its switch on entry only: turned off while a pick or the
 // guard's question was open, the query was still sent (#2005).
 test("turned off at a pick or the guard's question, Query a Tag and Compare Query send nothing (#2005)", async (t) => {
