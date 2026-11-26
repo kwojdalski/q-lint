@@ -2172,3 +2172,27 @@ test("a handle computed of numbers and applied to a string or a list is read as 
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a lambda .Q.trp, .Q.trpd, .Q.ts, .Q.fu, .Q.fc or .Q.sp applies is read with the data it is given in place of its parameter (#2628)", () => {
+  const cases = {
+    '.Q.ts[{value x};enlist"k1:1"]': "evaluates a string with value",
+    '.Q.fc[{value each x};enlist"k2:1"]': "evaluates a string with value",
+    '.Q.trp[{value x};"k3:1";::]': "evaluates a string with value",
+    '.Q.trpd[{value x};enlist"k3:1";::]': "evaluates a string with value",
+    '.Q.sp[{value x};enlist"k4:1"]': "evaluates a string with value",
+    ".Q.fu[{value x}';enlist\"k5:1\"]": "evaluates a string with value",
+    '.Q.ts[{0 x};enlist"k9:1"]': "evaluates a string on handle 0",
+    '.Q.ts[{get x};enlist"k10:1"]': "evaluates a string with get",
+    ".Q.trp[{.[x;();:;1]};`a;::]": "amends `a in place",
+    // Handle 0 given to one, as to `@` or `.`.
+    '.Q.trp[0;"a:1";::]': "evaluates a string on handle 0",
+    '.Q.ts[0;enlist"a:1"]': "evaluates a string on handle 0",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  // Given data that only reads, it reads.
+  for (const code of ['.Q.trp[{value x};"count t";::]', '.Q.ts[{value x};enlist"count t"]', '.Q.sp[{value x};("count t";"count s")]', ".Q.fc[{x+1};til 10]", ".Q.ts[{x+y};1 2]", ".Q.fu[{x*2};1 2 1]", ".Q.trp[{count x};t;{-2 x;-2 .Q.sbt y;0}]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

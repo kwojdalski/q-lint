@@ -114,6 +114,8 @@
 //   arguments in place of its parameters (`` {.[x;();:;1]}`a ``,
 //   `{value x} each enlist "a:1"`), and where an argument is a name or not
 //   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
+//   applied by `.Q.trp`, `.Q.trpd`, `.Q.ts`, `.Q.fu`, `.Q.fc` or `.Q.sp` to
+//   the data given it, `.Q.trp[{value x};"a:1";::]` (#2628);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
 //   which runs it on the gateway's servers (#909), given to `.` or `@` or
@@ -1447,6 +1449,18 @@ const WITNESSES = ["(`g)", "(`:g)"];
 const ITEMS = 8;
 /// The names after a lambda that apply it to each item of what follows.
 const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
+/// The `.Q` functions that apply the function given first to the data given
+/// second (#2628), and how: as `@` does, to it whole - `.Q.trp`, `.Q.fc` (to
+/// chunks of it), `.Q.fu` (to its distinct items) - as `.` does, to its
+/// items - `.Q.ts`, `.Q.trpd` - or to each item, `.Q.sp`.
+const APPLIERS = new Map([
+  [".Q.trp", "@"],
+  [".Q.fc", "@"],
+  [".Q.fu", "@"],
+  [".Q.ts", "."],
+  [".Q.trpd", "."],
+  [".Q.sp", "'"],
+]);
 /// How deep `writes` is called in itself, how many lambdas it has read
 /// again with their parameters given, and how many tokens it has read, in
 /// the call `writes` was given from outside: past `DEPTH`, `REREADS` or
@@ -1559,6 +1573,8 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   while (t[q]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[q].text)) q++;
   if (t[q]?.kind === "name" && ITERATORS.has(t[q].text)) q++;
   const iterated = q > e + 1;
+  // Applied to each item of its argument: iterated, or given to `.Q.sp`.
+  let itemwise = iterated;
   const after = t[q];
   const before = t[s - 1];
   // Each parameter's argument as written, and the items it is applied to.
@@ -1577,12 +1593,16 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
     args = after.text === "@" ? [arg] : (listed(t, arg[0], arg[1]) ?? []);
   } else if (after !== undefined && (["str", "sym", "num", "name"].includes(after.kind) || after.kind === "open")) {
     args = left !== undefined && left[0] < left[1] ? [left, [q, argumentEnd(t, q - 1)]] : [[q, argumentEnd(t, q - 1)]];
-  } else if (before?.kind === "open" && before.text === "[" && (t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") {
-    // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them.
+  } else if (before?.kind === "open" && before.text === "[" && (((t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") || (t[s - 2]?.kind === "name" && APPLIERS.has(t[s - 2].text)))) {
+    // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them, or by a `.Q`
+    // function that applies it so, `.Q.trp[f;x;h]`, `.Q.ts[f;(x;y)]`, or to
+    // each item, `.Q.sp[f;x]` (#2628).
+    const how = t[s - 2].kind === "op" ? t[s - 2].text : (APPLIERS.get(t[s - 2].text) ?? "@");
     const all = items(t, s - 1);
     const arg = all[1];
     if (arg !== undefined && arg[0] < arg[1]) {
-      args = t[s - 2].text === "@" ? [arg] : (listed(t, arg[0], arg[1]) ?? []);
+      args = how === "." ? (listed(t, arg[0], arg[1]) ?? []) : [arg];
+      itemwise ||= how === "'";
     }
   } else if (before?.text === ":" && t[s - 2]?.kind === "name" && !iterated && (after === undefined || after.text === ";" || after.kind === "close")) {
     // Assigned to a local of the lambda around it, and applied there later:
@@ -1685,7 +1705,7 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   if (written.some((w) => w !== undefined)) {
     readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, written[n]]]))), false]);
     // Item by item, the first few.
-    const each = iterated ? params.map((_, n) => (args[n] === undefined ? [] : itemsOf(t, args[n][0], args[n][1]))) : [];
+    const each = itemwise ? params.map((_, n) => (args[n] === undefined ? [] : itemsOf(t, args[n][0], args[n][1]))) : [];
     for (let m = 0; m < Math.min(ITEMS, Math.max(0, ...each.map((i) => i.length))); m++) {
       readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, each[n][m] === undefined ? written[n] : `(${each[n][m]})`]]))), false]);
     }
@@ -2750,7 +2770,13 @@ function readStatement(statement: string, found: Set<string>): void {
       // Given to apply or a trap, `@[0;"a:1"]`, `.[0;enlist"a:1";h]`, it is
       // applied to the argument after it (#2625); applied by `each` or
       // `peach`, `0 each x`, `(0 each) x`, to each item of it (#2626).
-      const trapped = !wrapped && t[i - 1]?.text === "[" && t[i - 1].kind === "open" && t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text) && next?.text === ";";
+      // So it is by a `.Q` function that applies what it is given, `.Q.trp[0;"a:1";h]` (#2628).
+      const trapped =
+        !wrapped &&
+        t[i - 1]?.text === "[" &&
+        t[i - 1].kind === "open" &&
+        ((t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text)) || (t[i - 2]?.kind === "name" && APPLIERS.has(t[i - 2].text))) &&
+        next?.text === ";";
       const iterated = wrapped ? t[i + 2] : next;
       const each = iterated?.kind === "name" && (iterated.text === "each" || iterated.text === "peach");
       if (trapped || each) {
