@@ -152,6 +152,18 @@ f:{@[value;"select from t";{x}]}
 g:{@[value;x;{"select from t where a=",x}]}
 h:{(a;value;"select from t where a=",x)}
 
+=== QX001 | a handle given its query in parentheses or brackets, after @, or in a trap (#3006)
+f:{[h;x] h("select from t where a=",x)}
+g:{[h;x] h["select from t where a=",x]}
+k:{[h;x] (neg h)("select from t where a=",x)}
+l:{[h;x] h ("select from t where a=",x)}
+m:{[h;x] h@"select from t where a=",x}
+n:{[h;x] @[h;"select from t where a=",x;{x}]}
+
+=== clean | a constant sent in brackets, and a list that holds a handle and a query (#3006)
+f:{[h] h["select from t"]}
+g:{[h;x] (h;"select from t where a=",x)}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}

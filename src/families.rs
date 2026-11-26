@@ -186,9 +186,12 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         .is_ok_and(|r| r.is_match(code))
     };
     // The handle may be a dotted name, `.conn.h` or the caller's `.z.w`, or
-    // the async `neg[h]` and `(neg h)` (#652).
+    // the async `neg[h]` and `(neg h)` (#652). What it is sent may stand in
+    // parentheses or brackets, after `@`, or in a trap whose first slot is
+    // the handle: KDB-X 5 has the remote run each of `h("..",x)`,
+    // `h["..",x]`, `(neg h)("..",x)`, `h@"..",x` and `@[h;"..",x;e]` (#3006).
     let handles: Vec<(usize, usize)> = re!(
-        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)[ \t]+|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\))[ \t]*)"(?:select|exec|update|delete)\b"#
+        r#"(?:(\.?[A-Za-z][A-Za-z0-9_.]*)|(neg[ \t]*\[[^\[\]"]*\]|\(neg[ \t]+[^()"]*\)))[ \t]*([(\[@;]?)[ \t]*"(?:select|exec|update|delete)\b"#
     )
     .captures_iter(comments)
     .filter_map(|c| {
@@ -197,7 +200,11 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         (code[handle.start()..].starts_with(handle.as_str())
             && !(name
                 && (crate::reserved_word(handle.as_str())
-                    || lambda(handle.as_str()))))
+                    || lambda(handle.as_str())))
+            && (&c[3] != ";"
+                || code[..handle.start()]
+                    .trim_end_matches([' ', '\t'])
+                    .ends_with("@[")))
         .then_some((handle.start(), handle.end()))
     })
     .collect();
