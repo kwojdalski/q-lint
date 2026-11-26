@@ -1798,6 +1798,12 @@ test("the debugger's breakpoints patch a function in place: .Q.bs and what it ca
   assert.deepStrictEqual(writes(".Q.BP"), []);
 });
 
+test("-36! loads an encryption master key, which reval does not survive: it is asked about (#2630)", () => {
+  for (const code of ["first -36!(`:k;\"p\")", "-36!(`:f;\"pwd\")", "(-36)!(`:f;\"pwd\")", "{-36!x}(`:f;\"p\")"]) {
+    assert.deepStrictEqual(writes(code), ["loads an encryption master key with -36!"], code);
+  }
+});
+
 test("a writer picked out of .h by any index is called, as out of .q and .Q (#2272)", () => {
   const asks = [".h[`ht]`g", "(.h`ht)`g", "(.h@`ht)`g", "(get`.h)[`ht]`g", "(value`.h)`ht", ".h[`$\"ht\"]`g", "{.h[x]}[`ht]`g", ".h[`val]\"a:77\"", "(.h . enlist`ht)`g", ".h[`$\"h\",\"t\"]`g"];
   for (const code of asks) {

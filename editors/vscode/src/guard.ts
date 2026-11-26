@@ -2630,6 +2630,12 @@ function readStatement(statement: string, found: Set<string>): void {
       found.add("patches a function's code with -104!");
       continue;
     }
+    // `-36!` loads an encryption master key into the process; under `reval`
+    // it brought KDB-X down with SIGSEGV, so it is asked about (#2630).
+    if (bang > 0 && fn === "-36") {
+      found.add("loads an encryption master key with -36!");
+      continue;
+    }
     if (k.kind === "num" && (k.text === "0" || k.text === "1" || k.text === "2") && next?.text === ":" && touching(k, next)) {
       if (k.text === "2") {
         found.add("loads a shared object with 2:");
