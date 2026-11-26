@@ -170,6 +170,30 @@ test("a pending query whose code starts with a blank line is listed by its first
   assert.deepStrictEqual(left, ["  \r\n\t\n  count $(x)  \r\nmore", "1+1\n2+2"]);
 });
 
+test("an async result whose process was renamed while it ran arrives under the new label (#2568)", async () => {
+  stub.reset();
+  let hear;
+  const grids = [];
+  const recorded = [];
+  let id;
+  const live = {
+    runOnActive: async (_code, query) => ({ process: "a", value: await query({ underReval: async () => false, sendAsync: (_l, i) => (id = i) }) }),
+    onAsyncMessage: (f) => ((hear = f), { dispose() {} }),
+    onDidChange: () => ({ dispose() {} }),
+    codeFromEditor: async () => undefined,
+    showGrid: (label) => grids.push(label),
+    record: async (entry) => void recorded.push(entry.process),
+  };
+  const context = stub.newContext();
+  const queries = new AsyncQueries(context, live);
+  await queries.run("select from t");
+  // Edit Process renamed a to a2 meanwhile; the connection stayed.
+  hear(serialize([ASYNC_TAG, id, { ok: true, type: -7, text: ["2"] }]), { label: "a2" });
+  await sleep(10);
+  for (const d of context.subscriptions) d.dispose?.();
+  assert.deepStrictEqual([grids, recorded, queries.state().arrived.map((a) => a.process)], [["a2"], ["a2"], ["a2"]]);
+});
+
 test("a query sent async leaves the connection free; its table, value and error arrive (real q)", { skip }, async (t) => {
   const port = await freePort();
   const q = await startQ(port);

@@ -3691,6 +3691,10 @@ export class Live {
     };
     let disarm = armTimeout(left(timeout, waited), expire);
     let entry: HistoryEntry;
+    // Renamed while it ran, on the same connection: its result is the
+    // process's under the label it has now, which Load more, drill-down
+    // and rerun look for (#2568).
+    const labelNow = (): string => (this.connection === connection && this.active !== undefined ? this.active.label : process.label);
     try {
       // Grid and chart modes ask for the rows too; a value that is not
       // tabular comes back as console mode's text.
@@ -3742,11 +3746,12 @@ export class Live {
       const millis = Date.now() - started;
       // Answered: the connection holds, and a drop after starts the tries again (#2129).
       this.answeredOn = connection;
+      const label = labelNow();
       if (!answer.ok && code === written && !direct) {
-        this.lastFailure = { process: process.label, code, error: answer.error, trace: answer.trace };
+        this.lastFailure = { process: label, code, error: answer.error, trace: answer.trace };
       }
       entry = {
-        process: process.label,
+        process: label,
         code,
         at: new Date(started).toISOString(),
         millis,
@@ -3754,24 +3759,24 @@ export class Live {
         ...(answer.ok ? {} : { error: answer.error }),
       };
       if (origin !== undefined) {
-        this.answered.fire({ process: process.label, answer, millis, ...origin });
+        this.answered.fire({ process: label, answer, millis, ...origin });
       }
-      if (!this.modes.show({ process: process.label, code, answer, millis, held: hold, ...(token !== undefined ? { token } : {}) }, settings, as === "watched")) {
-        this.show(render({ process: process.label, code, answer, millis }, settings), settings.autoClear || as === "watched");
+      if (!this.modes.show({ process: label, code, answer, millis, held: hold, ...(token !== undefined ? { token } : {}) }, settings, as === "watched")) {
+        this.show(render({ process: label, code, answer, millis }, settings), settings.autoClear || as === "watched");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const aborted = this.aborted === started;
       const timedOut = this.timedOut === started;
       entry = {
-        process: process.label,
+        process: labelNow(),
         code,
         at: new Date(started).toISOString(),
         millis: Date.now() - started,
         outcome: timedOut ? "timeout" : aborted ? "aborted" : "error",
         error: timedOut ? timedOutError(timeout) : aborted ? "aborted" : message,
       };
-      this.show([`# ${process.label} - ${timedOut ? timedOutError(timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
+      this.show([`# ${labelNow()} - ${timedOut ? timedOutError(timeout) : aborted ? "aborted" : "failed"}: ${message}`], false);
     } finally {
       disarm();
       if (this.timedOut === started) {
