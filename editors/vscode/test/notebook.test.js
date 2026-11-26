@@ -579,6 +579,59 @@ test("export: \\d . with an indented line under it does not leave the root, so \
   assert.strictEqual(exportScript([code("\\d .lib\nf:{x+1}\n\\d .\n  / back to the root"), code("b:2")]), "\\d .lib\nf:{x+1}\n\\d .\n  / back to the root\n\\d .\n\nb:2\n");
 });
 
+// What switches the context in a script is KDB-X's to say: each line here
+// was loaded by one, which then answered `\d` (#2999).
+test("export: \\d . follows a cell that left the root by any way q takes, after a prompt or through system or value (#2999)", () => {
+  const { leavesNamespace } = require("../out/qnb.js");
+  const code = (source) => ({ kind: "code", source });
+  for (const left of [
+    "q)\\d .foo",
+    "k)\\d .foo",
+    "K)\\d .foo",
+    "q)k)\\d .foo",
+    'system("d .foo")',
+    'system["d .foo"]',
+    'system"d .foo";',
+    'system "d  .foo"',
+    '(system) "d .foo"',
+    'system@"d .foo"',
+    '@[system;"d .foo";::]',
+    '.[system;enlist "d .foo";::]',
+    'system each enlist "d .foo"',
+    'x:"d .foo"; system x',
+    'system "d ",".foo"',
+    'value "\\\\d .foo"',
+    'value "q)\\\\d .foo"',
+    'value"k)\\\\d .foo"',
+    'value "system \\"d .foo\\""',
+    'eval parse "\\\\d .foo"',
+    'get "\\\\d .foo"',
+    'f:{system "d .foo"}; f[]',
+    // Back and out again, and a root that is only in a comment or a string.
+    '\\d .\nsystem("d .foo")',
+    'q)\\d .foo\na:1 / system "d ."',
+    'q)\\d .foo\nback:"\\\\d ."',
+  ]) {
+    assert.strictEqual(leavesNamespace(`${left}\nf:{x}`), true, left);
+    assert.strictEqual(exportScript([code(`${left}\nf:{x}`), code("g:{x}")]), `${left}\nf:{x}\n\\d .\n\ng:{x}\n`, left);
+  }
+  for (const stays of [
+    // A blank before the `d` is no switch to q, nor is a string nothing runs as one.
+    'system " d .foo"',
+    '-1 "d .foo";',
+    "/ q)\\d .foo\na:1",
+    'a:1 / system "d .foo"',
+    // Back in the root by the cell's end.
+    'system "d .foo"; system "d ."',
+    "\\d .foo\nq)\\d .",
+    "q)\\d .foo\nk)\\d .",
+    'k)\\d .foo\n@[system;"d .";::]',
+    '\\d .foo\nvalue "\\\\d ."',
+  ]) {
+    assert.strictEqual(leavesNamespace(`${stays}\nf:{x}`), false, stays);
+  }
+});
+
 test("export: an indented comment opening a cell is not its first code line; the line under it is unindented (#1935)", () => {
   const { statements } = require("../out/statements.js");
   const script = exportScript([{ kind: "code", source: "f:{x+1}" }, { kind: "code", source: " / note\n g:3" }]);

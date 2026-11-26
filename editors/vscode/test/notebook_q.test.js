@@ -387,6 +387,14 @@ test("an exported notebook defines a name where its cell does: a cell's \\d ends
   }
 });
 
+test("an exported notebook puts the root back after a cell that left it behind a prompt, or through system or value (#2999)", { skip }, async (t) => {
+  for (const left of ["q)\\d .foo", "k)\\d .foo", 'system("d .foo")', '@[system;"d .foo";::]', 'value "\\\\d .foo"', 'value "system \\"d .foo\\""']) {
+    const { cells: ran, script } = await ranAndLoaded(t, [`${left}\na:1`, "b:2", "c:3"], "(`b`c in key `.;`b`c in key `.foo)");
+    assert.deepStrictEqual(script, ran, left);
+    assert.strictEqual(ran[0].replace(/\s/g, ""), "11b", left);
+  }
+});
+
 test("an exported cell that opens with an indented comment does not continue the cell above (#1935)", { skip }, async (t) => {
   for (const cells of [
     ["f:{x+1}", " / note\n g:3"],

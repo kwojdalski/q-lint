@@ -100,6 +100,14 @@ test("each entry of the exported script loads as it ran on its own (#1098)", () 
   assert.match(historyScript([entry("c:3"), entry("  /  \n  b:1"), entry("a:2")]), /^a:2\n\n\/ p, .*\n  \/  \nb:1\n\n\/ p, .*\nc:3\n$/m);
 });
 
+test("the exported script puts the root back after an entry that left it behind a prompt, or through system or value (#2999)", () => {
+  const entry = (code) => ({ process: "p", code, at, millis: 1, outcome: "ok" });
+  for (const left of ["q)\\d .foo", "k)\\d .foo", 'system("d .foo")', '@[system;"d .foo";::]', 'value "\\\\d .foo"']) {
+    // Newest first, as kept.
+    assert.strictEqual(historyScript([entry("b:2"), entry(`${left}\nf:{x}`)]), `/ p, ${at}, 1 ms, ok\n${left}\nf:{x}\n\\d .\n\n/ p, ${at}, 1 ms, ok\nb:2\n`, left);
+  }
+});
+
 test("the filter is on the view's title bar, and Clear Filter only while filtered", () => {
   const title = pkg.contributes.menus["view/title"];
   const on = (command) => title.filter((m) => m.command === command).map((m) => m.when);

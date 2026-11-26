@@ -387,6 +387,61 @@ function commentCell(source: string): string[] {
   return ["/", ...lines, "\\"];
 }
 
+/// `code` as its strings, unescaped and in order, and the rest of it: its
+/// text without them and without its comments.
+function strings(code: string): { bare: string; quoted: string[] } {
+  const quoted: string[] = [];
+  let bare = "";
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (c === '"') {
+      let body = "";
+      for (i++; i < code.length && code[i] !== '"'; i++) {
+        if (code[i] === "\\" && i + 1 < code.length) {
+          i++;
+          body += { n: "\n", t: "\t", r: "\r" }[code[i]] ?? code[i];
+        } else {
+          body += code[i];
+        }
+      }
+      quoted.push(body);
+      bare += " ";
+    } else if (c === "/" && (i === 0 || code[i - 1] === " " || code[i - 1] === "\t" || code[i - 1] === "\n")) {
+      const end = code.indexOf("\n", i);
+      i = (end < 0 ? code.length : end) - 1;
+    } else {
+      bare += c;
+    }
+  }
+  return { bare, quoted };
+}
+
+// `\d .ns` as q reads the line: after any `q)` or `k)` prompts (#2999).
+const CONTEXT_COMMAND = /^(?:[qkK]\))*\\d\s+(\S+)([^]*)$/;
+
+/// Whether `code`, read after a context that was `away` from the root or
+/// not, leaves q in a namespace, by the strings in it: a `"d .ns"` where
+/// `system` is applied - however: `system "d .ns"`, `system("d .ns")`,
+/// `@[system;"d .ns";h]`, in a lambda - and a `"\\d .ns"`, which `value`
+/// runs. One built from parts (`system "d ",ns`) may name any. Code inside
+/// a string is read the same way, as in `value "system \"d .ns\""`. A
+/// string that names the root puts q back there only where something is
+/// seen to run it.
+function leftBy(code: string, away: boolean): boolean {
+  const { bare, quoted } = strings(code);
+  const system = /\bsystem\b/.test(bare);
+  const run = system || /\b(?:value|get|eval|reval)\b/.test(bare);
+  for (const text of quoted) {
+    const switched = CONTEXT_COMMAND.exec(text) ?? (system ? /^d[ \t]+(\S*)([^]*)$/.exec(text) : null);
+    if (switched !== null) {
+      away = switched[1] !== "." || switched[2].trim() !== "" || (away && !run);
+    } else if (/\\d\s|\bsystem\b/.test(text)) {
+      away = leftBy(text, away);
+    }
+  }
+  return away;
+}
+
 /// Whether the cell's code ends in a namespace other than the root: its last
 /// `\d` or `system "d ..."` names one. A notebook runs each cell in the root,
 /// so the `\d` ends with the cell; a script would carry it into every cell
@@ -394,13 +449,15 @@ function commentCell(source: string): string[] {
 /// the text: a namespace set inside a function the cell calls is not seen.
 /// A `\d` statement's lines after its first, even a comment, are its
 /// argument to q, so `\d .` and an indented line is no root (#2155).
+/// Every way of writing the switch that KDB-X takes in a script counts
+/// (#2999) - `q)\d .ns`, `k)\d .ns`, `system("d .ns")`,
+/// `@[system;"d .ns";h]`, `value "\\d .ns"` - and one that only may run
+/// does too: a `\d .` the script did not need changes nothing.
 export function leavesNamespace(source: string): boolean {
   let away = false;
   for (const statement of statements(source)) {
-    const command = /^\\d\s+(\S+)([^]*)$/.exec(statement);
-    for (const [, name, rest] of command !== null ? [command] : statement.matchAll(/\bsystem\s*\[?\s*"d\s+([^"\s]+)/g)) {
-      away = name !== "." || (rest ?? "").trim() !== "";
-    }
+    const command = CONTEXT_COMMAND.exec(statement);
+    away = command !== null ? command[1] !== "." || command[2].trim() !== "" : leftBy(statement, away);
   }
   return away;
 }
