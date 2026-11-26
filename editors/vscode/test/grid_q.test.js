@@ -213,6 +213,91 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     await connection.queryGrid(statements("([] a:til 50)"), SIZE, 10);
     assert.strictEqual((await connection.query(statements("key `.qlint"), SIZE)).text.join(""), before);
   });
+  await t.test("a general column of other than strings is ranked by q over every row held once paged, not sorted by its text (#3069, #3082)", async () => {
+    const { gridLambda, PAGE, readPage, appendPage, readGridAnswer, toGrid } = require("../out/grid.js");
+    const { visibleRows } = require("../media/result.js");
+    const cases = [
+      ["([] g:(10;9;100;2.5;`a;20;1;3))", 4, ["1", "3", "9", "10", "20", "100", "2.5", "`a"]],
+      // Char atoms sort before the strings, a one-character one among them.
+      ['([] a:("b";enlist"a";"";"abc";"B";"ab";enlist"a"))', 2, ['"B"', '"b"', '""', ',"a"', ',"a"', '"ab"', '"abc"']],
+      ["([] a:(1 2;3 4;1 2;0 1;5 6))", 2, ["0 1", "1 2", "1 2", "3 4", "5 6"]],
+      // Strings alone are ranked by their text, as before.
+      ['([] a:("bb";enlist"a";"abc";"BB";"ab"))', 2, ['"BB"', ',"a"', '"ab"', '"abc"', '"bb"']],
+    ];
+    for (const [code, limit, sorted] of cases) {
+      const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      let grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(code), SIZE, limit)).grid;
+      while (grid.cells[0].length < grid.count) {
+        grid = appendPage(grid, readPage(await connection.call(PAGE, TOKEN, grid.cells[0].length, limit)));
+      }
+      assert.deepStrictEqual(grid.rank, full.rank, code);
+      const shown = toGrid(grid, -1);
+      assert.deepStrictEqual(visibleRows(shown, [], { column: 0, descending: false }).map((r) => shown.cells[0][r]), sorted, code);
+    }
+  });
+  await t.test("floats q's distinct and by keep apart have ranks of their own, so Stats and Pivot do not merge them (#3070)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const { columnStats, pivot } = require("../media/result.js");
+    const cases = [
+      ["1 1.0000000000000002 1.00000000000001 1 2 3", [0, 1, 2, 0, 3, 4]],
+      ["0.3,(0.1+0.2),0.3", [0, 1, 0]],
+      ["100000000 100000000.0000001 100000001f", [0, 1, 2]],
+      ['"e"$1 1.0000001 1 0n', [1, 2, 1, 0]],
+      ["2000.01.01T00:00:00.000+0 0.00000000001 0", [0, 1, 0]],
+      ["(0f;neg 0f;0n;0n;0w;-0w)", [2, 2, 0, 0, 3, 1]],
+    ];
+    for (const [column, rank] of cases) {
+      const code = `([] a:${column}; n:1)`;
+      const payload = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      assert.deepStrictEqual(payload.rank[0], rank, code);
+      const q = (await connection.query(statements(`t:${code};(count distinct t\`a;count select sum n by a from t)`), SIZE)).text.join("");
+      const grid = toGrid(payload, 7);
+      const rows = rank.map((_, r) => r);
+      const distinct = columnStats(grid, rows)[0].distinct;
+      assert.strictEqual(`${distinct} ${pivot(grid, rows, { row: 0, column: -1, value: 1, agg: "sum" }, 50).rows.length}`, q, code);
+    }
+  });
+  await t.test("a pivot's sum, avg, min and max of a group holding an infinity are q's (#3077)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const { pivot } = require("../media/result.js");
+    for (const v of ["1 0w 3 -0w 2 5", "1 0W 3 -0W 2 5", "(1i;0Wi;3i;neg 0Wi;2i;5i)", "(1h;0Wh;3h;neg 0Wh;2h;5h)", "1 0w 3 -0w 2 5e"]) {
+      const code = `([] s:\`a\`a\`b\`b\`c\`c; v:${v})`;
+      const shown = toGrid((await connection.queryGrid(statements(code), SIZE, 100)).grid, -1);
+      for (const agg of ["sum", "avg", "min", "max"]) {
+        const q = toGrid((await connection.queryGrid(statements(`select ${agg} v by s from ${code}`), SIZE, 100)).grid, -1).cells[1];
+        const got = pivot(shown, [0, 1, 2, 3, 4, 5], { row: 0, column: -1, value: 1, agg }).cells.map((c) => c[0]);
+        // q writes a float to seven digits.
+        const same = (a, b) => a === b || (a !== "" && b !== "" && Math.abs(Number(a) - Number(b)) <= 1e-6 * Math.abs(Number(b)));
+        assert.ok(got.length === 3 && got.every((x, i) => same(x, q[i])), `${agg} of ${v}: ${JSON.stringify(got)}, q ${JSON.stringify(q)}`);
+      }
+    }
+  });
+  await t.test("a general column pages though the rows of a cut or a page are all of one type, which q makes a vector of (#3068)", async () => {
+    const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
+    const cases = [
+      ['([] a:(1;2;`a;3;"x"))', 2],
+      ['([] a:("b";"a";"";"abc";"B";"ab";"a"))', 2],
+      ["([] a:(1;`b;3;4;5))", 2],
+      ['([] a:(1 2;"ab";3;4;5;6;7))', 3],
+      ["([] a:(1;2;3;4;5f))", 2],
+      ["([] a:(`a`b!1 2;`a`b!3 4;1;2;`c))", 2],
+    ];
+    for (const [code, limit] of cases) {
+      const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      let grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(code), SIZE, limit)).grid;
+      // The rows shown of a general column are a general column's, cut or not.
+      assert.deepStrictEqual(grid.types, [0], code);
+      assert.deepStrictEqual(grid.cells[0], full.cells[0].slice(0, limit), code);
+      assert.deepStrictEqual((await connection.queryGrid(statements(code), SIZE, limit)).grid.cells, grid.cells, code);
+      while (grid.cells[0].length < grid.count) {
+        const page = readPage(await connection.call(PAGE, TOKEN, grid.cells[0].length, limit));
+        assert.notStrictEqual(typeof page, "string", page);
+        grid = appendPage(grid, page);
+      }
+      assert.deepStrictEqual(grid.cells, full.cells, code);
+      assert.deepStrictEqual(grid.raw, full.raw, code);
+    }
+  });
 
   await t.test("an exported q literal rebuilds the table exactly, and a drill-down's value runs as written (#921, #927)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");
@@ -233,6 +318,23 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     }
     const filled = fillDrilldown(`exec i from 0!(${code}) where k={{value}}, d={{row.d}}`, grid, 0, 2);
     assert.deepStrictEqual((await connection.query(statements(filled.code), SIZE)).text, [",2"]);
+  });
+
+  await t.test("a drill-down's value is one operand on the left of an operator too, whatever its literal (#3072)", async () => {
+    const { fillDrilldown } = require("../out/drilldown.js");
+    const columns = ['"G"$("409031f3-b19c-6770-ee84-6e9369c98697";"00000000-0000-0000-0000-000000000001")', '"u"$6000 6001', '("";enlist "x")', "(`a`b!1 2;1)", "(enlist 1;2)", "(([] a:1 2);1)", "(1 2 3;`a)", "((1;2)!(3;4);1)"];
+    for (const column of columns) {
+      await connection.query(statements(`orig:([] c:${column});`), SIZE);
+      const grid = (await connection.queryGrid(statements("orig"), SIZE, 100)).grid;
+      for (let row = 0; row < 2; row++) {
+        for (const template of ["exec i from orig where {{value}}~/:c", "exec i from orig where c~\\:{{value}}"]) {
+          const filled = fillDrilldown(template, grid, 0, row);
+          const answer = await connection.query(statements(filled.code), SIZE);
+          assert.deepStrictEqual(answer.text, [`,${row}`], `${column} row ${row}: ${filled.code} ${answer.error ?? ""}`);
+        }
+      }
+    }
+    await connection.query(statements("delete orig from `.;"), SIZE);
   });
 
   await t.test("an exported q literal rebuilds a minute, second or time of 100 hours or more, which q writes as ** (#1967)", async () => {
@@ -372,10 +474,10 @@ test("rows added by Load more read symbols from their bytes, keep them for Copy 
   const copied = tableLiteral(all).code;
   assert.deepStrictEqual((await c.query(statements(`(select s from t)~select s from ${copied}`), SIZE)).text, ["1b"], copied);
   assert.deepStrictEqual((await c.query(statements(`(exec value e from t)~exec e from ${copied}`), SIZE)).text, ["1b"], copied);
-  // q's order: a general column cannot be sorted by its text, so is not
-  // ranked once paged; a char column sorts by its byte.
+  // q's order: a general column cannot be sorted by its text, so q ranks
+  // it again over the rows held (#3082); a char column sorts by its byte.
   const grid = toGrid(all, -1);
-  assert.strictEqual(grid.rank[2], null);
+  assert.deepStrictEqual(grid.rank[2], [0, 3, 1, 2]);
   const order = (r) => r.map((x, i) => [x, i]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
   assert.deepStrictEqual(order(grid.rank[3]), [3, 1, 2, 0]);
 });

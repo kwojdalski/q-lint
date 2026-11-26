@@ -224,6 +224,10 @@ export function exportResult(format: ExportFormat, payload: GridPayload, decimal
       return { data: textBuffer(markdownParts(payload, decimals, order, formats)), rows: order.length, notes };
     case "q": {
       const table = tableParts(payload, order);
+      // Written as -3! writes it, which q does not read back (#3084).
+      if (table.unread > 0) {
+        notes.push(`${table.unread} cell(s) hold a function q writes as it does not read back (one defined in q, or a composition)`);
+      }
       return { data: textBuffer([...table.parts, "\n"]), rows: order.length, notes };
     }
     case "xlsx": {

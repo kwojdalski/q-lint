@@ -295,8 +295,12 @@
   /// `spec.row`, one column per distinct value of `spec.column` (-1: one
   /// column), each cell `spec.agg` of column `spec.value` over the rows
   /// with both. `count` counts the non-null values (every row, with
-  /// `spec.value` -1); the others take a numeric column's values, nulls and
-  /// infinities left out. Values are ordered as q sorts them (the ranks),
+  /// `spec.value` -1); the others take a numeric column's values, nulls
+  /// left out. An infinity is a value, as q's aggregates take it (#3077):
+  /// a float's is 0w, so a sum holding one is 0w and one holding both is a
+  /// null; a whole number's is the largest its type holds, and its sum
+  /// wraps as q's does (a long's is a long, a short's or an int's an int).
+  /// Values are ordered as q sorts them (the ranks),
   /// or by text where q could not. At most `maxColumns` column values; the
   /// note says how many more there were. {rows: [text], columns: [text],
   /// cells: [[text]], note?}.
@@ -306,6 +310,9 @@
     const valueColumn = spec.value >= 0 && spec.value < grid.columns.length ? spec.value : -1;
     const numbers = valueColumn >= 0 && grid.columns[valueColumn].numeric ? grid.values[valueColumn] : null;
     const whole = numbers !== null && [5, 6, 7].indexOf(grid.columns[valueColumn].type) >= 0;
+    // A whole column's bits, and its infinity.
+    const bits = !whole ? 0 : grid.columns[valueColumn].type === 7 ? 64 : grid.columns[valueColumn].type === 6 ? 32 : 16;
+    const top = whole ? (1n << BigInt(bits - 1)) - 1n : 0n;
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
@@ -351,7 +358,15 @@
         }
         return;
       }
-      const v = numbers[r];
+      // `values` holds an infinity as a null: the cell tells them apart.
+      const cell = grid.cells[valueColumn][r];
+      const inf = numbers[r] === null && /^-?0w$/i.test(cell) ? (cell.charAt(0) === "-" ? -1 : 1) : 0;
+      if (inf !== 0 && !whole) {
+        a.n++;
+        a[inf > 0 ? "up" : "down"] = true;
+        return;
+      }
+      const v = inf !== 0 ? inf * Number(top) : numbers[r];
       if (v !== null) {
         a.n++;
         a.sum += v;
@@ -360,15 +375,22 @@
         a.max = Math.max(a.max, v);
         // A short, int or long by its digits: a double past 2^53 is a
         // number no cell holds (#2451).
-        const digits = whole ? grid.cells[valueColumn][r] : "";
-        if (whole && /^-?\d+$/.test(digits) && a.exact !== false) {
-          const b = BigInt(digits);
+        const digits = whole ? cell : "";
+        if (whole && (inf !== 0 || /^-?\d+$/.test(digits)) && a.exact !== false) {
+          const b = inf !== 0 ? BigInt(inf) * top : BigInt(digits);
           a.exact = { sum: (a.exact ? a.exact.sum : 0n) + b, min: a.exact && a.exact.min < b ? a.exact.min : b, max: a.exact && a.exact.max > b ? a.exact.max : b };
         } else {
           a.exact = false;
         }
       }
     });
+    // A whole number of `width` bits as q writes it: wrapped to them, its
+    // infinities 0W and -0W, its null blank.
+    const wholeText = function (b, width) {
+      const most = (1n << BigInt(width - 1)) - 1n;
+      const w = BigInt.asIntN(width, b);
+      return w === most ? "0W" : w === -most ? "-0W" : w === -most - 1n ? "" : String(w);
+    };
     const text = function (a) {
       if (agg === "count") {
         return String(a.n);
@@ -376,8 +398,19 @@
       if (a.n === 0) {
         return "";
       }
+      if (a.up || a.down) {
+        if (agg === "min" || agg === "max") {
+          return (agg === "min" ? a.down : a.up) ? (agg === "min" ? "-0w" : "0w") : meanText(agg === "min" ? a.min : a.max);
+        }
+        return a.up && a.down ? "" : a.up ? "0w" : "-0w";
+      }
       if (a.exact && agg !== "avg") {
-        return String(a.exact[agg === "sum" ? "sum" : agg]);
+        return wholeText(a.exact[agg], agg === "sum" ? Math.max(bits, 32) : bits);
+      }
+      if (a.exact && bits === 64) {
+        // A long's avg is of its sum, which wraps: of 1 and 0W, a null.
+        const sum = BigInt.asIntN(64, a.exact.sum);
+        return sum === -top - 1n ? "" : meanText(Number(sum) / a.n);
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };
@@ -433,10 +466,27 @@
 
   /// One CSV field of a copy, as grid.ts's csvField(csvText(t)) writes it:
   /// quoted where it must be, and text a spreadsheet would run as a formula
-  /// (=, +, -, @, tab or CR first, and no number) behind a '.
-  function csvCell(t) {
-    const text = /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
+  /// (=, +, -, @, tab or CR first, and no number) behind a '. `own` true:
+  /// the text is q's of a number or the page's, and written as it is.
+  function csvCell(t, own) {
+    const text = own !== true && /^[=+\-@\t\r]/.test(t) && !/^-?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(t) ? "'" + t : t;
     return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  /// The pivot `p` of `grid` by `spec` as CSV, each line ending in \n. The
+  /// names and a symbol's or string's values go through csvCell; a numeric
+  /// or temporal column's values and the aggregates are q's text or the
+  /// page's own numbers, written as they are (#3075).
+  function pivotCsv(grid, spec, p) {
+    const field = function (c) {
+      const column = grid.columns[c];
+      return column && (column.numeric || column.temporal) ? function (t) { return csvCell(t, true); } : function (t) { return csvCell(t); };
+    };
+    const head = [csvCell(grid.columns[spec.row] ? grid.columns[spec.row].name : "")].concat(p.columns.map(spec.column >= 0 ? field(spec.column) : function (t) { return csvCell(t); }));
+    const lines = [head.join(",")].concat(p.rows.map(function (k, i) {
+      return [field(spec.row)(k)].concat(p.cells[i].map(function (t) { return csvCell(t, true); })).join(",");
+    }));
+    return lines.join("\n") + "\n";
   }
 
   /// `map[key]` when `map` has it of its own: a column named constructor
@@ -488,6 +538,7 @@
     PLOT_POINTS: PLOT_POINTS,
     ownValue: ownValue,
     csvCell: csvCell,
+    pivotCsv: pivotCsv,
     gridMove: gridMove,
     announcement: announcement,
     HEAD_ROWS: HEAD_ROWS,
@@ -1613,8 +1664,7 @@
     copy.title = "The pivot as CSV";
     const head = [grid.columns[spec.row] ? grid.columns[spec.row].name : ""].concat(p.columns);
     copy.addEventListener("click", function () {
-      const lines = [head.map(csvCell).join(",")].concat(p.rows.map(function (k, i) { return [k].concat(p.cells[i]).map(csvCell).join(","); }));
-      vscode.postMessage({ type: "copyText", id: result.id, text: lines.join("\n") + "\n" });
+      vscode.postMessage({ type: "copyText", id: result.id, text: pivotCsv(grid, spec, p) });
     });
     controls.append(copy);
     FOCUS.each(controls, "pivot");
@@ -2262,6 +2312,39 @@
         }
       }
       state.id = m.id;
+    }
+    if (typeof state.names === "string" && names !== state.names) {
+      // The same result run again with other columns, as a watched query's
+      // is (#3071): what was set on a column goes with its name to where
+      // the column now is, and is dropped with a column that is gone.
+      const now = m.grid.columns.map(function (c) { return c.name; });
+      const to = state.names.split("\u0000").map(function (name, i, was) {
+        // A name held twice: its first to the first, its second to the next.
+        let nth = was.slice(0, i).filter(function (n) { return n === name; }).length;
+        return now.findIndex(function (n) { return n === name && nth-- === 0; });
+      });
+      const at = function (i) { return Number.isInteger(i) && i >= 0 && to[i] >= 0 ? to[i] : -1; };
+      const filters = [];
+      (state.filters || []).forEach(function (text, i) {
+        if (text && at(i) >= 0) {
+          filters[at(i)] = text;
+        }
+      });
+      state.filters = filters;
+      state.sort = state.sort && at(state.sort.column) >= 0 ? { column: at(state.sort.column), descending: state.sort.descending } : null;
+      if (Array.isArray(state.columns)) {
+        const picked = state.columns.map(at).filter(function (i) { return i >= 0; }).sort(function (a, b) { return a - b; });
+        // Every ticked column gone: the chart's own choice, as for a new result.
+        state.columns = picked.length === 0 && state.columns.length > 0 ? null : picked;
+      }
+      const p = state.pivot;
+      state.pivot = p && at(p.row) >= 0 && (p.column < 0 || at(p.column) >= 0) && (p.value < 0 || at(p.value) >= 0)
+        ? Object.assign({}, p, { row: at(p.row), column: at(p.column), value: at(p.value) })
+        : null;
+      state.y2 = at(state.y2);
+      state.mapSize = at(state.mapSize);
+      state.mapColour = at(state.mapColour);
+      state.names = names;
     }
     Object.keys(state.saved).forEach(function (id) {
       if (kept.indexOf(id) < 0 || id === m.id) {

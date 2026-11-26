@@ -234,7 +234,12 @@ function valueOf(type: number, text: string, raw: unknown, lost: { n: number }):
           const nanos = BigInt(String(raw)) + EPOCH_NANOS;
           return nanos >= -INT64_MAX - 1n && nanos <= INT64_MAX ? nanos : past();
         }
-        const ms = Math.round(Number(raw) * 864e5);
+        // The millisecond q shows: the days rounded to the microsecond,
+        // half away from zero, and that cut to the millisecond, as the
+        // unwrapped grid writes one (#1757) - rounding to the millisecond
+        // wrote the next for a fraction under it (#3083).
+        const product = Number(raw) * 8.64e10;
+        const ms = Math.floor(Math.trunc(product + Math.sign(product) * 0.5) / 1000);
         if (!Number.isFinite(ms)) {
           return past();
         }
