@@ -132,6 +132,14 @@ export function dialHost(host: string): string {
   return /^localhost\.?$/i.test(host.trim()) ? "127.0.0.1" : host;
 }
 
+/// `reval` refusing the cache of a partitioned table's counts, `.Q.PN`,
+/// which q fills on the first count of one (#2647).
+const PN_REFUSAL = /^noupdate: `\.Q `PN$/;
+
+/// Fill `.Q.PN` for every partitioned table, as q's own first count of
+/// each would: sent apart from the user's code, never under `reval`.
+const WARM_PARTITION_COUNTS = "@[{{@[.Q.cn;get x;::]}each .Q.pt;};::;::]";
+
 export class QConnection {
   /// What has arrived of the messages not yet read, in the chunks it came
   /// in: joined only once a whole message is there, since joining each
@@ -279,8 +287,18 @@ export class QConnection {
   /// is kept in `refused`.
   async trapped<T extends { ok: true } | { ok: false; error: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
     if (this.readOnly && !this.noReval) {
-      const answer = read(await this.call(readOnly, ...args));
-      if (answer.ok || answer.error !== NO_REVAL) {
+      let answer = read(await this.call(readOnly, ...args));
+      // A partitioned table's first count caches into `.Q.PN`, which
+      // `reval` refuses: the counts are cached apart, outside it, and the
+      // statements sent again under it, so a read of an HDB is a read (#2647).
+      if (!answer.ok && PN_REFUSAL.test(answer.error)) {
+        await this.call(WARM_PARTITION_COUNTS).catch(() => undefined);
+        answer = read(await this.call(readOnly, ...args));
+      }
+      // The user's code can raise `NO_REVAL`'s text too: the process is
+      // asked apart whether it has `reval` before it is taken at its word,
+      // so no error turns the backstop off (#2638).
+      if (answer.ok || answer.error !== NO_REVAL || (await this.call("`reval in key`.q")) === true) {
         if (!answer.ok) {
           this.noteRefusal(answer.error);
         }
@@ -300,7 +318,16 @@ export class QConnection {
   async guarded(lambda: (evaluate: Evaluate) => string, ...args: unknown[]): Promise<unknown> {
     const evaluate = (await this.underReval()) ? EVALUATE_READ_ONLY : EVALUATE;
     try {
-      return await this.call(lambda(evaluate), ...args);
+      try {
+        return await this.call(lambda(evaluate), ...args);
+      } catch (error) {
+        // As in `trapped`: `.Q.PN` cached apart, and sent again (#2647).
+        if (evaluate !== EVALUATE_READ_ONLY || !(error instanceof QError) || !PN_REFUSAL.test(error.message)) {
+          throw error;
+        }
+        await this.call(WARM_PARTITION_COUNTS).catch(() => undefined);
+        return await this.call(lambda(evaluate), ...args);
+      }
     } catch (error) {
       if (error instanceof QError) {
         this.noteRefusal(error.message);

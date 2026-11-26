@@ -12,6 +12,7 @@ const { installLambda, restoreExpression } = require("../out/instrument.js");
 const { SNAPSHOT_RUN } = require("../out/snapshot.js");
 const { coveragePlan, coverageByFile, coverageSummary, definedNames } = require("../out/coverage.js");
 const { formatSnapshot } = require("../out/snapshot.js");
+const { EVALUATE } = require("../out/query.js");
 
 const range = (line, a, b) => ({ start: { line, character: a }, end: { line, character: b } });
 
@@ -138,7 +139,13 @@ function fakeLive(answer, process = { label: "dev", tags: [] }) {
         return answer(lambda, ...args);
       };
       // Not read-only: `trapped` sends the plain lambda, as a connection does.
-      const value = await query({ call, callOwn: call, trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)) });
+      const value = await query({
+        call,
+        callOwn: call,
+        trapped: async (plain, _readOnly, read, ...args) => read(await call(plain, ...args)),
+        guarded: async (lambda, ...args) => call(lambda(EVALUATE), ...args),
+        noteRefusal: () => {},
+      });
       return { process: this.active.label, value };
     },
   };

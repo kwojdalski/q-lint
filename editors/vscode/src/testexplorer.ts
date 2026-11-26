@@ -58,7 +58,6 @@ import { SNAPSHOT_EXTENSION, SNAPSHOT_RUN, SNAPSHOT_RUN_READ_ONLY, parseSnapshot
 import { statements } from "./statements";
 import {
   RERUN_FAILED,
-  TEST_RUN,
   failureText,
   functionTestId,
   isK4Test,
@@ -69,7 +68,7 @@ import {
   k4Statement,
   parseK4unit,
   readServerTests,
-  readTestResult,
+  runTest,
   splitMatch,
   testRunGuardCode,
   testStatements,
@@ -515,7 +514,7 @@ class QTests {
     };
     const send = (statements: string[], mode: TestMode) =>
       sending(() =>
-        this.live.runOnActive(testRunGuardCode(statements), async (connection) => readTestResult(await connection.call(TEST_RUN, statements, mode)), "ask", process.label, undefined, true),
+        this.live.runOnActive(testRunGuardCode(statements), (connection) => runTest(connection, statements, mode), "ask", process.label, undefined, true),
       );
     // A row whose minver is above the process's .z.K is not run, as KUltf
     // does not load it (#1594): asked once, when a row of the run has one.

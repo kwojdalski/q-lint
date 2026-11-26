@@ -36,24 +36,51 @@
 import { statements } from "./statements";
 import { valued, type GuardCode } from "./guard";
 import { FULL_TEXT, LAID_OUT } from "./qtext";
+import { EVALUATE, type Evaluate } from "./query";
 
-export const TEST_RUN = [
-  "{[s;mode]",
-  " s:{(),x} each (),s; mode:`$mode; d:system \"d\";",
-  " qu:@[{99h=type get x};`.qunit;0b]; e:$[qu;@[get;`.qunit.EMPTYAR;()];()];",
-  " if[qu;.qunit.ar:e;if[`failFlag in key`.qunit;.qunit.failFlag:0b]];",
-  " r:@[{(1b;last value each x)};s;{(0b;x)}];",
-  " system \"d \",string d;",
-  " ok:r 0; v:r 1; m:();",
-  " ff:qu&1b~@[get;`.qunit.failFlag;0b]; qt:ok&(mode~`test)&ff|qu&not e~@[get;`.qunit.ar;e];",
-  " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
-  " failed:$[mode~`fail;ok;not ok;1b;qt;ff;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
-  " q:$[ok;$[ff;@[get;`.qunit.ar;()];()];\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
-  " b:$[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
-  ` F:${FULL_TEXT}; diff:${LAID_OUT}[F;20000] each b;`,
-  " if[2=count b;if[(diff[0]~diff 1)&not b[0]~b 1;diff:{[F;x] 20000 sublist F[20000;x],\"\\n\"}[F] each b]];",
-  " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist F[300;v];v];diff)}",
-].join("\n");
+/// `TEST_RUN` with the statements evaluated by `evaluate`'s `value`. Under
+/// `reval` (`EVALUATE_READ_ONLY`, the read-only guard's backstop, #2639)
+/// no statement can run a qUnit assertion, which assigns `.qunit.ar`, so
+/// qUnit's state is neither cleared nor read: the run changes nothing.
+export function testRunLambda(evaluate: Evaluate): string {
+  const plain = evaluate.value === EVALUATE.value;
+  return [
+    "{[s;mode]",
+    " s:{(),x} each (),s; mode:`$mode; d:system \"d\";",
+    plain ? " qu:@[{99h=type get x};`.qunit;0b]; e:$[qu;@[get;`.qunit.EMPTYAR;()];()];" : " qu:0b; e:();",
+    plain ? " if[qu;.qunit.ar:e;if[`failFlag in key`.qunit;.qunit.failFlag:0b]];" : undefined,
+    ` r:@[{(1b;last ${evaluate.value} each x)};s;{(0b;x)}];`,
+    " system \"d \",string d;",
+    " ok:r 0; v:r 1; m:();",
+    " ff:qu&1b~@[get;`.qunit.failFlag;0b]; qt:ok&(mode~`test)&ff|qu&not e~@[get;`.qunit.ar;e];",
+    " if[ok&mode~`match;m:v;v:$[2=count m;(~). m;0b];mode:`true];",
+    " failed:$[mode~`fail;ok;not ok;1b;qt;ff;mode~`true;not 1b~v;mode~`run;0b;-1h=type v;not v;1h=type v;not all v;0b];",
+    " q:$[ok;$[ff;@[get;`.qunit.ar;()];()];\"assertThatFAIL\"~v;@[get;`.qunit.ar;()];()];",
+    " b:$[not failed;();2=count m;m 1 0;not 99h=type q;();all`actual`expected in key q;q`expected`actual;()];",
+    ` F:${FULL_TEXT}; diff:${LAID_OUT}[F;20000] each b;`,
+    " if[2=count b;if[(diff[0]~diff 1)&not b[0]~b 1;diff:{[F;x] 20000 sublist F[20000;x],\"\\n\"}[F] each b]];",
+    " `ok`failed`text`diff!(ok;failed;$[ok;300 sublist F[300;v];v];diff)}",
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
+}
+
+export const TEST_RUN = testRunLambda(EVALUATE);
+
+/// Run `statements` in `mode` with `TEST_RUN` on `connection`, under
+/// `reval` while it is set to evaluate read-only (`QConnection.guarded`):
+/// a refusal is kept as the connection's, for `Live` to ask about (#2639).
+export async function runTest(
+  connection: { guarded(lambda: (evaluate: Evaluate) => string, ...args: unknown[]): Promise<unknown>; noteRefusal(error: string): void },
+  statements: string[],
+  mode: TestMode,
+): Promise<TestResult> {
+  const result = readTestResult(await connection.guarded(testRunLambda, statements, mode));
+  if (result.errored) {
+    connection.noteRefusal(result.text);
+  }
+  return result;
+}
 
 /// The command that runs again the tests the last run failed (#980).
 export const RERUN_FAILED = "q-lint.rerunFailedTests";

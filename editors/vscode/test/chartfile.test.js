@@ -110,3 +110,17 @@ test("a query's chart of more rows than it draws says how many it left out, on t
   assert.match(said.err.join(""), /250,000 rows: only the first 100,000 of 250,000 rows are drawn/);
   assert.match(fs.readFileSync(out, "utf8"), /the first 100,000 of 250,000 rows/);
 });
+
+test("a query's chart reads under reval: a write the guard misses is refused by q, and nothing changes (#2642)", { skip: require("./qserver.js").skip }, async (t) => {
+  const { connection, dir } = await require("./qserver.js").connect(t, "t:([] x:1 2; y:3 4)");
+  const port = (await connection.evaluate('system"p"')).value;
+  const out = path.join(dir, "c.svg");
+  const said = { out: [], err: [] };
+  const io = { out: (s) => said.out.push(s), err: (s) => said.err.push(s), stdin: () => "" };
+  const code = await main(["--host", "127.0.0.1", "--port", String(port), "--query", '(1-1)"zc:1";t', "-o", out], io);
+  assert.notStrictEqual(code, 0);
+  assert.match(said.err.join(""), /refused by its read-only evaluation/);
+  assert.strictEqual((await connection.evaluate("`zc in key`.")).value, false);
+  // A read still draws.
+  assert.strictEqual(await main(["--host", "127.0.0.1", "--port", String(port), "--query", "t", "-o", out], io), 0);
+});

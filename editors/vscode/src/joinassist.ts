@@ -14,6 +14,7 @@ import { qName } from "./explorer";
 import { valued, type GuardCode } from "./guard";
 import { isString, listOf } from "./processtools";
 import { symbolLiteral } from "./qliteral";
+import { EVALUATE, type Evaluate } from "./query";
 
 export const TABLES = "{[x] string asc tables[]}";
 
@@ -21,13 +22,20 @@ export const TABLES = "{[x] string asc tables[]}";
 /// or `` get`$"my trade" `` for one q would not parse as a name (#1572).
 export const tableExpression = (name: string): string => qName(name);
 
-export const TABLE_SHAPE = [
-  "{[e]",
-  " if[(`$e)in views[];'\"a view, not a table\"];",
-  " t:value e; if[not .Q.qt t;'\"not a table\"];",
-  " m:0!meta t; p:.Q.qp t;",
-  " (string m`c;m`t;string m`a;string keys t;$[1b~p;\"partitioned\";0b~p;\"splayed\";\"memory\"])}",
-].join("\n");
+/// `TABLE_SHAPE` with the expression evaluated by `evaluate`'s `value`:
+/// under `reval` on a guarded process (`QConnection.guarded`), so a write
+/// in it the guard missed is refused (#2640).
+export function tableShapeLambda(evaluate: Evaluate): string {
+  return [
+    "{[e]",
+    " if[(`$e)in views[];'\"a view, not a table\"];",
+    ` t:${evaluate.value} e; if[not .Q.qt t;'\"not a table\"];`,
+    " m:0!meta t; p:.Q.qp t;",
+    " (string m`c;m`t;string m`a;string keys t;$[1b~p;\"partitioned\";0b~p;\"splayed\";\"memory\"])}",
+  ].join("\n");
+}
+
+export const TABLE_SHAPE = tableShapeLambda(EVALUATE);
 
 export interface Shape {
   expression: string;

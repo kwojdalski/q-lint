@@ -350,3 +350,32 @@ test("Record Query Snapshot's lambda has a reval twin that refuses a write (#242
   assert.deepStrictEqual(read.text, ["0 1 2"]);
   assert.strictEqual((await c.evaluate("`int$cnt")).value, 0);
 });
+
+test("on a partitioned HDB a count under reval is a read: .Q.PN is cached apart, not refused (#2647)", { skip }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-pn-"));
+  fs.writeFileSync(path.join(dir, "mk.q"), "{(hsym `$\"db/\",string[x],\"/tr/\") set .Q.en[`:db] ([] sym:`a`b; px:1 2f)} each 2026.01.01 2026.01.02;\n\\l db\n");
+  const port = await freePort();
+  const child = spawn(Q, ["mk.q", "-p", `127.0.0.1:${port}`, "-q"], { cwd: dir, stdio: ["ignore", "ignore", "ignore"] });
+  t.after(() => {
+    child.kill("SIGKILL");
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  let c;
+  for (let i = 0; i < 200 && c === undefined; i++) {
+    await sleep(30);
+    c = await QConnection.open({ host: "127.0.0.1", port }, 1000).catch(() => undefined);
+  }
+  t.after(() => c.close());
+  c.readOnly = true;
+  const counted = await c.query(["count tr"], SIZE);
+  assert.deepStrictEqual([counted.ok, counted.text], [true, ["4"]]);
+  const byDate = await c.query(["select count i by date from tr"], SIZE);
+  assert.strictEqual(byDate.ok, true);
+  assert.strictEqual(c.refused, undefined);
+  // A write after the count is still refused.
+  const written = await c.query(['count tr;00"zp:1"'], SIZE);
+  assert.strictEqual(written.ok, false);
+  assert.ok(refusedByReval(written.error), written.error);
+  c.readOnly = false;
+  assert.strictEqual(await c.call("`zp in key`."), false);
+});
