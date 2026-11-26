@@ -120,6 +120,33 @@ export function coverageByFile(plan: CoveragePlan, counts: unknown, installed: S
   return out;
 }
 
+/// The functions `installed` names that no statement was counted in, in the
+/// order of the plan: never called by their name while the tests ran.
+export function neverCounted(plan: CoveragePlan, counts: unknown, installed: Set<string>): string[] {
+  const list = Array.isArray(counts) ? counts.map(Number) : [];
+  const run = new Set(plan.probes.filter((_, k) => list[k] > 0).map((p) => p.name));
+  return [...new Set(plan.probes.map((p) => p.name))].filter((name) => installed.has(name) && !run.has(name));
+}
+
+/// Names `uncountedNote` lists before it counts the rest.
+const UNCOUNTED_NAMED = 10;
+
+/// What the run's output says of functions counted as never run: only the
+/// name is replaced, so a call through a reference taken before the run
+/// runs the function as it was, and none of it is counted (#2976).
+/// Undefined when there is none.
+export function uncountedNote(names: string[]): string | undefined {
+  if (names.length === 0) {
+    return undefined;
+  }
+  const more = names.length - UNCOUNTED_NAMED;
+  return (
+    `Counted as never run: ${names.slice(0, UNCOUNTED_NAMED).join(", ")}${more > 0 ? ` and ${more} more` : ""}. ` +
+    "A call is counted where it is made by the function's name: one made through a reference taken before the run - " +
+    "a dictionary of handlers, .z.ts, a timer's projection - runs the function as it was, and is not counted."
+  );
+}
+
 /// One line saying what was covered: statements run of those counted.
 export function coverageSummary(byFile: Map<string, CountedStatement[]>, functions: number): string {
   const all = [...byFile.values()].flat();

@@ -830,7 +830,11 @@ A function changed on the process since it was loaded, or not loaded, is
 left alone, and the run's output names those; one redefined while the tests
 ran is left as it is then. A call made where q refuses a global write
 (under `reval`, in a secondary thread of `peach`) answers as before and is
-not counted. `.qlint.cov` holds the counts and the originals
+not counted. Only the name is replaced: a call made through a reference
+taken before the run - a dictionary of handlers, `.z.ts`, a timer's
+projection - runs the function as it was, and is not counted; the run's
+output names the functions counted as never run, and says so. `.qlint.cov`
+holds the counts and the originals
 meanwhile, and is deleted after; `.qlint` itself stays, empty when nothing
 else of q-lint's is in it, as q cannot remove a namespace. When the
 functions cannot be put back over the active connection - another process

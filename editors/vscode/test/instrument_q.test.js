@@ -9,6 +9,7 @@ const { connect, skip } = require("./qserver.js");
 const { definitions, DRIFT, readDrift } = require("../out/definitions.js");
 const { coverageText, localsText, installLambda, restoreExpression, readInstalled, readRestored } = require("../out/instrument.js");
 const { RUN, readAnswer } = require("../out/query.js");
+const { coveragePlan, coverageByFile, neverCounted, uncountedNote } = require("../out/coverage.js");
 
 const LIB = [
   "/ a library",
@@ -247,4 +248,21 @@ test("a reference taken to a function under coverage keeps answering after the r
   assert.strictEqual(Number(await value(c, "handler 1")), 4);
   assert.strictEqual(Number(await value(c, "handler 5")), 12);
   assert.strictEqual(await value(c, "key[`.qlint]~enlist`"), true);
+});
+
+// Only the name is replaced: a handler a dictionary took at load time is
+// the function as it was, and runs uncounted. The run's output says so of
+// the functions it shows as never run.
+test("a function the tests reach through a reference is counted as never run, and the output says why (#2976)", { skip }, async (t) => {
+  const file = ".ns.upd:{[t;x] n:count x; n+1}\nhandlers:enlist[`trade]!enlist .ns.upd\ndispatch:{[t;x] handlers[t][t;x]}\n";
+  const { connection: c } = await connect(t, file);
+  const plan = coveragePlan([{ uri: "file:///w/a.q", text: file }], readDrift(await c.call(DRIFT, ".ns.upd dispatch")));
+  assert.deepStrictEqual(plan.names, [".ns.upd", "dispatch"]);
+  const installed = new Set(plan.names);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), plan.names, plan.was, plan.src, plan.probes.length), 2), ["ok", "ok"]);
+  assert.strictEqual(Number(await value(c, "dispatch[`trade;1 2 3]")), 4);
+  const counts = readRestored(await c.call(restoreExpression("cov"))).d;
+  assert.deepStrictEqual([...coverageByFile(plan, counts, installed).values()][0].map((s) => s.count), [0, 0, 1]);
+  assert.deepStrictEqual(neverCounted(plan, counts, installed), [".ns.upd"]);
+  assert.match(uncountedNote(neverCounted(plan, counts, installed)), /^Counted as never run: \.ns\.upd\. .* a reference taken before the run .* is not counted\.$/);
 });
