@@ -758,7 +758,7 @@ export class Live {
     this.historyView = new HistoryView(this);
     this.processesTree = window.createTreeView(VIEWS.processes, { treeDataProvider: this.processesView });
     this.historyTree = window.createTreeView(VIEWS.history, { treeDataProvider: this.historyView });
-    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes, given) => this.save(processes, given) });
+    this.discovery = new DiscoveryServers(context, { list: () => this.processes(), save: (processes, given) => this.save(processes, given), gone: (server) => this.serverGone(server) });
     const terminals = new QTerminals(context);
     this.terminals = terminals;
     this.runFileWith = (extra, document) => terminals.runFile(extra, document);
@@ -2606,6 +2606,16 @@ export class Live {
     this.reconnecting = undefined;
     this.showStatus();
     void window.showWarningMessage(plainMessage(`q-lint: could not reconnect to ${process.label} after ${tried} ${tried === 1 ? "try" : "tries"}.`));
+  }
+
+  /// The discovery server `server` was deleted, or its processes removed:
+  /// a process of its is listed nowhere now, so the connection to one is
+  /// closed and not reconnected, as deleting a saved process closes its
+  /// own (#2565).
+  async serverGone(server: string): Promise<void> {
+    if (this.active?.server === server && (this.connection !== undefined || this.connecting !== undefined || this.reconnecting !== undefined)) {
+      await this.disconnect();
+    }
   }
 
   /// The process `label`, started from here at `port`, is being stopped

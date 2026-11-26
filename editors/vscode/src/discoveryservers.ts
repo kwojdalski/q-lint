@@ -76,7 +76,9 @@ export class DiscoveryServers {
 
   constructor(
     private readonly context: ExtensionContext,
-    private readonly saved: { list: () => Process[]; save: (processes: Process[], given: string[]) => Promise<void> },
+    /// `gone`: a server deleted, or its processes removed - the connection
+    /// to one of them is closed, and not reconnected (#2565).
+    private readonly saved: { list: () => Process[]; save: (processes: Process[], given: string[]) => Promise<void>; gone?: (server: string) => Promise<void> },
   ) {
     const c = (name: string, run: (...args: never[]) => unknown) => commands.registerCommand(name, run);
     context.subscriptions.push(
@@ -466,6 +468,7 @@ export class DiscoveryServers {
     await this.forgetPasswords(server.label);
     this.states.delete(server.label);
     await this.store(this.servers().filter((s) => s.label !== server.label));
+    await this.saved.gone?.(server.label);
   }
 
   /// Fetch the server given, or every server when given none.
@@ -507,6 +510,7 @@ export class DiscoveryServers {
     if (server !== undefined) {
       this.removals.set(server.label, (this.removals.get(server.label) ?? 0) + 1);
       this.set(server.label, { ...EMPTY_STATE, removed: true });
+      await this.saved.gone?.(server.label);
     }
   }
 }
