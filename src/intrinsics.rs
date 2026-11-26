@@ -665,8 +665,11 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             continue;
         }
         if name == "within" {
-            if let Some(bounds) = literal(args[1])
-                && (!bounds.vector || bounds.len != 2)
+            // The empty list is no pair of bounds either, whatever is
+            // tested: KDB-X `5 within ()` and `1 2 within ()` are 'length
+            // (#2901).
+            if re!(r"^\(\s*\)$").is_match(args[1].trim())
+                || literal(args[1]).is_some_and(|bounds| !bounds.vector || bounds.len != 2)
             {
                 report(
                     &mut out,
