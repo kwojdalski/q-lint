@@ -632,6 +632,71 @@ fn an_assignment_of_a_name_or_a_projection_says_what_it_applies() {
     }
 }
 
+#[test]
+fn a_name_applied_to_a_string_or_to_the_line_below_is_no_alias() {
+    // KDB-X 5: `a:upper "s"` is -10h, and `c:count` with `  1 2 3` on the
+    // line below -7h, over a comment's line and a blank one too. The string
+    // is blank in the code view and the line below was not looked at, so
+    // each was read as another name for the function (#2965).
+    for (source, name) in [
+        ("a:upper \"s\"\n", "a"),
+        ("a:upper\"s\"\n", "a"),
+        ("b:value \"1+1\";\n", "b"),
+        ("c:count\n  1 2 3\n", "c"),
+        ("c:count\r\n\t1 2 3\r\n", "c"),
+        ("d:count\n  \"abc\"\n", "d"),
+        ("h:count\n/ note\n\n  1 2\n", "h"),
+        ("f:{k:count\n  x}\n", "k"),
+        ("p:add[;2]\n  3\n", "p"),
+    ] {
+        assert_eq!(assigns(source, name), None, "{source}");
+    }
+    // What ends the statement leaves it one: a comment, a statement at
+    // column 0 - a string's too - and a closer or a `;` leading the line
+    // below, which is all `g:{c:count` and `  ;c}` has there.
+    for (source, name) in [
+        ("e:count / \"not an argument\"\n", "e"),
+        ("i:count\nj:1\n", "i"),
+        ("i:count\n\"abc\"\n", "i"),
+        ("i:count\n/ note\n\nj:1\n", "i"),
+        ("g:{c:count\n  ;c}\n", "c"),
+        ("g:{c:count\n  }\n", "c"),
+    ] {
+        assert_eq!(assigns(source, name), Some(("count", None)), "{source}");
+    }
+}
+
+#[test]
+fn signature_help_is_not_that_of_a_function_a_name_was_applied_to_a_string() {
+    // `a` holds a string, and `a[` offered `upper`'s `a[x]` (#2965).
+    let dir = tempfile::tempdir().unwrap();
+    for text in ["a:upper \"s\"\nr:a[", "a:count\n  1 2 3\nr:a["] {
+        let (mut server, _) = Server::over(dir.path(), &[], plain(), Value::Null);
+        let uri = server.open(dir.path(), "main.q", text);
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            "r:a[",
+            4,
+            Value::Null,
+        );
+        assert_eq!(reply["result"], Value::Null, "{text}");
+    }
+    let text = "a:upper\nr:a[";
+    let (mut server, _) = Server::over(dir.path(), &[], plain(), Value::Null);
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "r:a[",
+        4,
+        Value::Null,
+    );
+    assert_eq!(reply["result"]["signatures"][0]["label"], "a[x]", "{reply}");
+}
+
 /// The glyph at `skip` bytes into `context` in `source`.
 fn glyph<'a>(source: &'a str, context: &str, skip: usize) -> Option<&'a str> {
     glyph_at(source, at(source, context, skip)).map(|(at, len)| &source[at..at + len])

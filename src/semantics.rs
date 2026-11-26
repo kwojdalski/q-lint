@@ -6738,6 +6738,37 @@ enum Assigned<'a> {
     Other,
 }
 
+/// Whether what follows `after` is an argument the code view does not show
+/// on the line: a string, which is blank there, or anything on an indented
+/// line below, which goes on with the statement. KDB-X 5 reads `a:upper "s"`
+/// as a character, and `a:count` and then `  1 2 3` as a long - over a blank
+/// line or a comment's between them too, and at a line end in a lambda -
+/// where each was read as another name for the function (#2965). A closer
+/// or a `;` that leads the line below ends the statement instead.
+pub(crate) fn argument_follows(code: &str, raw: &str, after: usize) -> bool {
+    let string = |raw: &str| raw.trim_start_matches([' ', '\t']).starts_with('"');
+    let mut at = after;
+    for (n, line) in code[after..].split_inclusive('\n').enumerate() {
+        let said = &raw[at..at + line.len()];
+        let indented = n == 0 || said.starts_with([' ', '\t']);
+        at += line.len();
+        // A string here, and not a comment, where the line goes on with
+        // the statement: blank in the code view, whatever follows it.
+        if indented && string(said) {
+            return true;
+        }
+        let shown = line.trim();
+        if !shown.is_empty() {
+            return n > 0 && indented && !shown.starts_with([';', ')', ']', '}']);
+        }
+        // A line that begins the next statement ends the search.
+        if n > 0 && !indented && !said.trim().is_empty() && !said.starts_with('/') {
+            return false;
+        }
+    }
+    false
+}
+
 /// `Assigned` of the value at `at`.
 fn assigned_value<'a>(code: &'a str, raw: &str, at: usize) -> Assigned<'a> {
     if let Some(rank) = assigned_rank(code, raw, at) {
@@ -6745,7 +6776,10 @@ fn assigned_value<'a>(code: &'a str, raw: &str, at: usize) -> Assigned<'a> {
     }
     let ends = |from: usize| {
         let after = code[from..].trim_start_matches([' ', '\t']);
-        after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])
+        // `a:upper "s"`, and `a:count` with `  1 2 3` on the line below,
+        // assign what the function returns (#2965).
+        !argument_follows(code, raw, from)
+            && (after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}']))
     };
     let at = chained_value(code, at);
     let start = code.len() - code[at..].trim_start_matches([' ', '\t']).len();

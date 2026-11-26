@@ -242,6 +242,33 @@ fn holds(source: &str) -> Vec<(String, bool)> {
 }
 
 #[test]
+fn a_name_assigned_what_a_function_returns_is_outlined_as_a_value() {
+    // KDB-X 5: `type each (upper "s";count 1 2)` is -10 -7h, and `c:count`
+    // with `  1 2 3` on the line below is -7h. A string is blank in the code
+    // view, and the line below was not read, so each was outlined - and
+    // coloured where read - as the function it applies (#2965).
+    let named = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
+        names.iter().map(|&(n, f)| (n.to_string(), f)).collect()
+    };
+    assert_eq!(
+        holds(
+            "a:upper \"s\"\nb:value \"1+1\"\nc:count\n  1 2 3\nd:count\n  \"abc\"\ne:count / \"no\"\nh:count\n/ note\n\n  1 2\ni:count\nj:count each\n  (1 2;3)\nk:count each\n"
+        ),
+        named(&[
+            ("a", false),
+            ("b", false),
+            ("c", false),
+            ("d", false),
+            ("e", true),
+            ("h", false),
+            ("i", true),
+            ("j", false),
+            ("k", true),
+        ])
+    );
+}
+
+#[test]
 fn a_name_is_outlined_by_the_value_q_holds_it_as() {
     let named = |names: &[(&str, bool)]| -> Vec<(String, bool)> {
         names.iter().map(|&(n, f)| (n.to_string(), f)).collect()

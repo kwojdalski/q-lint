@@ -159,6 +159,9 @@ pub fn applied(code: &str, raw: &str, end: usize) -> Option<Applied> {
         );
         after = close;
     }
+    if super::argument_follows(code, raw, after) {
+        return None;
+    }
     let tail = &code[code.len() - blank(&code[after..])..];
     (tail.is_empty() || tail.starts_with([';', '\n', '\r', ')', ']', '}'])).then_some(Applied {
         at,
