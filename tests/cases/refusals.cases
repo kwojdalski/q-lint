@@ -1625,6 +1625,18 @@ a:x <= each y
 b:x >= each y
 c:x <> each y
 
+=== clean profile: general | a byte or a boolean ends no number vector, so the derived function after it is applied infix (q 5: parse "0 1b/0x0102" is ((/;1b);0;0x0102), #2783)
+a:0 1b/0x0102
+b:1b 0/0x0102
+c:0 0x01/0x0102
+d:0 1 01b/0x0102
+e:0 1b'0x0102
+
+=== QE009 profile: general | while a vector of one type is one operand, and a lone boolean has nothing on its left (q 5: '/, #2783)
+a:0 1/0x0102
+b:1b/0x0102
+c:1 2f/0x0102
+
 === QT029 profile: general | a negative or exponent float, read whole (q 5: each is 'type) (#504)
 a:hopen -1.5
 b:hopen 1e3

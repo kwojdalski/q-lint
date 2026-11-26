@@ -2223,11 +2223,19 @@ fn derived_operand(
                     }
                     break;
                 }
-                // A number vector is one operand: `1 2'y`.
-                while c[q].is_ascii_digit() {
+                // A number vector is one operand: `1 2'y`. A byte or a
+                // boolean is a run of its own, as QE010 reads it: q 5 parses
+                // `0 1b/x` as `0 (1b/) x` and `1b 0/x` as `1b (0/) x`, the
+                // derived function applied infix (#2783).
+                let mut end = end;
+                while c[q].is_ascii_digit() && !lone_literal(&view[q..end]) {
                     let gap = view[..q].trim_end_matches([' ', '\t']).len();
                     match token(gap) {
-                        Some(s) if gap < q && c[s].is_ascii_digit() => q = s,
+                        Some(s)
+                            if gap < q && c[s].is_ascii_digit() && !lone_literal(&view[s..gap]) =>
+                        {
+                            (q, end) = (s, gap);
+                        }
                         _ => break,
                     }
                 }
@@ -2768,6 +2776,12 @@ fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     }
 }
 
+/// Whether `token` is a byte or a boolean literal, which joins no vector of
+/// the numbers around it.
+fn lone_literal(token: &str) -> bool {
+    re!(r"^(?:0x[0-9a-fA-F]*|[01]+b)$").is_match(token)
+}
+
 /// QE010. A number q 5 will not parse. Each shape was refused by `parse`,
 /// which names the token: an integer type with a fraction (`1.5j`, and
 /// `1.5 2j`, where the suffix types every item), a suffix on any item but
@@ -2815,7 +2829,7 @@ fn numbers(
         // A byte or a boolean is a run of its own: q 5 parses `2i 0x01` as
         // `2i` applied to `0x01`, and `1 2 1b` and `2i 0x01 3` the same way
         // (#486), so the item before it is the vector's last.
-        let lone = |t: &regex::Match| re!(r"^(?:0x[0-9a-fA-F]*|[01]+b)$").is_match(t.as_str());
+        let lone = |t: &regex::Match| lone_literal(t.as_str());
         let mut j = i;
         while j + 1 < tokens.len()
             && !lone(&tokens[j])
