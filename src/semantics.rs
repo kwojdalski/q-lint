@@ -4521,12 +4521,18 @@ fn named_values(
         let Some((&at, rest)) = at.split_first() else {
             continue;
         };
+        // The name as it is written there, which under a `\d` is not the
+        // name it is kept by: q 5 `\d .zz`, `a:2.5`, `a[0]:9` is 'type
+        // (#2787).
         let indexes = |&r: &usize| {
             r > at
                 && scope_at(scopes, r).is_none()
-                && code[r..]
-                    .strip_prefix(name)
-                    .is_some_and(|after| after.trim_start().starts_with('['))
+                && re!(r"^\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+                    .find(&code[r..])
+                    .is_some_and(|written| {
+                        key(written.as_str(), r) == name
+                            && code[r + written.end()..].trim_start().starts_with('[')
+                    })
         };
         if !rest.iter().all(indexes) {
             continue;
