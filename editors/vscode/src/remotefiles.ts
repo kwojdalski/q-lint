@@ -38,10 +38,11 @@ const SH = "{\"'\",ssr[x;\"'\";\"'\\\\''\"],\"'\"}";
 /// no `find` of this kind: there every path `key` answers is one. Where the
 /// command fails, none is taken for a file. The command is in brackets:
 /// `system` sends its output to a file after the last of what it is given,
-/// and takes a leading `cd` for its own `\cd`.
+/// and takes a leading `cd` for its own `\cd`. Each name `find` lists ends
+/// in a NUL, not a newline, so a name that holds a newline is one (#2542).
 const REGULAR = [
   `{[d;n]$[.z.o in\`w32\`w64;count[n]#1b;`,
-  `   n in @[{2_'x where x like"./*"}system@;"(cd -- ",${SH}[d]," && find -L . -mindepth 1 -maxdepth 1 -type f 2>/dev/null; true)";()]]}`,
+  `   n in @[{x:"\\000"vs"\\n"sv system x;2_'x where x like"./*"};"(cd -- ",${SH}[d]," && find -L . -mindepth 1 -maxdepth 1 -type f -exec printf '%s\\\\0' {} + 2>/dev/null; true)";()]]}`,
 ].join("\n");
 
 /// The same for the one path `p`.
