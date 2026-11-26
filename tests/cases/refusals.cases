@@ -291,6 +291,19 @@ h2:hopen `:localhost:5000
 === QT030 | a cast to a character that is no type
 r:"Q"$"1"
 
+=== QT030 profile: general | a character that is no letter is no type either (#2888; q 5: each is 'type)
+r:" "$"ab"
+r2:"1"$1
+r3:"_"$1
+r4:"9"$()
+r5:f[" " $ x]
+
+=== clean profile: general | but the star hands its argument back, and a quote between two strings opens no string (#2888; q 5: 1, "a$", ("x";"$y"))
+a:"*"$1
+b:"a","$"
+c:("x";"$y")
+d:"a\"","$b"
+
 === clean profile: general | a one-letter string ending a line, and a conditional starting the next (q 5 prints 1 and 3, #725)
 a:1b
 mode:"w"
@@ -1224,10 +1237,70 @@ b:`u#"aa"
 a:`s#"abc"
 b:`u#"ab"
 
+=== QT024 profile: general | an atom takes no attribute, the grouped one included (#2891; q 5: each is 'type)
+a:`s#3
+b:`u#`a
+c:`p#"a"
+d:`g#1b
+e:`s#2024.01.01
+f:(`s#-1.5;0)
+g:`s#0x01
+
+=== clean profile: general | while a list of one item, an empty list, or an atom that only starts a list takes one (#2891; q 5: each runs)
+a:`s#enlist 3
+b:`s#()
+c:`s#""
+d:`s#3,4
+e:`g#`a`b
+f:@[`t;`sym;`g#]
+
 === QT029 profile: general | hopen of a real, the empty symbol or the empty string (q 5: 'type)
 a:hopen 1.5e
 b:hopen `
 c:hopen ""
+
+=== QT029 profile: general | a string needs the leading colon as a symbol does (#2885; q 5: each is 'type)
+a:hopen "localhost:5000"
+b:hopen["localhost:5000"]
+c:hopen "a"
+d:hopen " :localhost:5000"
+
+=== clean profile: general | with the colon it is a handle, and a string joined to something is not one literal (#2885; q 5: 'hop, if nothing listens)
+a:hopen ":localhost:5000"
+b:hopen "localhost:",string p
+c:hopen":unix://5000"
+
+=== QT029 profile: general | a symbol that runs on over a slash, without its colon (#2886; q 5: each is 'type)
+a:hopen `unix://5000
+b:hopen `tcps://localhost:5000
+c:hopen[`unix://5000]
+
+=== clean profile: general | and with it (#2886; q 5: 'hop, if nothing listens)
+a:hopen `:unix://5000
+b:hopen `:tcps://localhost:5000
+
+=== QT029 profile: general | a null or infinite long is no handle, nor any other literal that is no long (#2887; q 5: 'domain for the first four, 'type each after)
+a:hopen 0N
+b:hopen 0W
+c:hopen -0W
+d:hopen 0Nj
+e:hopen 0n
+f:hopen 2024.01.01
+g:hopen 1b
+h:hopen 0x01
+i:hopen 12:00
+j:hopen `a`b
+k:hopen 1 2
+l:hopen 0D00:00:01
+m:hopen 0Ni
+n:hopen `:a`:b
+o:hopen 010b
+
+=== clean profile: general | while a long, a handle and its timeout, or an int are left to run (#2887; q 5: 'hop, if nothing listens, for the first three)
+a:hopen 5000j
+b:hopen (`:localhost:5000;100)
+c:hopen 05
+d:hopen 5000i
 
 === QT025 profile: general | a list cannot be signalled (q 5: '(1;2), '() and '`a`b are 'stype)
 a:{'(1;2)}

@@ -22,13 +22,14 @@
 //! less sure - a column in a query, a parameter, a global, an expression -
 //! is left alone, and so is a lambda of more than 64 locals, whose types
 //! cost a read of the lambda each. One pass over each typed local's reads.
-use super::infer::{Typed, literal_type, typed_locals_up_to};
+use super::infer::{Typed, literal_count, literal_type, typed_locals_up_to};
 use crate::Finding;
 use std::collections::HashMap;
 
-/// What an operand is known to be: its q type, and whether it can be `""`,
-/// a list of no items, which a join takes the other side's type from.
-type Operand = (i16, bool);
+/// What an operand is known to be: its q type, whether it can be `""`,
+/// a list of no items, which a join takes the other side's type from, and
+/// how many items it holds where it is a list of a known length.
+type Operand = (i16, bool, Option<usize>);
 
 /// The most locals a lambda may have for its types to be read here.
 const MOST_LOCALS: usize = 64;
@@ -48,7 +49,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str, comments: &str) -> Vec
     let mut at_place: HashMap<usize, Operand> = HashMap::new();
     for t in &typed {
         for p in &t.local.places {
-            at_place.insert(p.at, (t.kind, t.empty));
+            at_place.insert(p.at, (t.kind, t.empty, t.count));
         }
     }
     let mut out = vec![];
@@ -58,7 +59,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str, comments: &str) -> Vec
             if let Some((op, other, whole_end)) = right_side(code, comments, end, &at_place) {
                 judge(&mut out, path, source, p.at, whole_end, t, op, other, true);
             }
-            if let Some((op, other, start)) = left_side(code, p.at, &at_place) {
+            if let Some((op, other, start)) = left_side(code, comments, p.at, &at_place) {
                 judge(&mut out, path, source, start, end, t, op, other, false);
             }
         }
@@ -86,21 +87,44 @@ fn judge(
     let name = &t.local.name;
     let symbol = |k: i16| k.abs() == 11;
     let simple = |k: i16| k != 0 && k.abs() < 20;
+    // Two lists of different lengths: q checks the lengths before the
+    // types, and the error is 'length - `` `a`b=1 2 3 ``, `` `a`b+1 2 3 ``
+    // and `` `a`b+() `` (KDB-X).
+    let lengths = match (t.count, other) {
+        (Some(mine), Some((_, _, Some(theirs)))) if mine != theirs => Some((mine, theirs)),
+        _ => None,
+    };
     let (code, detail) = if ARITHMETIC.contains(&op) && symbol(t.kind) {
+        // An atom beside the empty list is the empty list, whatever the
+        // atom is: `s+()` is `()` for a symbol `s` (KDB-X).
+        if t.kind < 0 && other.is_some_and(|(o, ..)| o == 0) {
+            return;
+        }
         (
             "QT035",
-            format!(
-                "`{text}` is 'type: `{name}` is always a symbol here, and q does no arithmetic on one"
-            ),
+            match lengths {
+                Some((mine, theirs)) => format!(
+                    "`{text}` is 'length: `{name}` is always {mine} symbols here and the other side holds {theirs}, and q does no arithmetic on a symbol"
+                ),
+                None => format!(
+                    "`{text}` is 'type: `{name}` is always a symbol here, and q does no arithmetic on one"
+                ),
+            },
         )
-    } else if let Some((o, other_empty)) = other {
+    } else if let Some((o, other_empty, _)) = other {
         if COMPARE.contains(&op) && (symbol(t.kind) != symbol(o)) && simple(t.kind) && simple(o) {
             (
                 "QT033",
-                format!(
-                    "`{text}` is 'type: a symbol compares only with a symbol, and `{name}` is always {} here",
-                    kind_name(t.kind)
-                ),
+                match lengths {
+                    Some((mine, theirs)) => format!(
+                        "`{text}` is 'length: `{name}` is always {} of {mine} here and the other side holds {theirs}, and a symbol compares only with a symbol",
+                        kind_name(t.kind)
+                    ),
+                    None => format!(
+                        "`{text}` is 'type: a symbol compares only with a symbol, and `{name}` is always {} here",
+                        kind_name(t.kind)
+                    ),
+                },
             )
         } else if op == ","
             && simple(t.kind)
@@ -130,13 +154,14 @@ fn judge(
     out.push(Finding::at(path, source, start, code, detail));
 }
 
-/// The type of the literal `text`, and whether it is `""`, which has no items.
+/// The type of the literal `text`, whether it is `""`, which has no items,
+/// and how many it has where it is a list.
 fn literal(text: &str) -> Option<Operand> {
-    literal_type(text).map(|k| (k, text.trim() == "\"\""))
+    literal_type(text).map(|k| (k, text.trim() == "\"\"", literal_count(text)))
 }
 
 /// The words for a q type number.
-fn kind_name(k: i16) -> String {
+pub(crate) fn kind_name(k: i16) -> String {
     let base = match k.abs() {
         1 => "boolean",
         2 => "guid",
@@ -201,9 +226,7 @@ fn right_side<'a>(
         return None;
     }
     let start = from + (comments[from..].len() - operand.len());
-    let stop = code[start..]
-        .find([';', ')', ']', '}', '\n'])
-        .map_or(code.len(), |n| start + n);
+    let stop = operand_end(code, start);
     let text = comments[start..stop].trim_end();
     let kind = literal(text).or_else(|| {
         let name_end = start + text.len();
@@ -214,16 +237,41 @@ fn right_side<'a>(
             .flatten()
             .filter(|_| name_end <= stop)
     });
-    Some((op, kind, start + text.len()))
+    // What is quoted stays on one line: of an operand that runs on over
+    // the next, only up to the operator.
+    let shown = if text.contains('\n') {
+        from
+    } else {
+        start + text.len()
+    };
+    Some((op, kind, shown))
+}
+
+/// Where the operand starting at `start` ends: the `;`, the line break or
+/// the closing bracket that ends its expression, past any bracket it opens
+/// itself - `g[1;2]` and `count(1;2)` are each one operand.
+fn operand_end(code: &str, start: usize) -> usize {
+    let mut depth = 0usize;
+    for (i, b) in code[start..].bytes().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return start + i,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' | b'\n' if depth == 0 => return start + i,
+            _ => {}
+        }
+    }
+    code.len()
 }
 
 /// The dyad written before a name starting at `at`, the type of its left
 /// operand when that is one literal or one typed local, and where that
 /// operand starts. q reads right to left, so a dyad's left operand is the
 /// one noun before it - a name, a symbol or several, a number or a vector
-/// of them - whatever is applied to the result further left.
+/// of them, a string - whatever is applied to the result further left.
 fn left_side(
     code: &str,
+    comments: &str,
     at: usize,
     at_place: &HashMap<usize, Operand>,
 ) -> Option<(&'static str, Option<Operand>, usize)> {
@@ -234,6 +282,15 @@ fn left_side(
         .chain([","].iter())
         .find(|op| before.ends_with(**op))?;
     let left = before[..before.len() - op.len()].trim_end_matches([' ', '\t']);
+    // A string is blank in the code view, quotes and all, so one that ends
+    // the left operand is read from the comments view, which keeps it:
+    // `"a"=s` and `"ab"+s` are 'type (KDB-X).
+    let kept = comments[..before.len() - op.len()].trim_end_matches([' ', '\t']);
+    if kept.len() > left.len() && kept.ends_with('"') {
+        // Blank in the code view from quote to quote, or it is no one string.
+        let start = string_start(kept).filter(|&s| code[s..kept.len()].trim().is_empty())?;
+        return Some((op, literal(&kept[start..]), start));
+    }
     let b = left.as_bytes();
     let token_char = |i: usize| {
         let c = b[i];
@@ -292,4 +349,21 @@ fn left_side(
         is_name.then(|| at_place.get(&start).copied()).flatten()
     });
     Some((op, kind, start))
+}
+
+/// Where the string literal that ends `text` starts: the nearest quote
+/// before its closing one that no backslash escapes.
+fn string_start(text: &str) -> Option<usize> {
+    let b = text.as_bytes();
+    let mut i = b.len().checked_sub(1)?;
+    while i > 0 {
+        i -= 1;
+        if b[i] == b'"' {
+            let slashes = b[..i].iter().rev().take_while(|c| **c == b'\\').count();
+            if slashes % 2 == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
 }

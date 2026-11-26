@@ -555,7 +555,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
     let number =
         |s: &str| re!(r"^-?\.?\d[A-Za-z0-9.:]*(?:[ \t]+-?\.?\d[A-Za-z0-9.:]*)*$").is_match(s);
     for m in re!(
-        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog)(?P<we>')?\["
+        r"\((?P<p><=|>=|<>|[+\-*%&|=<>^!])\)\[|(?P<g><=|>=|<>|[+\-*%&|=<>^!])(?P<e>')?\[|\b(?P<w>and|or|mod|div|xexp|xlog|xbar)(?P<we>')?\["
     )
     .captures_iter(code)
     {
@@ -584,7 +584,16 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
         }
         let g = glyph.as_str();
         let text = &raw[whole.start()..close];
-        let arithmetic = ["+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog"];
+        let arithmetic = [
+            "+", "-", "*", "%", "&", "|", "and", "or", "mod", "div", "xexp", "xlog", "xbar",
+        ];
+        // A symbol atom beside the empty list makes the empty list: q 5
+        // `+[`a;()]` and `*[();`a]` are `()`. Not under `xlog`, nor for
+        // `-[();`a]`, which are 'type (#2880).
+        let atom = |s: &str| symbol(s) && s.matches('`').count() == 1;
+        let none = |s: &str| re!(r"^\([ \t]*\)$").is_match(s);
+        let empty_list = g != "xlog"
+            && ((atom(l) && none(r)) || (none(l) && atom(r) && g != "-"));
         let char_refused = matches!(g, "+" | "-" | "*")
             && match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
                 (Some(a), Some(b)) => {
@@ -597,6 +606,11 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 }
                 _ => false,
             };
+        // `mod["a";2]` and `xexp[2.5;"a"]` are 'type as the infix is (#2884).
+        let word_refused = match (arithmetic_kind(raw_l), arithmetic_kind(raw_r)) {
+            (Some(a), Some(b)) => word_refuses_char(g, a, b, raw_l),
+            _ => false,
+        };
         let (code, detail) = match (shape(l), shape(r)) {
             (Some(k), Some(v)) if g == "!" && k >= 2 && k != v => (
                 "QT001",
@@ -606,7 +620,7 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
                 "QT006",
                 format!("`{g}` pairs a {a}-vector with a {b}-vector; that is a 'length error"),
             ),
-            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) => (
+            _ if arithmetic.contains(&g) && (symbol(l) || symbol(r)) && !empty_list => (
                 "QT003",
                 "Arithmetic on a symbol literal is a 'type error at runtime".into(),
             ),
@@ -623,6 +637,10 @@ fn glyph_brackets(path: &str, raw: &str, code: &str, out: &mut Vec<Finding>) {
             _ if char_refused => (
                 "QT023",
                 format!("`{text}` is 'type: q 5 does no integer arithmetic on a char"),
+            ),
+            _ if word_refused => (
+                "QT023",
+                format!("`{text}` is 'type: q 5 takes no char under `{g}` here"),
             ),
             _ => continue,
         };
@@ -2356,17 +2374,28 @@ pub fn check(
     // An operand is a symbol vector, a numeric vector, a byte vector with at
     // least two items, or a parenthesised list or vector. `shape` decides the length of
     // each; this pattern only has to find them.
-    for m in re!(concat!(
-        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
+    // A numeric item may be a time, with a colon before a digit, and a
+    // boolean vector is one token, a digit an item: KDB-X
+    // `12:00 13:00+1 2 3`, `10b=101b` and `101b+1 2` are 'length (#2899,
+    // #2900).
+    let pairs = re!(concat!(
+        r#"(?P<l>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#,
         blank!(),
         r"*(?P<op>(?:<>|<=|>=|[+*%&|=<>^-]|\b(?:and|or|mod|div|xexp|xlog)\b)'?|,')",
         blank!(),
-        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
-    ))
-    .captures_iter(comments)
-    {
+        r#"*(?P<r>(?:`[A-Za-z0-9_.]*){2,}|-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|\([^()]*\)|"(?:[^"\\\n]|\\.)*")"#
+    ));
+    let mut at = 0;
+    while let Some(m) = pairs.captures_at(comments, at) {
         let whole = m.get(0).unwrap();
         let op = m.name("op").unwrap();
+        // A match that starts inside a name is no operand, and the one
+        // after its colon may be: `a1:12:00 13:00+1 2 3`.
+        if !boundary(code, whole.start()) {
+            at = whole.start() + 1;
+            continue;
+        }
+        at = whole.end();
         // Read in `comments`, where a string is still text: an operand is
         // code, or a whole string literal - blank in `code`, and not opened
         // by the closing quote of another - whose items `string_items` counts.
@@ -2405,8 +2434,7 @@ pub fn check(
         // The right operand is everything to the right of the operator, so it
         // has to end here for its length to be the one counted: `4 5,6` is
         // three items, not two. Same test as QB018's.
-        if negative || exponent || !boundary(code, whole.start()) || !operand_ends(code, comments, whole.end())
-        {
+        if negative || exponent || !operand_ends(code, comments, whole.end()) {
             continue;
         }
         // `` `dd`del`div`dfn `` is one symbol vector, not `div` between two:
@@ -4136,34 +4164,31 @@ fn held(code: &str, raw: &str) -> Option<Held> {
 /// statement, where a column of the same name wins: q 5
 /// `{t:([]m:1 2 3); m:5; select from t where m=m -1}[]` runs.
 fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usize) -> bool {
-    let Some(s) = scope_at(scopes, at) else {
-        return false;
-    };
-    let scope = &scopes[s];
-    if at < scope.body || scope.params.contains(name) || !scope.locals.contains(name) {
-        return false;
-    }
-    let rel = at - scope.body;
-    let direct = scope.direct.as_bytes();
-    // Depth-zero statement starts, so the read's own statement is known.
-    let mut depth = 0i32;
-    let mut statement = 0;
-    for (i, &b) in direct[..rel].iter().enumerate() {
-        match b {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
-            b';' if depth == 0 => statement = i + 1,
-            _ => {}
-        }
-    }
-    if re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct[statement..rel]) {
-        return false;
+    scope_at(scopes, at).is_some_and(|s| {
+        local_writes(&scopes[s], code, comments, name)
+            .is_some_and(|writes| local_read(&scopes[s], &writes, at))
+    })
+}
+
+/// The half of `local_atom` that is the same for every read of `name` in
+/// `scope`: where in `code` each atom it is bound to sits, and whether that
+/// write is outside every bracket. `None` when a write is of anything else.
+/// QT022 asks it once for a name, not at each read, and has to tell an
+/// integer, which q applies as a handle, from the rest.
+fn local_writes(
+    scope: &Scope,
+    code: &str,
+    comments: &str,
+    name: &str,
+) -> Option<Vec<(usize, usize, bool)>> {
+    if scope.params.contains(name) || !scope.locals.contains(name) {
+        return None;
     }
     let view = local_view(&scope.direct, true);
     if multi_assignments(&view).any(|(_, n)| n == name) {
-        return false;
+        return None;
     }
-    let mut dominated = false;
+    let mut writes = vec![];
     for w in re!(r"([A-Za-z][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*[-+*%,&|^#_!~=<>$?@.]?::?")
         .captures_iter(&view)
     {
@@ -4172,11 +4197,7 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
             continue;
         }
         // `name:` and nothing else: not `name::`, `name+:` or `name[i]:`.
-        let Some(plain) =
-            re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:([^:]|$)").captures(&view[whole.start()..])
-        else {
-            return false;
-        };
+        let plain = re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:([^:]|$)").captures(&view[whole.start()..])?;
         let start = whole.start() + plain.get(1).unwrap().start();
         let bytes = view.as_bytes();
         let (mut end, mut depth) = (start, 0i32);
@@ -4196,7 +4217,7 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
         }
         let (a, b) = (scope.body + start, scope.body + end);
         if held(&code[a..b], &comments[a..b]) != Some(Held::Atom) {
-            return false;
+            return None;
         }
         let outside = view.as_bytes()[..whole.start()]
             .iter()
@@ -4206,9 +4227,32 @@ fn local_atom(scopes: &[Scope], code: &str, comments: &str, name: &str, at: usiz
                 _ => d,
             })
             == 0;
-        dominated |= outside && end <= rel;
+        writes.push((a, b, outside));
     }
-    dominated
+    Some(writes)
+}
+
+/// The half that depends on the read at `at`: outside a qSQL statement, and
+/// after one of `writes` that has certainly run.
+fn local_read(scope: &Scope, writes: &[(usize, usize, bool)], at: usize) -> bool {
+    if at < scope.body {
+        return false;
+    }
+    let rel = at - scope.body;
+    let direct = scope.direct.as_bytes();
+    // Depth-zero statement starts, so the read's own statement is known.
+    let mut depth = 0i32;
+    let mut statement = 0;
+    for (i, &b) in direct[..rel].iter().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' if depth == 0 => statement = i + 1,
+            _ => {}
+        }
+    }
+    !re!(r"\b(?:select|exec|update|delete)\b").is_match(&scope.direct[statement..rel])
+        && writes.iter().any(|&(_, b, outside)| outside && b <= at)
 }
 
 /// The rules that need to know what a name holds: indexing an atom, two
@@ -4450,6 +4494,7 @@ fn named_values(
     // Names bound to an integer atom, which q applies as a file handle rather
     // than indexing: see QT022 below.
     let mut handles: HashSet<&str> = HashSet::new();
+    let integer = re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$");
     // A file that evaluates strings can define anything, so nothing is known
     // by name there; the literal-only checks below still hold.
     // Nor is a member of a namespace or dictionary written as a whole:
@@ -4512,7 +4557,7 @@ fn named_values(
             // `0N` and `0W` are integers too: uqf's tick.q starts a log
             // handle as `0N` and sets it with hopen later. Not a short: q 5
             // `h:1h; h "hi"` is 'type, where `2i "hi"` writes (#477).
-            if re!(r"^\s*-?(?:\d+|0[NW])[ij]?\s*$").is_match(text) {
+            if integer.is_match(text) {
                 handles.insert(name);
             }
             known.insert(name, (end, value));
@@ -4645,6 +4690,8 @@ fn named_values(
     // Over `comments`, where a string keeps its quotes: `k "hi"` and
     // `k@"hi"` index an atom with a string (q 5: 'type) (#472). The name
     // itself must be code, not inside a string.
+    type Written<'a> = HashMap<(usize, &'a str), Option<Vec<(usize, usize, bool)>>>;
+    let mut written: Written = HashMap::new();
     let mut at = 0;
     while let Some(m) = indexed.captures_at(comments, at) {
         let name = m.get(1).unwrap();
@@ -4655,27 +4702,60 @@ fn named_values(
         // Nor before a qSQL word, which ends the column list or the clause:
         // `update time:t0 from t` fills the column from the atom (q 5, #114).
         if m.get(2).is_some_and(|next| {
-            (INFIX.contains(&next.as_str()) && next.as_str() != "each")
+            (INFIX.contains(&next.as_str()) && !matches!(next.as_str(), "each" | "peach"))
                 || matches!(next.as_str(), "by" | "from" | "where")
         }) {
             continue;
         }
-        if !boundary(code, name.start())
-            || visible(name.as_str(), name.start()) != Some(&Held::Atom)
-        {
+        if !boundary(code, name.start()) {
             continue;
         }
+        // A local bound to an atom earlier in its lambda is indexed the
+        // same way, where most q code lives: KDB-X `{a:2.5; a 0}[]` and
+        // `{d:2024.01.01; d[0]}[]` are 'type (#2892). `local_writes` and
+        // `local_read` say when the text is sure, and which atoms it may
+        // hold; the writes are read once for a name, or a long body of
+        // calls to a local was quadratic.
+        let local = match visible(name.as_str(), name.start()) {
+            Some(Held::Atom) => None,
+            Some(_) => continue,
+            None => {
+                let Some(s) = scope_at(scopes, name.start()) else {
+                    continue;
+                };
+                let writes = written
+                    .entry((s, name.as_str()))
+                    .or_insert_with(|| local_writes(&scopes[s], code, comments, name.as_str()));
+                match writes {
+                    Some(writes) if local_read(&scopes[s], writes, name.start()) => Some(&*writes),
+                    _ => continue,
+                }
+            }
+        };
+        let handle = match local {
+            Some(atoms) => atoms.iter().any(|&(a, b, _)| {
+                let text = ungrouped(&code[a..b], &comments[a..b]).map_or("", |v| v.1);
+                integer.is_match(text)
+            }),
+            None => handles.contains(key(name.as_str(), name.start()).as_str()),
+        };
         // An integer is applied as a file handle. Given a string it may well
         // write - `out:1; out["hi\n"]` prints - but given a number or nothing
         // it cannot: 'type on an open handle, and on one that is not q 5
         // tries the write and fails - `a:5; a[0]` is 'Cannot write to handle
         // 5. OS reports: Bad file descriptor (#507). A name or anything else might be a string.
-        if handles.contains(key(name.as_str(), name.start()).as_str()) {
+        if handle {
             // `a@0` and `a . enlist 0` apply it the same way (q 5).
             let after = &raw[crate::past_blanks(code, name.end())..];
             let after = after
                 .strip_prefix(['@', '.'])
                 .map_or(after, |a| a.trim_start_matches([' ', '\t']));
+            // And so does an iterator, an item at a time: KDB-X `a:5;
+            // a each 0`, `a peach 0` and `a'[0]` are 'Cannot write to handle
+            // 5 as well (#2893).
+            let after = re!(r"^(?:p?each\b|')[ \t]*")
+                .find(after)
+                .map_or(after, |m| &after[m.end()..]);
             let argument = match after.strip_prefix('[') {
                 Some(inside) => inside.trim_start_matches([' ', '\t']),
                 None => after,
@@ -4794,7 +4874,10 @@ fn named_values(
     // Two vectors of known, different lengths under an operator that pairs
     // items - QT006 for a name rather than a literal. `,` and `~` take any
     // lengths and are not in the set.
-    let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?[A-Za-z0-9.]*)+|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
+    // A time's colon and a one-token boolean or byte vector as in the
+    // literal rule: KDB-X `a:1 2 3; a+12:00 13:00`, `a+10b` and `a+0x0102`
+    // are 'length (#2899, #2900).
+    let vector = r"-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*(?:(?:[ \t]+|[ \t]*\r?\n[ \t]+)-?\d(?:[A-Za-z0-9.]*(?:e-|e\+\d))?(?:[A-Za-z0-9.]|:\d)*)+|[01]{2,}b|0x(?:[0-9a-fA-F]{2}){2,}|(?:`[A-Za-z0-9_.]*){2,}|\([^()]*;[^()]*\)";
     // The statement's blanks around the operator: `bump:v+` and then a
     // column-0 `1 2` are two statements (#742).
     let pair = re_built!(&format!(
@@ -4835,11 +4918,13 @@ fn named_values(
         let negative = op.as_str() == "-"
             && code[..op.start()].ends_with(char::is_whitespace)
             && re!(r"^\.?\d").is_match(&code[op.end()..]);
-        if !named
-            || negative
-            || !boundary(code, l.start())
-            || !operand_ends(code, comments, r.end())
-        {
+        // A match that starts inside a name is no operand, and the one
+        // after its colon may be: `a1:12:00 13:00+a`.
+        if !boundary(code, l.start()) {
+            at = l.start() + 1;
+            continue;
+        }
+        if !named || negative || !operand_ends(code, comments, r.end()) {
             continue;
         }
         if let (Some(a), Some(b)) = (length(l.as_str(), l.start()), length(r.as_str(), r.start()))
@@ -4867,14 +4952,15 @@ fn named_values(
     // those operand kinds. An older note in this repository had `"a"*3` as
     // 291, on a version it did not record.
     // Booleans and bytes before plain integers, or `1b` matches as `1`.
-    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
+    // A float before them too, which `xexp` refuses a char beside (#2884).
+    let operand = r#""(?:\\.|[^"\\])*"|[01]+b|0x[0-9a-fA-F]+|(?:-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?[ \t]+)*-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?e\b|-?(?:\d+\.\d*|\.\d+)|-?0[NW][hij]?\b|-?\d+[hij]?(?:[ \t]+-?\d+[hij]?)*|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*"#;
     // The statement's blanks around the operator: `inc:x+` and then a
     // column-0 `"done"` are two statements (#741).
     let infix = re_built!(&format!(
         concat!(
             r"(?P<l>{operand})",
             blank!(),
-            r"*(?P<op>[-+*])",
+            r"*(?P<op>[-+*]|mod\b|xexp\b)",
             blank!(),
             r"*(?P<r>{operand})"
         ),
@@ -4925,9 +5011,14 @@ fn named_values(
             && comments[..l.start()].ends_with(':')
             && comments[..l.start() - 1].ends_with(|c: char| c.is_ascii_digit())
             && !named(l.start() - 1);
+        // A word operator is a word of its own: the `mod` of `amod 2` and
+        // of `2 mod2` is part of a name.
+        let word = op.as_str().starts_with(char::is_alphabetic);
+        let joined = |x: &str| x.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c));
         if code.get(op.range()) != Some(op.as_str())
             || negative
             || temporal
+            || (word && joined(&comments[..op.start()]))
             || !boundary(comments, l.start())
             || !operand_ends(code, comments, r.end())
         {
@@ -4939,6 +5030,26 @@ fn named_values(
         ) else {
             continue;
         };
+        // The word operators: q 5 `"a" mod 2` and `"a" xexp 2` are 'type,
+        // `"a" div 2` is 48i and `"a" xlog 2` a float (#2884).
+        if word {
+            if word_refuses_char(op.as_str(), a, b, l.as_str()) {
+                out.push(Finding::at(
+                    path,
+                    raw,
+                    l.start(),
+                    "QT023",
+                    format!(
+                        "`{} {} {}` is 'type: q 5 takes no char under `{}` here",
+                        l.as_str(),
+                        op.as_str(),
+                        r.as_str(),
+                        op.as_str()
+                    ),
+                ));
+            }
+            continue;
+        }
         let refused = match op.as_str() {
             "-" => a == Arithmetic::Char,
             _ => a == Arithmetic::Char || b == Arithmetic::Char,
@@ -5279,18 +5390,27 @@ fn named_values(
     for m in re!(concat!(
         r"(?:\b(ljf|ijf|lj|ij|pj)|\((ljf|ijf|lj|ij|pj)\))(?:",
         blank!(),
-        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+        r"+|\s*\[[^;\[\]]*;\s*)(\(\s*\[|\(\s*(?P<inner>\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\)|(?:0[ \t]*![ \t]*|\([ \t]*\)[ \t]*xkey[ \t]+|(?:value|key)[ \t]+)(?P<unkeyed>\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
     ))
     .captures_iter(code)
     .filter(|m| !code[..m.get(0).unwrap().start()].ends_with('.'))
     {
         let keyword = m.get(1).or(m.get(2)).unwrap();
         let whole = m.get(3).unwrap();
-        let unkeyed = if let Some(right) = m.get(4) {
+        let unkeyed = if let Some(right) = m.name("inner") {
             operand_ends(code, comments, whole.end())
                 && matches!(
                     visible(right.as_str(), right.start()),
                     Some(Held::Table(_, false))
+                )
+        } else if let Some(right) = m.name("unkeyed") {
+            // A table unkeyed where it is joined, the trap written out:
+            // KDB-X `t lj 0!k`, `t lj value k`, `t lj key k` and
+            // `t lj () xkey k` are 'type, keyed or not before (#2894).
+            operand_ends(code, comments, whole.end())
+                && matches!(
+                    visible(right.as_str(), right.start()),
+                    Some(Held::Table(..))
                 )
         } else if whole.as_str().starts_with('(') {
             let right = whole;
@@ -5326,7 +5446,10 @@ fn named_values(
     // table itself, `t upsert (1;2;3)`, and of a simple vector row,
     // `` `t insert 1 2 3 ``, whose items are the values.
     let name = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
-    let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+";
+    // One value is an atom, a number or a symbol, and a row of one: KDB-X
+    // `` `t insert 4 ``, `` `t insert `a `` and `t upsert 4` are 'length on a
+    // table of two columns, and run on a table of one (#2895).
+    let row = r"\(|-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)*|`[A-Za-z0-9_.:]*";
     // Infix, the row is in the same statement: `add:`t insert` and then a
     // column-0 `(1;2;3)` are two statements (#743).
     let forms = re_built!(&format!(
@@ -5423,8 +5546,17 @@ fn named_values(
             }
             (slots.len(), close)
         } else {
+            // A symbol vector is matched to the columns, not counted here:
+            // KDB-X runs `` `s insert `a`b `` on two symbol columns.
+            if r.as_str().starts_with('`') && code[r.end()..].starts_with('`') {
+                continue;
+            }
             (r.as_str().split_whitespace().count(), r.end())
         };
+        // `10b` and `0x0102` are one word and two values, and 'type.
+        let atom = values == 1
+            && r.as_str() != "("
+            && (r.as_str().starts_with('`') || held(r.as_str(), r.as_str()) == Some(Held::Atom));
         // The row ends the call: a bracket form closes after it.
         let ends = if m.name("op3").is_some() {
             code[end..].trim_start().starts_with(']')
@@ -5434,10 +5566,13 @@ fn named_values(
         if !ends {
             continue;
         }
-        let Some(Held::Table(columns, _)) = visible(table.as_str(), table.start()) else {
+        let Some(Held::Table(columns, keyed)) = visible(table.as_str(), table.start()) else {
             continue;
         };
-        let message = if rows.is_empty() {
+        // Into a keyed table an atom is 'type, which is not this rule's.
+        let message = if atom {
+            (!keyed && columns.len() > 1).then(|| "One value".to_string())
+        } else if rows.is_empty() {
             (values > 1 && values != columns.len()).then(|| format!("{values} values"))
         } else {
             rows.iter()
@@ -5763,6 +5898,27 @@ fn arithmetic_kind(text: &str) -> Option<Arithmetic> {
         Some(Arithmetic::Float)
     } else {
         None
+    }
+}
+
+/// Whether q 5 refuses the word operator `op` over operands of kinds `a`
+/// and `b`, one of them a char, where `left` is the left operand's text.
+/// `xexp` takes no char at all, beside a float either: `"a" xexp 2`,
+/// `2.5 xexp "a"`. `mod` refuses one on its left beside anything integral
+/// (`"a" mod 2`, where `"a" mod 2.5` is 17f) and one on its right under an
+/// integer, but not under a real: `2 mod "a"` is 'type, `1e mod "a"` 1f -
+/// so there the left operand has to be a literal, which says which (#2884).
+fn word_refuses_char(op: &str, a: Arithmetic, b: Arithmetic, left: &str) -> bool {
+    let left = left.trim();
+    match op {
+        "xexp" => a == Arithmetic::Char || b == Arithmetic::Char,
+        "mod" if a == Arithmetic::Char => b != Arithmetic::Float,
+        "mod" if b == Arithmetic::Char => {
+            a == Arithmetic::Integral
+                && left.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+                && (left.starts_with("0x") || !left.ends_with('e'))
+        }
+        _ => false,
     }
 }
 
