@@ -202,8 +202,10 @@ export function nameAt(line: string, character: number): { name: string; start: 
   // `a:-1` is `:` and `-`, `x,/:y` is `,` and `/:`. A dot is a glyph only
   // where no name starts: `:.Q.s1` is `:` and `.Q.s1`. A symbol, `` `max ``
   // or `` `:db/t ``, is taken whole, and is no name. `0:`, `1:` and `2:`
-  // are one operator each, as q lexes them, not `:` (#1750).
-  const re = /`[\w.]*(?::[\w.:/]*)?|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|(?<![\w.])[0-2]:(?!:)|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
+  // are one operator each, as q lexes them, not `:` (#1750). A number or a
+  // temporal - `1.5`, `2024.01.02`, `12:30`, `1e-3` - is one literal, and
+  // no name: its `.`, `:` and `-` are no glyphs (#2410).
+  const re = /`[\w.]*(?::[\w.:/]*)?|(?<![\w.])\.?\d[\d.]*(?:[DT][\d.]*)?(?::\d[\d.]*)*(?:e[+-]?\d+)?[A-Za-z0-9]*(?!:)|\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|(?<![\w.])[0-2]:(?!:)|<>|<=|>=|::|':|\/:|\\:|[+\-*%&|^=<>~!#_$?@,'/\\:]|\.(?![A-Za-z])/g;
   // The token the cursor is on, or failing that the one it is just after.
   let found: { name: string; start: number; end: number } | undefined;
   for (const m of line.matchAll(re)) {
@@ -220,5 +222,5 @@ export function nameAt(line: string, character: number): { name: string; start: 
     }
   }
   // Through `start` itself: a `/` after a blank starts a comment.
-  return found === undefined || found.name.startsWith("`") || inStringOrComment(line, found.start + 1) ? undefined : found;
+  return found === undefined || /^(?:`|\.?\d(?!:$))/.test(found.name) || inStringOrComment(line, found.start + 1) ? undefined : found;
 }
