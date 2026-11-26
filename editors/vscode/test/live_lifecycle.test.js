@@ -528,3 +528,14 @@ test("an automatic reconnect asks nothing about a connect script the guard holds
   assert.strictEqual(ran(), 1);
   assert.strictEqual(live.activeLabel(), "p");
 });
+
+test("Load more while direct evaluation is on is later, not the end of the result: nothing is sent (#2566)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "query.unwrapped": true });
+  await live.connectTo("a");
+  const sent = a.sent.length;
+  const page = await live.pageHeld("a", 100, 100, "token");
+  assert.match(page.later, /evaluated directly now/);
+  assert.strictEqual(a.sent.length, sent);
+});
