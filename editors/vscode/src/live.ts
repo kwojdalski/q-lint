@@ -80,7 +80,7 @@ import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHea
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
-import { blockAt, scriptCode, selectionCode, statements } from "./statements";
+import { blockAt, contextAfter, inContext, scriptCode, selectionCode, statements } from "./statements";
 import { assertWritable, relativeInside } from "./workspacewrite";
 import { commandLine, expandHome, qBinaryFrom, relativeBinaryProblem, replLines, shellKind, terminalCwd } from "./terminal";
 import { readDotenv, terminalEnv } from "./qenv";
@@ -180,6 +180,19 @@ function codeAt(editor: TextEditor, from: From): string | undefined {
     return block === undefined ? undefined : lines.slice(block.start, block.end + 1).join("\n");
   }
   return selectionCode(document.getText().split("\n"), line, document.lineAt(line).text);
+}
+
+/// The context `codeAt`'s code runs in when q loads the file: the one the
+/// text above its first line left, which a query of it runs in too, as a
+/// cell's does (#2911). The whole file sets its own.
+function contextAt(editor: TextEditor, from: From): string {
+  if (from === "file") {
+    return ".";
+  }
+  const lines = editor.document.getText().split(/\r?\n/);
+  const line = editor.selection.active.line;
+  const start = from === "selection" && !editor.selection.isEmpty ? editor.selection.start.line : from === "block" ? (blockAt(lines, line)?.start ?? line) : line;
+  return contextAfter(scriptCode(lines.slice(0, start).join("\n")));
 }
 
 /// The editor a command is for: the one showing `uri`, a Uri a title-bar
@@ -2891,7 +2904,7 @@ export class Live {
     const last = selection.isEmpty ? selection.active.line : selection.end.character === 0 && selection.end.line > selection.start.line ? selection.end.line - 1 : selection.end.line;
     this.origin = from === "line" || from === "selection" ? { uri: editor.document.uri.toString(), line: last, version: editor.document.version } : undefined;
     try {
-      await this.queryCode(code, editor.document.uri, serverTypes);
+      await this.queryCode(code, editor.document.uri, serverTypes, contextAt(editor, from));
     } finally {
       this.origin = undefined;
     }
@@ -2899,8 +2912,8 @@ export class Live {
 
   /// Run `code` from the document `uri` as a query from the editor is run:
   /// on the process the file is bound to, when it has one. A Run code lens
-  /// sends its definition here.
-  async queryCode(code: string, uri: Uri, serverTypes?: string[]): Promise<void> {
+  /// sends its definition here. `context`: the `\d` it runs in (#2911).
+  async queryCode(code: string, uri: Uri, serverTypes?: string[], context = "."): Promise<void> {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
@@ -2925,7 +2938,7 @@ export class Live {
     } else if (serverTypes !== undefined && serverTypes.length > 0 && isGatewayOwn(code)) {
       void window.showInformationMessage(plainMessage(`q-lint: this code reads the gateway's own state, so it runs on the gateway itself, not on ${serverTypes.join(", ")}. .gw.syncexec written out sends it to them.`));
     }
-    await this.run(retyped ?? code, undefined, serverTypes ?? named);
+    await this.run(retyped ?? code, undefined, serverTypes ?? named, undefined, context);
   }
 
   /// `code` as it goes to `process`: through `.gw.syncexec` on a TorQ gateway
@@ -3748,7 +3761,8 @@ export class Live {
   /// code goes through `.gw.syncexec` to `serverTypes` (#909); the guard
   /// reads it as written. `mode` shows the result as a grid or a chart
   /// whatever q-lint.query.mode is: a data file opened in the grid (#962).
-  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode): Promise<void> {
+  /// `context`: the `\d` the code runs in (#2911).
+  async run(written: string, as?: "watch" | "watched", serverTypes?: string[], mode?: QueryMode, context = "."): Promise<void> {
     const origin = as === undefined ? this.origin : undefined;
     this.origin = undefined;
     const asked = this.active ?? this.connectingAs;
@@ -3772,9 +3786,12 @@ export class Live {
       return;
     }
     const { connection, process } = ready;
+    // In the context its file left above it, behind a `\d` the guard was not
+    // asked about: q reads each query in the root again (#2911).
+    const placed = context === "." ? written : inContext(statements(written), context).join("\n");
     let code: string;
     try {
-      code = this.throughGateway(written, process, serverTypes);
+      code = this.throughGateway(placed, process, serverTypes);
     } catch (error) {
       // A server type that is no q name: said, and nothing is sent (#3065).
       void window.showErrorMessage(plainMessage(`q-lint: ${error instanceof Error ? error.message : String(error)}`));
@@ -3860,7 +3877,7 @@ export class Live {
       // Answered: the connection holds, and a drop after starts the tries again (#2129).
       this.answeredOn = connection;
       const label = labelNow();
-      if (!answer.ok && code === written && !direct) {
+      if (!answer.ok && code === placed && !direct) {
         this.lastFailure = { process: label, code, error: answer.error, trace: answer.trace };
       }
       entry = {
