@@ -1440,6 +1440,43 @@ fn a_configured_baseline_hides_its_findings_in_the_editor_unless_turned_off() {
     assert_eq!(server.codes_for(&uri), vec!["QF001".to_string()]);
 }
 
+/// What a name holds once the file has loaded is what it is listed as, as
+/// the outline has it: KDB-X types `p:add[1]` and `ce:count each` 104h and
+/// `al:add` 100h, and `f` is 3 after `f:{x}` and `f:3` - no function, and
+/// no dead one (#2809).
+#[test]
+fn a_definition_is_listed_as_what_the_name_holds_once_loaded() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "add:{x+y}\np:add[1]\nce:count each\nal:add\nf:{x}\nf:3\nr:p[2],al[1;2]\n";
+    let (mut server, _) = Server::over(dir.path(), &[("lib.q", lib)], client(), Value::Null);
+    let reply = server.request("q-lint/definitions", json!({}));
+    let got: Vec<(&str, &str)> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["name"].as_str().unwrap(), d["kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("add", "function"),
+            ("al", "function"),
+            ("ce", "function"),
+            ("f", "variable"),
+            ("p", "function"),
+            ("r", "variable"),
+        ]
+    );
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let dead: Vec<&str> = reply["result"]["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(dead, ["ce"], "{reply}");
+}
+
 #[test]
 fn the_workspace_definitions_and_its_unused_functions_are_listed() {
     let dir = tempfile::tempdir().unwrap();

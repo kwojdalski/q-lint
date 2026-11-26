@@ -57,7 +57,10 @@ fn namespace(name: &str) -> &str {
 
 /// `q-lint/definitions`: `[{name, namespace, kind, uri, range}]`, each
 /// global once per file that assigns it, at its first assignment there,
-/// sorted by namespace and name. `kind` is `function` or `variable`.
+/// sorted by namespace and name. `kind` is `function` or `variable`: what
+/// the name holds once the file has loaded, as the outline has it - a
+/// projection, a derived function and a name holding one are functions, and
+/// a lambda assigned over is not (#2809).
 fn definitions(sources: &Sources) -> Value {
     let mut out: BTreeMap<(String, String, String), Value> = BTreeMap::new();
     for key in sources.keys() {
@@ -82,7 +85,7 @@ fn definitions(sources: &Sources) -> Value {
                     json!({
                         "name": name,
                         "namespace": namespace(&name),
-                        "kind": if d.function { "function" } else { "variable" },
+                        "kind": if d.holds_function { "function" } else { "variable" },
                         "uri": uri,
                         "range": range(&lines, m.at, m.len),
                     }),
@@ -163,7 +166,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             // Each name as q has it where the file is loaded (#2046).
             let names = sources.names(&text, m, &placement);
             match &m.definition {
-                Some(d) if d.function => {
+                Some(d) if d.holds_function => {
                     defined.extend(names.into_iter().map(|name| {
                         (
                             key.to_string(),
