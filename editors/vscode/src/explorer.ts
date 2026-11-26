@@ -572,8 +572,12 @@ export function liveCompletions(g: Gathered, process: string, table?: string): C
     ...g.entries.map((e): Completion => ({
       label: fullName(e),
       kind: e.kind,
+      // An entry a direct process listed was not read: only its kind is
+      // known, not its type or its parameters (#2493).
       detail:
-        e.kind === "function"
+        e.unread === true && e.kind !== "table"
+          ? `${e.kind} (${process})`
+          : e.kind === "function"
           ? `${shape(e)} (${process})`
           : e.kind === "table"
             ? `table, ${e.count === null ? "not counted" : plural(e.count, "row")} (${process})`

@@ -303,3 +303,16 @@ test("a very large row limit reaches q code as digits, at most 2^53-1 (#1852)", 
   assert.match(viewDefinition([50, 160], grid), /;9007199254740991f\]/);
   assert.strictEqual(readNotebook(from("notebook.rowLimit", 1e21)).rowLimit, Number.MAX_SAFE_INTEGER);
 });
+
+test("completion from a direct process gives an unread name its kind alone, not a type or signature never read (#2493)", async () => {
+  const { gatherDirect } = require("../out/explorer.js");
+  const g = await gatherDirect(async (r) => ({ ok: true, value: r === "\\f" ? ["f"] : r === "\\v" ? ["v", "t"] : r === "tables[]" ? ["t"] : [] }), []);
+  assert.deepStrictEqual(
+    liveCompletions(g, "pm").map((i) => [i.label, i.detail]),
+    [
+      ["f", "function (pm)"],
+      ["t", "table, not counted (pm)"],
+      ["v", "variable (pm)"],
+    ],
+  );
+});
