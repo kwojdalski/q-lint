@@ -86,9 +86,32 @@ const TEMPORAL = new Set(["p", "n", "t", "u", "v", "z", "d", "m"]);
 const SECOND: Record<string, string> = { p: "1000000000", n: "1000000000", t: "1000", u: "0", v: "1" };
 const NUMERIC = new Set(["h", "i", "j", "e", "f"]);
 
-/// An expression as an operand: a name as it is, anything else bracketed.
+/// `expression` without the comment it ends in: a `/` after a blank (or
+/// at the start of its last line), outside a string. `value` reads past it,
+/// so the shape is read, but in brackets it took the closing one (#3047).
+function uncommented(expression: string): string {
+  let quoted = false;
+  for (let i = 0; i < expression.length; i++) {
+    const c = expression[i];
+    if (quoted && c === "\\") {
+      i++;
+    } else if (c === '"') {
+      quoted = !quoted;
+    } else if (!quoted && c === "/" && (i === 0 || /\s/.test(expression[i - 1]))) {
+      const end = expression.indexOf("\n", i);
+      if (end < 0) {
+        return expression.slice(0, i);
+      }
+      i = end;
+    }
+  }
+  return expression;
+}
+
+/// An expression as an operand: a name as it is, anything else bracketed,
+/// without the comment that ends it.
 export function operand(expression: string): string {
-  const e = expression.trim();
+  const e = uncommented(expression).trim();
   return /^\.?[A-Za-z][A-Za-z0-9_.]*$/.test(e) ? e : `(${e})`;
 }
 

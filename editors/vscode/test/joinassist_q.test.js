@@ -109,3 +109,17 @@ test("every join suggested with a partitioned table on the left runs", { skip },
   }
   assert.ok(ran >= 4, `${ran} joins run`);
 });
+
+// `value` reads past a comment, so the shape is read; bracketed with it,
+// the join was refused with '(.
+test("a join of an expression that ends in a comment runs (#3047)", { skip }, async (t) => {
+  const { connection } = await connect(t, SERVER);
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const left = await shape("select from trade where sym=`a  / the one name");
+  const joins = [...suggestJoins(left, await shape("ref")), ...suggestJoins(await shape("ref / sectors"), left)];
+  assert.ok(joins.length >= 2, `${joins.length} joins`);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+});

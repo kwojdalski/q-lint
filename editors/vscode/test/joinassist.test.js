@@ -88,6 +88,20 @@ test("a shared time column gives aj and wj, sorted unless the right table alread
   assert.deepStrictEqual(suggestJoins(shape("a", ["x"], "j"), shape("b", ["y"], "f")), []);
 });
 
+// `value` reads past a comment, so the shape was read; in brackets the
+// comment took the closing one, and q refused the join with '(.
+test("a comment ending an expression is left out of the operand written (#3047)", () => {
+  assert.strictEqual(operand("select from trade where sym=`a  / AAPL only"), "(select from trade where sym=`a)");
+  assert.strictEqual(operand("trade / the day's"), "trade");
+  assert.strictEqual(operand("select from trade / all of it\n  where sym=`a / one"), "(select from trade / all of it\n  where sym=`a)");
+  // A / in a string, or one that follows no blank, is no comment.
+  assert.strictEqual(operand('select from t where p like "a /b"'), '(select from t where p like "a /b")');
+  assert.strictEqual(operand('select from t where p like "a\\" /b"'), '(select from t where p like "a\\" /b")');
+  assert.strictEqual(operand("select px%2, s:+/[px] from t"), "(select px%2, s:+/[px] from t)");
+  const commented = shape("select from trade where sym=`a  / AAPL only", ["sym", "time", "px"], "stf");
+  assert.deepStrictEqual(suggestJoins(commented, ref).map((x) => x.expression), ["(select from trade where sym=`a) lj ref", "(select from trade where sym=`a) ij ref"]);
+});
+
 test("the switch is declared on, and the command only where it can run", () => {
   const props = Object.assign({}, ...pkg.contributes.configuration.map((c) => c.properties));
   assert.strictEqual(props["q-lint.query.joinAssistant.enable"].default, true);
