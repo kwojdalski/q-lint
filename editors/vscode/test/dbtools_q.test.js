@@ -404,6 +404,18 @@ test("the documenter survives a plain dictionary at a dotted top-level name (#18
   assert.deepStrictEqual((await connection.evaluate("(.dd~`x`y!1 2;key`.)")).value, [true, ["t", "add"]]);
 });
 
+test("the documenter reads nested namespaces' functions, and the tables of every namespace (#2413)", { skip }, async (t) => {
+  const { connection } = await connect(t, ".a.f:{[x] x}\n.a.b.g:{[y] y}\n.a.b.c.h:{[z] z}\n.ns.t:([]a:1 2)\n.a.b.u:([]v:`x`y`z)\nr:{[p;q] p}\n");
+  const doc = readDoc(await connection.call(DOCUMENT, 100));
+  assert.deepStrictEqual(doc.functions, [
+    { name: "r", params: ["p", "q"] },
+    { name: ".a.f", params: ["x"] },
+    { name: ".a.b.g", params: ["y"] },
+    { name: ".a.b.c.h", params: ["z"] },
+  ]);
+  assert.deepStrictEqual(doc.tables.map((x) => [x.name, x.rows]), [[".ns.t", 2], [".a.b.u", 3]]);
+});
+
 // A table whose enumeration domain is gone cannot be described: meta of it
 // signals. It costs that table's entry, as in the schema diagram (#1868).
 test("the documenter says which table it could not read, and documents the rest (#1868)", { skip }, async (t) => {
