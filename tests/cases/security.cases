@@ -137,6 +137,21 @@ password:"abc"
 === QX001 | the joined query in parentheses is the same query (#502)
 f:{value ("select from t where s=`",x)}
 
+=== QX001 | value in the first slot of a trap, or in parentheses of its own, runs the same query (#2992)
+f:{@[value;"select from t where a=",x;{x}]}
+g:{.[value;enlist "select from t where a=",x;{x}]}
+h:{(value) "select from t where a=",x}
+l:{@[get;"select from t where a=",x;{x}]}
+
+=== QX001 | as it does applied with @, or with . to a list of the one argument
+h:{value@"select from t where a=",x}
+k:{value . enlist "select from t where a=",x}
+
+=== clean | a trap that runs a constant, one whose handler builds the text, and a list that only holds value (#2992)
+f:{@[value;"select from t";{x}]}
+g:{@[value;x;{"select from t where a=",x}]}
+h:{(a;value;"select from t where a=",x)}
+
 === QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
 f:{[s] q:"select from t where sym=`",s; value q}
 g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}

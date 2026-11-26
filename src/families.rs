@@ -39,6 +39,48 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
     Some((start, argument_end(code, comments, source, start)?))
 }
 
+/// What `name` at `at..after` is applied to, however the application is
+/// written: `name x` and `name[x]`, and also `name@x`, `name . enlist x`,
+/// `(name) x`, and the trap forms `@[name;x;h]` and `.[name;enlist x;h]`, which run
+/// `name x` and hand an error to `h`. KDB-X 5 defines `s` in the process for
+/// each of them given `"select from t where a=",x` and an `x` of
+/// `"1;s:42;0"` (#2992).
+fn applied(
+    code: &str,
+    comments: &str,
+    source: &str,
+    at: usize,
+    after: usize,
+) -> Option<(usize, usize)> {
+    let blank = [' ', '\t'];
+    let rest = code[after..].trim_start_matches(blank);
+    let next = code.len() - rest.len();
+    let before = code[..at].trim_end_matches(blank);
+    if rest.starts_with(';') {
+        let dot = before.ends_with(".[");
+        if !dot && !before.ends_with("@[") {
+            return None;
+        }
+        let close = matching(code, before.len() - 1, b'[', b']')?;
+        let slot = slots(code.get(next + 1..close - 1)?).into_iter().next()?;
+        let (mut start, end) = (next + 1, next + 1 + slot.len());
+        // `.` applies to a list of arguments, here a list of the one.
+        if dot {
+            start += re!(r"^\s*enlist\b").find(slot)?.end();
+        }
+        return Some((start, end));
+    }
+    // In parentheses of its own, `(value) x`.
+    if rest.starts_with(')') && before.ends_with('(') {
+        return argument(code, comments, source, next + 1);
+    }
+    let after = match re!(r"^(?:@|\.[ \t]+enlist\b)").find(rest) {
+        Some(m) => next + m.end(),
+        None => after,
+    };
+    argument(code, comments, source, after)
+}
+
 /// Whether `start..end` builds a query: joins a string that names a qSQL
 /// statement with something that is not a string literal.
 fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) -> bool {
@@ -174,7 +216,7 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((start, end)) = argument(code, comments, source, m.end()) else {
+        let Some((start, end)) = applied(code, comments, source, m.start(), m.end()) else {
             continue;
         };
         // Built where it is run, or into a local this lambda runs on a later
