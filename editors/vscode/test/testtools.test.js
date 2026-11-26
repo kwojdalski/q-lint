@@ -165,7 +165,7 @@ test("coverage plans only the functions the process holds as the file has them",
   const plan = coveragePlan(files, states);
   assert.deepStrictEqual(plan.names, ["f"]);
   assert.deepStrictEqual(plan.skipped, [{ name: "g", why: "changed" }]);
-  assert.strictEqual(plan.src[0], "{[a]\n  .qlint.cov.hit 0;b:a+1;\n  .qlint.cov.hit 1;$[b>2;g b;b]}");
+  assert.strictEqual(plan.src[0], "{[a]\n  qlintcov:.qlint.cov.hit 0;b:a+1;\n  qlintcov:.qlint.cov.hit qlintcov;$[b>2;g b;b]}");
   assert.deepStrictEqual(
     plan.probes.map((p) => [p.start, p.end]),
     [
