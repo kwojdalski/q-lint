@@ -2145,3 +2145,13 @@ test("a lambda parse or -5! makes of a string, applied, runs; one -9! deserialis
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a function named by a symbol cast from a string made at run time, applied, is asked about (#2629)", () => {
+  for (const code of ['(`$".q.",string`set) . (`b;1)', '(`$".q.","set")[`b;1]', "(`$x) . (`b;1)"]) {
+    assert.deepStrictEqual(writes(code), ["applies a function named by a symbol cast from what the guard cannot read"], code);
+  }
+  // Cast and not applied is a value.
+  for (const code of ['`$"a",x', "(`$x)", "count `$x", "(`$x),`a", "@[f;::;`$()]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

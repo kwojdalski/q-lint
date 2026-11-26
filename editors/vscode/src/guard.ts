@@ -205,6 +205,8 @@ interface Token {
   pos: number;
   /// Where it is among the statement's tokens, spaces too.
   n: number;
+  /// A symbol cast from a string written out, `` `$".q.set" `` (#2037).
+  cast?: true;
 }
 
 /// What each ASCII character may be in a token, as bits: a letter, a
@@ -274,7 +276,7 @@ function tokens(code: string): Token[] {
       const cast = tail.length >= 2 && tail[tail.length - 1].text === "$" && tail[tail.length - 2].kind === "sym" && tail[tail.length - 2].text === "`";
       if (cast) {
         const start = out.lastIndexOf(tail[tail.length - 2]);
-        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos, n: start });
+        out.splice(start, out.length - start, { kind: "sym", text: `\`${qText(text)}`, pos: tail[tail.length - 2].pos, n: start, cast: true });
       } else {
         out.push({ kind: "str", text, pos: i, n: out.length });
       }
@@ -2510,6 +2512,15 @@ function readStatement(statement: string, found: Set<string>): void {
     // A gateway called by its symbol: `` `.gw.syncexec . ("a:1";`rdb) `` (#2039).
     if (k.kind === "sym" && GATEWAY_EXEC.test(k.text.slice(1))) {
       gateway(t, i, found);
+      continue;
+    }
+    // A function named by a symbol cast from a string made at run time and
+    // applied, `` (`$".q.",string`set) . (`a;1) ``: a name the guard cannot
+    // read (#2629). A string written out is read as the name it is (#2037).
+    // (Not `` `$() ``, the empty list cast, which names nothing.)
+    const madeCast = k.text === "`" && next?.text === "$" && !(t[i + 2]?.text === "(" && t[i + 3]?.text === ")") ? i + 2 : k.cast === true && next !== undefined && next.text !== ")" ? i + 1 : -1;
+    if (madeCast > 0 && t[i - 1]?.text === "(" && groupApplied(t, i - 1)) {
+      found.add("applies a function named by a symbol cast from what the guard cannot read");
       continue;
     }
     // A writer named by its symbol is the function itself: `` `.q.set . (`a;1) ``,
