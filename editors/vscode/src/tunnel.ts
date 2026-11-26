@@ -133,7 +133,14 @@ export function shownError(error: unknown): string {
 
 /// A connect through an open tunnel that closed before the handshake: as
 /// likely a refused user as a forward that reached no q.
-export class TunnelHandshakeError extends TunnelConnectError {}
+export class TunnelHandshakeError extends TunnelConnectError {
+  /// Whether ssh said the forward's channel did not open (`channel 2: open
+  /// failed: connect failed: Connection refused`): nothing was reached, so
+  /// no user or password was refused (#3033).
+  get reachedNothing(): boolean {
+    return /\bopen failed\b/.test(this.sshSaid);
+  }
+}
 
 export class SshTunnel {
   private closed = false;

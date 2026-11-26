@@ -2418,7 +2418,8 @@ export class Live {
   /// waited for until it does, or until the user disconnects or connects
   /// elsewhere.
   /// `outcome.refused` is set when the process closed before the handshake:
-  /// how it refuses a user or password.
+  /// how it refuses a user or password. Not when ssh said its forward
+  /// reached no process, which closes the same way (#3033).
   private open(process: Process, untilFree = false, quiet = false, disconnects = this.disconnects, outcome: { refused?: boolean } = {}): Promise<boolean> {
     if (this.connecting !== undefined) {
       // A connect to another process - a reconnect after an abort, waiting
@@ -2525,7 +2526,7 @@ export class Live {
         this.changed.fire("connected");
         return true;
       } catch (failure) {
-        outcome.refused = failure instanceof ClosedBeforeHandshake || failure instanceof TunnelHandshakeError;
+        outcome.refused = failure instanceof ClosedBeforeHandshake || (failure instanceof TunnelHandshakeError && !failure.reachedNothing);
         if ((untilFree && this.reconnectStopped) || quiet || disconnects !== this.disconnects || cut.signal.aborted) {
           return false;
         }
