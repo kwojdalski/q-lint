@@ -649,3 +649,39 @@ test("a file bound elsewhere connects there while a background read is out, and 
   await stub.commands.get("q-lint.disconnectProcess")();
   await running;
 });
+
+// Load more sent its page straight on the connection: a query run while it
+// was out was refused ("a query is still running", of none), and a page asked
+// for during the Process Explorer's read was put off as if a query ran. It is
+// a background read like theirs, taking its turn (#3017).
+test("Load more takes its turn with background reads, and a query sent meanwhile waits for it (#3017)", async (t) => {
+  const page = { count: 5, names: ["c"], types: [7], cells: [["3", "4"]], raw: [[3, 4]], rank: [[0, 1]] };
+  let answerRead;
+  const a = await fakeQ((message) => {
+    const text = JSON.stringify(message);
+    if (text.includes("slowread")) {
+      return new Promise((resolve) => (answerRead = () => resolve(1)));
+    }
+    if (text.includes("token")) {
+      return new Promise((resolve) => setTimeout(() => resolve(page), 150));
+    }
+    return { ok: true, type: -7, text: ["2"] };
+  });
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)]);
+  await live.connectTo("a");
+  // Asked for while another read is out: it waits, not "a query is running".
+  const read = live.borrow((connection) => connection.evaluate("slowread"), "the Process Explorer's read");
+  const more = live.pageHeld("a", 100, 2, "token");
+  await sleep(50);
+  answerRead();
+  await read;
+  // A query sent while the page is out waits for it, and runs.
+  stub.messages = [];
+  await sleep(20);
+  assert.strictEqual(live.isBusy(), true, "the page is out");
+  await live.run("1+1");
+  assert.deepStrictEqual((await more).cells, [["3", "4"]]);
+  assert.deepStrictEqual(stub.messages, []);
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["1+1", "ok"]]);
+});

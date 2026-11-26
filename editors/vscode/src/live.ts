@@ -3259,8 +3259,12 @@ export class Live {
       return undefined;
     }
     const before = this.connection;
-    if (!(await wait(this.borrowed))) {
-      return undefined;
+    // Each read out in turn: another may have taken the connection as the
+    // one waited for ended (#3017).
+    while (this.borrowed !== undefined && this.connection === before) {
+      if (!(await wait(this.borrowed))) {
+        return undefined;
+      }
     }
     const connection = this.connection;
     const process = this.active;
@@ -3921,24 +3925,34 @@ export class Live {
   /// Rows `offset` on of the result `label`'s process holds for paging, or
   /// why they could not be fetched. Only on the connection the result came
   /// from, and only when no query is running on it.
-  /// Either of those may pass, so the result stays held (#1634).
+  /// Either of those may pass, so the result stays held (#1634). The page is
+  /// a background read (`borrow`): it waits for one that is out, and a
+  /// query sent meanwhile waits for it rather than being refused (#3017).
   private async pageHeld(label: string, offset: number, count: number, token: string | undefined): Promise<GridPage | PageLater | string> {
     if (token === undefined) {
       return "the process holds no rows of this result";
     }
+    const elsewhere = { later: "it is not the connected process now; connect to it again, then scroll again" };
     const connection = this.connection;
     if (connection === undefined || this.activeLabel() !== label) {
-      return { later: "it is not the connected process now; connect to it again, then scroll again" };
+      return elsewhere;
     }
-    if (connection.isBusy) {
-      return { later: "a query is running on it; scroll again once it ends" };
+    while (this.borrowed !== undefined) {
+      await this.borrowed;
+    }
+    if (this.connection !== connection || this.activeLabel() !== label) {
+      return elsewhere;
     }
     // Nothing is sent while it is evaluated directly, and the process keeps
     // the result: later, not gone (#2566).
-    if (connection.isDirect) {
+    if (!connection.isBusy && connection.isDirect) {
       return { later: "it is evaluated directly now, and paging needs q-lint's lambda; turn direct evaluation off, then scroll again" };
     }
-    return readPage(await connection.call(PAGE, token, offset, count));
+    const page = this.borrow((free) => free.call(PAGE, token, offset, count), "the read of a result's next rows");
+    if (page === undefined) {
+      return { later: "a query is running on it; scroll again once it ends" };
+    }
+    return readPage(await page);
   }
 
   /// The saved query `from` was renamed `to`, or deleted: the results it
