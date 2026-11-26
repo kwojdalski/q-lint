@@ -589,6 +589,17 @@ r:1 in `a`b
 === QT015 | and a symbol in numbers
 r:`a in 1 2
 
+=== QT015 profile: general | within is a comparison too, the symbol as value or as bounds, against numbers or a string (#2883; q 5: each is 'type)
+r:`a within 1 2
+r2:1 within `a`c
+r3:`a`b within 1 2
+r4:"abc" within `a`c
+r5:`a within "ac"
+
+=== clean profile: general | while symbol bounds take a symbol, and a longer right operand is not read (#2883; q 5: `b within `a`c is 1b)
+r:`b within `a`c
+r2:`a within 2 sublist s
+
 === clean | the number is the start of a longer right operand: sublist builds symbols
 r:`a in 2 sublist `a`b`c
 

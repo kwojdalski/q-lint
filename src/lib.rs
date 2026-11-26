@@ -7412,7 +7412,9 @@ fn lint_rules(
         let num =
             r"-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*(?:[ \t]+-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*)*";
         let string = r#""(?:[^"\\]|\\.)*""#;
-        let op = r"(?:<=|>=|<>|<|>|=|\bin\b)";
+        // `within` is 'type against a non-symbol too, bounds or value: q 5
+        // `` `a within 1 2 `` and `` 1 within `a`c `` (#2883).
+        let op = r"(?:<=|>=|<>|<|>|=|\bin\b|\bwithin\b)";
         // A string literal is blanks by the time `code` is built, so the
         // string half of this reads `v.comments`, which keeps strings and
         // blanks comments. A quote there is not necessarily one that opens a
