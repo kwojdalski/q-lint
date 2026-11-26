@@ -215,6 +215,20 @@ test("a direct process that refuses lambdas is queried with plain strings, and a
       "pm: no read permission on [\\f .priv]",
       "pm: no read permission on [\\v .priv]",
     ]);
+    // A hover on an unread table states no rows or columns it never read (#2490).
+    const vscode = require("vscode");
+    const Hover = vscode.Hover;
+    vscode.Hover = class {
+      constructor(contents) {
+        this.contents = contents;
+      }
+    };
+    stub.config.user["processExplorer.editorTableHover.enable"] = true;
+    const hover = await explorer.hover({ lineAt: () => ({ text: "t" }) }, { line: 0, character: 0 });
+    delete stub.config.user["processExplorer.editorTableHover.enable"];
+    vscode.Hover = Hover;
+    assert.match(hover.contents.value, /^\*\*t\*\* on pm: table, not read/);
+    assert.doesNotMatch(hover.contents.value, /0 columns/);
     // Preview of a table answers too.
     const r = await run("5 sublist t");
     assert.strictEqual(r.outcome, "ok");
