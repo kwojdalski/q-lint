@@ -4,9 +4,9 @@
   "scopeName": "source.q-console",
   "comment": "The q-lint: query output channel, as src/query.ts's render and src/live.ts write it: a `# process (n ms)` header, ` - 'error` after it on a failure, the query as `q) ` lines when it is included, then q's own console text (.Q.S) or the error and its .Q.sbt backtrace. Every rule is one line: the channel is appended to, so no state may carry from one answer into the next.",
   "patterns": [
+    { "include": "#failure" },
     { "include": "#header" },
     { "include": "#query" },
-    { "include": "#error" },
     { "include": "#frame" },
     { "include": "#caret" },
     { "include": "#separator" },
@@ -46,6 +46,20 @@
         "1": { "name": "punctuation.separator.prompt.q-console" },
         "2": { "name": "meta.embedded.line.q", "patterns": [{ "include": "source.q" }] }
       }
+    },
+    "failure": {
+      "comment": "A failed answer: its header, then q's error on its own line and the backtrace, up to the next header. Only here is a line starting with ' an error: in an answer that did not fail it is a string item or a symbol cell (#2717).",
+      "begin": "^(#) (.+) \\((\\d+) (ms)\\)( - )('.*)$",
+      "beginCaptures": {
+        "0": { "name": "markup.heading.query.q-console" },
+        "1": { "name": "punctuation.definition.heading.q-console" },
+        "2": { "name": "entity.name.tag.process.q-console" },
+        "3": { "name": "constant.numeric.time.q-console" },
+        "4": { "name": "keyword.other.unit.q-console" },
+        "6": { "name": "invalid.illegal.error.q-console" }
+      },
+      "end": "^(?=# )",
+      "patterns": [{ "include": "#query" }, { "include": "#error" }, { "include": "#frame" }, { "include": "#caret" }, { "include": "#separator" }, { "include": "#value" }]
     },
     "error": {
       "match": "^'.*$",
@@ -91,9 +105,9 @@
           "match": "`:[A-Za-z0-9_.:/\\-]*"
         },
         {
-          "comment": "Past a colon a symbol takes slashes too: `a:b/c is one symbol. q prints `$\"a-b\" as `a-b, so a minus is in one; a blank is not, since a table's column gap prints the same.",
+          "comment": "q prints `$\"a-b\", `$\"caf\u00e9\" and `$\"a/b\" whole, so a minus, any letter or digit and a slash are in one (#2718); a blank is not, since a table's column gap prints the same.",
           "name": "constant.other.symbol.q-console",
-          "match": "`[A-Za-z0-9_.\\-]*(?::[A-Za-z0-9_.:/\\-]*)?"
+          "match": "`[\\p{L}\\p{M}\\p{N}_.:/\\-]*"
         },
         {
           "comment": "A guid, as q prints one: before the numbers, whose rules would colour its all-digit groups.",
@@ -102,7 +116,7 @@
         },
         {
           "name": "constant.numeric.temporal.q-console",
-          "match": "(?<![A-Za-z0-9_.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}[DT](?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[pz]?|\\d{4}\\.\\d{2}(?:\\.\\d{2}d?|m)|-?\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?n?|-?\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?[tuv]?)(?![A-Za-z0-9_])"
+          "match": "(?<![A-Za-z0-9_.`])(?:\\d{4}\\.\\d{2}\\.\\d{2}[DT](?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?[pz]?|\\d{4}\\.\\d{2}(?:\\.\\d{2}d?|m)|\\d{4}\\.(?:0[1-9]|1[0-2])(?![0-9.])|-?\\d+D(?:\\d{2}(?::\\d{2}(?::\\d{2}(?:\\.\\d*)?)?)?)?n?|-?\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?[tuv]?)(?![A-Za-z0-9_])"
         },
         {
           "name": "constant.language.null.q-console",

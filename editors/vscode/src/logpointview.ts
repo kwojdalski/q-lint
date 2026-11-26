@@ -21,6 +21,7 @@ import {
   type TextEditorDecorationType,
 } from "vscode";
 import { definitions } from "./definitions";
+import { unquotedName } from "./funcsource";
 import { editorFeatureOff, editorFeatureOn } from "./editorfeatures";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
@@ -138,7 +139,8 @@ export function registerLogpoints(
     if (target === undefined || target.trim() === "") {
       return;
     }
-    const fn = target.trim();
+    // `` `.ns.f ``, as q code names it, is .ns.f (#2649).
+    const fn = unquotedName(target);
     try {
       // Turned off at the name box, the pick or the guard: nothing is wrapped (#1453).
       const done = await live.runOnActive(LOG_ADD, async (connection) => (refuse() ? undefined : String(await connection.call(LOG_ADD, fn))), "ask", undefined, undefined, true);
@@ -181,7 +183,8 @@ export function registerLogpoints(
       void window.showInformationMessage(plainMessage(`q-lint: no function on ${held.process} has a logpoint.`));
       return;
     }
-    const wanted = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
+    const given = typeof name === "string" ? name : nameAtCursor(window.activeTextEditor);
+    const wanted = given === undefined ? undefined : unquotedName(given);
     const fn =
       wanted !== undefined && held.names.includes(wanted)
         ? wanted

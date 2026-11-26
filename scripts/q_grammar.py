@@ -16,8 +16,9 @@ use, so this is generated rather than written by hand:
 What it gets right is the lexical shape q shares with the linter's own views
 in src/lib.rs: a `/` opens a comment only at the start of a line or after
 whitespace, a line holding a lone `/` opens a block that a lone `\\` closes,
-a lone `\\` outside a block ends the script, a line opening with `\\` is a
-system command, and `p)` / `k)` lines are another language.
+a lone `\\` outside a block ends the script and so does an exit, `\\\\`, a line
+opening with `\\` is a system command, and `p)` / `k)` lines are another
+language.
 """
 
 import json
@@ -147,9 +148,10 @@ def grammar():
                 "patterns": [{"include": "#block-comment"}, {"include": "#qdoc"}],
             },
             "end-of-script": {
-                "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
+                "comment": "A lone backslash outside a block ends the script, and so does an exit, \\\\ - "
+                "after a q) prompt or before a comment too; q reads nothing after either (#2786).",
                 "name": "comment.block.end-of-script.q",
-                "begin": r"^\\\s*$",
+                "begin": r"^(?:\\\s*|(?:q\))?\\\\(?:[ \t].*)?)$",
                 "end": r"(?=A)(?!A)",
                 "beginCaptures": {"0": {"name": "punctuation.definition.comment.begin.q"}},
             },

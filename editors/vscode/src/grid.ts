@@ -73,7 +73,7 @@
 // or a parameter. A partitioned table, which `sublist` refuses, is read by
 // row index with `.Q.ind`. A value it cannot shape gives q's error as a
 // string in `grid`, and the result is shown in the output instead.
-import { readAnswer, trapLines, type Answer } from "./query";
+import { LAID_TEXT, readAnswer, trapLines, type Answer } from "./query";
 
 /// The most nodes `GRID` sends of a dictionary or a nested list's tree.
 export const TREE_NODES = 2000;
@@ -127,7 +127,7 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
   "{[s;size;limit]",
   ...trapLines(readOnly),
   " $[r 0;",
-  "   `ok`type`text`grid!(1b;type r 1;.Q.S[\"j\"$size;0j] r 1;.[{[v;n]",
+  `   \`ok\`type\`text\`grid!(1b;type r 1;${LAID_TEXT}[size;r 1];.[{[v;n]`,
   "     k:$[99h<>type v;0;98h=type key v;count cols key v;1];",
   "     e:{1_-1_-3!x} each \"c\"$til 256;",
   "     t:$[98h=type v;v;",

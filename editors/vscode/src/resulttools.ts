@@ -486,9 +486,9 @@ export class ResultTools {
         { label: "$(check) Done", description: `("${types.join("")}";enlist ...)0:`, detail: "Write the load statement", at: -1 },
         { label: "$(split-horizontal) Delimiter", description: named(sample.delimiter), detail: "Change it, and guess the types again", at: -2 },
         ...sample.names.map((n, i) => ({
-          label: n === "" ? `(column ${i + 1})` : n,
+          label: n === "" ? `(column ${i + 1})` : iconsEscaped(n),
           description: `${types[i] === " " ? "skipped" : `${types[i]} ${LOAD_TYPES.find((t) => t.letter === types[i])?.name ?? ""}`}`,
-          detail: `e.g. ${sample.rows.slice(0, 4).map((r) => r[i]).join(", ") || "(no rows)"}`,
+          detail: iconsEscaped(`e.g. ${sample.rows.slice(0, 4).map((r) => r[i]).join(", ") || "(no rows)"}`),
           at: i,
         })),
       ];

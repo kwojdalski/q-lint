@@ -604,6 +604,14 @@ test("the tickerplant log's readers, times of day and ranges", () => {
   assert.throws(() => readTpPage(1), /page of messages/);
 });
 
+test("a dashboard tile moves one place only: a page's other by leaves the dashboard as it was (#2664)", () => {
+  const d = { name: "d", columns: 2, tiles: [{ id: "a", query: "a", process: "p", view: "table", refresh: 0 }, { id: "b", query: "b", process: "p", view: "table", refresh: 0 }] };
+  assert.deepStrictEqual(changed(d, { type: "move", id: "a", by: 1 }).tiles.map((t) => t.id), ["b", "a"]);
+  for (const by of ["1", 0.5, 2, 0, null, undefined]) {
+    assert.strictEqual(changed(d, { type: "move", id: "a", by }), d, String(by));
+  }
+});
+
 test("dashboards are parsed, changed, and take read-only queries without placeholders only", () => {
   const list = parseDashboards([
     { name: "a", columns: 9, tiles: [{ id: "1", query: "q1", process: "p", view: "pie", refresh: 2 }, { bad: 1 }] },

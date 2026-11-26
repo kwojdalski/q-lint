@@ -348,7 +348,7 @@ export class Drift implements TextDocumentContentProvider {
       return undefined;
     }
     const read = await window.withProgress(
-      { location: ProgressLocation.Notification, title: `q-lint: comparing the workspace's functions with ${process.label}` },
+      { location: ProgressLocation.Notification, title: plainMessage(`q-lint: comparing the workspace's functions with ${process.label}`) },
       async () => {
         const defs = await this.workspaceDefinitions();
         if (defs.length === 0) {

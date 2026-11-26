@@ -125,3 +125,12 @@ test("the context a text leaves is the one the next runs in (#2286)", () => {
   assert.deepStrictEqual(inContext(["add:{x+y}"], ".cdlib"), ["\\d .cdlib", "add:{x+y}"]);
   assert.deepStrictEqual(inContext(["a:1"], "."), ["a:1"]);
 });
+
+test("a \\d with a trailing comment, or after q), switches the context as q does (#2785)", () => {
+  assert.strictEqual(contextSwitch("\\d .a / analytics"), ".a");
+  assert.strictEqual(contextSwitch("q)\\d .a"), ".a");
+  assert.strictEqual(contextSwitch("q)q)\\d . / back"), ".");
+  assert.strictEqual(contextAfter("q)\\d .a\nf:1"), ".a");
+  // A slash with no blank before it is no comment: not a name.
+  assert.strictEqual(contextSwitch("\\d .a/b"), undefined);
+});

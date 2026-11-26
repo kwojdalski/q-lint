@@ -364,6 +364,32 @@ test("a k4unit suite's before rows run once before its tests, and its after rows
   );
 });
 
+test("a failed before row's q error reaches the output terminal with CRLF line ends and no escape sequence run (#2661)", async () => {
+  stub.reset();
+  const made = fakeTests();
+  stub.config.user["testExplorer.enable"] = true;
+  const csv = "action,ms,bytes,lang,code,repeat,minver,comment\nbefore,0,0,q,bad,1,,\ntrue,0,0,q,t=1,1,,\n";
+  vscode.workspace.findFiles = async () => [vscode.Uri.file("/ws/k.csv")];
+  vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
+  const live = fakeLive();
+  const run = live.runOnActive;
+  const failing = (answer) => (answer.ok ? answer : { ok: false, failed: true, text: "no db at /data/hdb\nload it first\u001b[2J" });
+  live.runOnActive = (code, query) =>
+    run.call(live, code, (connection) =>
+      query({
+        ...connection,
+        call: async (...args) => failing(await connection.call(...args)),
+        guarded: async (...args) => failing(await connection.guarded(...args)),
+      }),
+    );
+  const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
+  await explorer.discover();
+  await explorer.run();
+  const output = made.flatMap((c) => c.runs).map((r) => r.output).join("");
+  assert.match(output, /before \(line 2\) failed: no db at \/data\/hdb\r\nload it first\u241b\[2J\r\n/);
+  assert.doesNotMatch(output, /[^\r]\n|\u001b/);
+});
+
 test("a repeated k4unit row is sent as do[n;code], a true row's a~b too: not split into its sides (#2100)", async () => {
   stub.reset();
   fakeTests();

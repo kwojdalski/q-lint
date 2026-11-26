@@ -85,7 +85,7 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
   let result: RunResult;
   try {
     result = await window.withProgress(
-      { location: ProgressLocation.Notification, title: `q-lint: running ${name}`, cancellable: true },
+      { location: ProgressLocation.Notification, title: plainMessage(`q-lint: running ${name}`), cancellable: true },
       async (progress, token) => {
         // As the kernel's interrupt: Cancel stops the query of the cell
         // running, not only the cells after it (#1564).
@@ -129,7 +129,7 @@ export async function runWithParameters(live: Live, source?: Uri, target?: Uri, 
             },
             settings,
             given,
-            { progress: (cell, of) => progress.report({ message: `cell ${cell} of ${of}` }), cancelled: () => token.isCancellationRequested, liveValues: featureOn("liveValues") },
+            { progress: (cell, of) => progress.report({ message: plainMessage(`cell ${cell} of ${of}`) }), cancelled: () => token.isCancellationRequested, liveValues: featureOn("liveValues") },
           );
         } finally {
           stop.dispose();

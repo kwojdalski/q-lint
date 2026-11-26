@@ -102,6 +102,13 @@ test("Add Logpoint wraps the function at the cursor through the guard and marks 
   assert.deepStrictEqual(s.live.guarded, [LOG_ADD, LOG_ADD, LOG_REMOVE, LOG_REMOVE]);
 });
 
+test("Add Logpoint takes a function named as a symbol, `.fx.mid, as the name .fx.mid (#2649)", async () => {
+  const s = setup();
+  await stub.commands.get(LOGPOINT_COMMANDS.add)("`.fx.mid");
+  assert.deepStrictEqual(s.sent, [[LOG_ADD, ".fx.mid"]]);
+  assert.deepStrictEqual(s.api.logged(), { dev: [".fx.mid"] });
+});
+
 test("off, every command refuses, nothing is sent, and the marks go", async () => {
   const s = setup();
   await stub.commands.get(LOGPOINT_COMMANDS.add)();

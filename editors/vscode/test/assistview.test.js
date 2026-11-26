@@ -205,6 +205,24 @@ test("List q Tables reads a plain table name only, asks first, and refuses a han
   assert.match((await tools.tables.run({ table: "trade", process: "uat" })).error, /asked to read trade on dev/);
 });
 
+test("List q Tables takes a table named as a symbol, `trade, as the name trade (#2649)", async () => {
+  const { live, context } = setup();
+  const tools = registerAssistTools(context, live, () => []);
+  assert.match(tools.tables.prepareInvocation({ input: { table: "`trade" } }).confirmationMessages.message.value, /`trade` on/);
+  await tools.tables.run({ table: "`trade" });
+  assert.deepStrictEqual(live.sent, [["TABLE_INFO", "trade", 200]]);
+  assert.match((await tools.tables.run({ table: "`:/etc/passwd" })).error, /must be a table's name/);
+});
+
+test("List q Tables' confirmation shows the process label as written, not as Markdown (#2657)", () => {
+  const { live, context } = setup();
+  live.activeLabel = () => "dev ![](https://example.com/beacon.png) [docs](https://evil.example)";
+  const tools = registerAssistTools(context, live, () => []);
+  const message = tools.tables.prepareInvocation({ input: { table: "trade" } }).confirmationMessages.message.value;
+  assert.match(message, /on \*\*dev \\!\\\[\\\]\\\(https:\/\/example\\\.com/);
+  assert.doesNotMatch(message, /\]\(https?:/);
+});
+
 test("List q Tables takes a null process or table as left out (#1623)", async () => {
   const { live, context } = setup();
   const tools = registerAssistTools(context, live, () => []);

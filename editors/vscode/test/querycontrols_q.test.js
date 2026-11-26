@@ -11,7 +11,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { QConnection, QError } = require("../out/qclient.js");
 const { statements } = require("../out/statements.js");
-const { UNLIMITED, UNLIMITED_ROWS, UNLIMITED_SIZE, armTimeout, readUnlimited, runUnwrapped } = require("../out/querycontrols.js");
+const { TOO_DEEP, UNLIMITED, UNLIMITED_ROWS, UNLIMITED_SIZE, armTimeout, readUnlimited, runUnwrapped } = require("../out/querycontrols.js");
 
 const Q = process.env.QLINT_TEST_Q;
 const skip = Q ? false : "QLINT_TEST_Q names no q binary";
@@ -207,6 +207,17 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     const s = await connection.evaluate("`a`b");
     assert.strictEqual(s.type, 11);
     assert.deepStrictEqual(s.value, ["a", "b"]);
+  });
+
+  await t.test("unwrapped: a value nested thousands deep is shown as -3! writes it, or said to be too deep, never a RangeError (#2650)", async () => {
+    for (const n of [1000, 2000]) {
+      const deep = await runUnwrapped(connection, [`{enlist x}/[${n};1]`], { ...options, size: [25, 80], grid: true });
+      assert.strictEqual(deep.ok, true, `${n}: ${JSON.stringify(deep).slice(0, 200)}`);
+      assert.match(deep.text[0], /^,{77}\.\.$/, String(n));
+    }
+    const deeper = await runUnwrapped(connection, ["dd:{enlist x}/[20000;1]", "dd"], options);
+    assert.deepStrictEqual(deeper, { ok: false, error: TOO_DEEP, trace: "" });
+    assert.deepStrictEqual((await runUnwrapped(connection, ["count dd"], options)).text, ["1"]);
   });
 
   await t.test("unwrapped: statements run in order and the last value is formatted here", async () => {

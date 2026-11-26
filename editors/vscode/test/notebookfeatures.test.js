@@ -1347,3 +1347,10 @@ test("a mapped list of one type is named by it, and a keyed table counts rows (#
   assert.strictEqual(describeVariable({ name: "m", type: 84, count: 2 }), "mapped long list · 2 items");
   assert.strictEqual(describeVariable({ name: "kt", type: 99, count: 3, keyed: true }), "keyed table · 3 rows");
 });
+
+test("a NUL-digits-NUL already in a Markdown cell is text, not a held piece's mark (#2662)", () => {
+  const { markdownHtml } = require("../out/qnbconvert.js");
+  assert.strictEqual(markdownHtml("a \u000099\u0000 b"), "<p>a \ufffd99\ufffd b</p>");
+  assert.strictEqual(markdownHtml("see `x` and \u00000\u0000 here"), "<p>see <code>x</code> and \ufffd0\ufffd here</p>");
+  assert.strictEqual(markdownHtml("`\u00000\u0000` and `y`"), "<p><code>\ufffd0\ufffd</code> and <code>y</code></p>");
+});

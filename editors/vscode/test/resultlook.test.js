@@ -317,6 +317,20 @@ test("Excel's conditional formats match the cells the grid's rules do (#1266)", 
   ]);
 });
 
+test("a rule value's control characters stay out of Excel's sheet XML, and one over 255 characters is split into literals Excel takes (#2660)", () => {
+  const { xlsxRules } = require("../out/resultlook.js");
+  const rule = (value) => ({ column: "s", op: "contains", value, style: { bold: true } });
+  const long = "a".repeat(300) + '"';
+  const out = xlsxRules([rule("35=D\u0001"), rule(long)], ["s"], [false], () => "A", 4, [true]).formatting;
+  const formulas = out.map((f) => /<formula>(.*)<\/formula>/.exec(f)[1]);
+  assert.strictEqual(formulas[0], "AND(LEN(A2)&gt;0,ISNUMBER(FIND(LOWER(&quot;35=D&quot;),LOWER(A2))))");
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(out.join("")));
+  const literals = formulas[1].replace(/&quot;/g, '"').match(/"(?:[^"]|"")*"/g);
+  assert.deepStrictEqual(literals.map((l) => l.slice(1, -1).replace(/""/g, '"').length), [255, 46]);
+  assert.strictEqual(literals.map((l) => l.slice(1, -1).replace(/""/g, '"')).join(""), long);
+  assert.match(formulas[1], /&quot;&amp;&quot;/);
+});
+
 test("a text rule on a general list of strings is left out of Excel, which holds the strings without their quotes (#1411)", () => {
   const strings = { count: 2, keys: 0, names: ["s", "m"], types: [0, 0], cells: [['"abc"', '"x"'], ["1", "`a"]], raw: [[], []], rank: [[0, 1], [0, 1]] };
   const grid = { columns: [col("s", 0), col("m", 0)], cells: strings.cells, rank: [null, null], values: [null, null], total: 2 };
@@ -337,6 +351,11 @@ test("the HTML export is one escaped table, the cells a rule matches styled as t
   assert.match(html, /<tr><td>c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">9<\/td><\/tr>\n<tr><td>b&lt;c<\/td><td class="n" style="background:#f14c4c;font-weight:bold">5<\/td><\/tr>/);
   assert.ok(!/<script/i.test(toHtml({ ...PAYLOAD, cells: [["<script>x</script>", "b", "c"], ["1", "2", "3"]] }, -1)));
   assert.strictEqual(exportResult("html", PAYLOAD, -1).rows, 3);
+});
+
+test("a query with 200k backtick runs still gets a fence: the runs are not spread into one call (#2663)", () => {
+  const code = `s in ${"`a".repeat(200000)} and "\`\`\`\`"`;
+  assert.strictEqual(report.fenceFor(code), "`````");
 });
 
 test("a result sent to a notebook or a report is its query in a fence it cannot close, its rows as a table, and its chart (#1021)", () => {

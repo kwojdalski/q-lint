@@ -561,8 +561,13 @@ function cutCell(text: string): string {
 /// written - a char vector's first `4 * (cap + 2)` bytes, as a character is
 /// at most four - and the text is still longer than `cap`, the same up to
 /// it: 10 million floats cost what 81 do (#2580).
-export function oneLine(q: QValue, precision = 7, cap = Infinity): string {
+export function oneLine(q: QValue, precision = 7, cap = Infinity, depth = 0, cell = cap): string {
   const keep = cap + 1;
+  // Each level writes a character at least before what it holds, so one
+  // nested past the cap is past it in the text too (#2650).
+  if (depth > keep) {
+    return "";
+  }
   switch (q.kind) {
     case "atom":
       return atomText(q.v, q.t, precision);
@@ -571,23 +576,40 @@ export function oneLine(q: QValue, precision = 7, cap = Infinity): string {
     case "chars":
       return vectorText(q.v.length > 4 * (keep + 1) ? q.v.subarray(0, 4 * (keep + 1)) : q.v, 10, q.attr);
     case "list": {
+      // A run of one-item lists, `,,,1`, is walked without a frame each:
+      // q holds values nested thousands deep (#2650).
+      let commas = 0;
+      let inner: QValue = q;
+      while (inner.kind === "list" && inner.v.length === 1 && depth + commas <= keep) {
+        commas++;
+        inner = inner.v[0];
+      }
+      if (commas > 0) {
+        return ",".repeat(commas) + oneLine(inner, precision, cap, depth + commas, cell);
+      }
       const items = q.v.length > keep ? q.v.slice(0, keep) : q.v;
-      return q.v.length === 1 ? `,${oneLine(q.v[0], precision, cap)}` : `(${items.map((x) => oneLine(x, precision, cap)).join(";")})`;
+      return `(${items.map((x) => oneLine(x, precision, cap, depth + 1, cell)).join(";")})`;
     }
     case "dict": {
       // A key that is an empty or one-item vector, a table or a dictionary is
       // put in parentheses, as `-3!` puts them: `` `symbol$()!() `` is read as
       // `` `symbol$(()!()) ``. A general list's `,1 2` or `()` needs none (#2573).
-      const k = oneLine(q.k, precision, cap);
+      const k = oneLine(q.k, precision, cap, depth + 1, cell);
       const short = (q.k.kind === "vector" || q.k.kind === "chars") && q.k.v.length <= 1;
-      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision, cap)}`;
+      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision, cap, depth + 1, cell)}`;
     }
     case "table":
       // Its attribute before it, as `-3!` writes `` `s#+(,`a)!,`s#1 2 `` (#2581).
-      return `${attrText(q.attr)}+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: q.colAttr ?? 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision, cap)}`;
+      return `${attrText(q.attr)}+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: q.colAttr ?? 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision, cap, depth + 1, cell)}`;
     case "func":
-      return funcText(q, precision);
+      return funcText(q, precision, cell);
   }
+}
+
+/// `text`, a value's `-3!` text, cut as `-3!` cuts it on a console `width`
+/// wide: past a character short of it, `..` ends it (#2706, #2707).
+function minusThree(text: string, width: number): string {
+  return Number.isFinite(width) && text.length > width - 1 ? cutLines([text], [1, Math.max(2, width - 1)])[0] : text;
 }
 
 /// The iterators' glyphs, by type from 106: `'`, `/`, `\`, `':`, `/:`, `\:`.
@@ -598,7 +620,7 @@ const ITERATORS = ["'", "/", "\\", "':", "/:", "\\:"];
 /// composition its functions in turn, a unary primitive before another
 /// without its colon, `-sum`; a derived function its function and
 /// iterator, `+/`.
-function funcText(q: QValue & { kind: "func" }, precision: number): string {
+function funcText(q: QValue & { kind: "func" }, precision: number, cell = Infinity): string {
   if (q.text !== undefined) {
     return q.text;
   }
@@ -616,7 +638,9 @@ function funcText(q: QValue & { kind: "func" }, precision: number): string {
       .join("");
   }
   if (q.t >= 106 && q.t <= 111 && parts.length === 1) {
-    return text(parts[0]) + ITERATORS[q.t - 106];
+    // Its function cut as `-3!` cuts it, and the iterator after the cut,
+    // as q writes `{aaa..../` (#2707).
+    return minusThree(text(parts[0]), cell) + ITERATORS[q.t - 106];
   }
   return q.t === 101 ? "::" : "func";
 }
@@ -668,29 +692,58 @@ function lineUp(n: number, y: Laid): Laid {
   return n > y.length && y.length > 0 ? [{ text: " ".repeat(y[0].text.length), pad: 0 }, { text: "-".repeat(y[0].text.length), pad: 0 }, ...y] : y;
 }
 
+/// How deep a value is laid out in rows: about where KDB-X's `.Q.s2`
+/// raises 'stack, and its console writes the value with `-3!` instead;
+/// so does this, which has a stack too (#2650).
+const NESTED_DEPTH = 800;
+
+/// Whether `q` holds a value nested more than `limit` deep: walked with a
+/// stack of its own, not a frame a level.
+function deeperThan(q: QValue, limit: number): boolean {
+  const todo: [QValue, number][] = [[q, 0]];
+  for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
+    const [x, depth] = next;
+    if (depth > limit) {
+      return true;
+    }
+    const inner = x.kind === "list" ? x.v : x.kind === "dict" ? [x.k, x.v] : x.kind === "table" ? x.data : x.kind === "func" ? (x.parts ?? []) : [];
+    for (const y of inner) {
+      todo.push([y, depth + 1]);
+    }
+  }
+  return false;
+}
+
 /// The lines of a value inside the console's text, as q's `.Q.s2` writes
 /// them: a simple list's items as `string` writes them (no suffixes, nulls
 /// blank); a general list's with `-3!`, or as rows lined up when every item
 /// is a list of the same count; a table's names, a rule and its rows; a
 /// dictionary's keys and values with `| ` between. `cap` is `oneLine`'s.
-function nested(q: QValue, precision = 7, cap = Infinity): Laid {
+function nested(q: QValue, precision = 7, cap = Infinity, depth = 0, cell = cap): Laid {
+  // Laid out whole by `laidOut` once past NESTED_DEPTH; this one is a guard.
+  if (depth > NESTED_DEPTH) {
+    return unpadded([oneLine(q, precision, cap, 0, cell)]);
+  }
   switch (q.kind) {
     case "atom":
     case "func":
-      return unpadded([oneLine(q, precision, cap)]);
+      return unpadded([oneLine(q, precision, cap, 0, cell)]);
     case "vector":
       return unpadded(q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t, precision) ?? (q.t === 2 ? NULL_GUID : "")))));
     case "chars":
       return unpadded([...q.v].map((c) => String.fromCharCode(c)));
     case "dict": {
-      const d = nested(q.v, precision, cap);
-      const k = lineUp(d.length, nested(q.k, precision, cap));
+      const d = nested(q.v, precision, cap, depth + 1, cell);
+      const keys = nested(q.k, precision, cap, depth + 1, cell);
+      // No keys and a table for the values: its header and rule each after
+      // a blank key, as q writes `| a b` and `| ---` (#2714).
+      const k = keys.length === 0 && q.v.kind === "table" ? d.map(() => ({ text: "", pad: 0 })) : lineUp(d.length, keys);
       const v = lineUp(k.length, d);
       const width = k.reduce((w, line) => Math.max(w, line.text.length), 0);
       return k.map((line, i) => ({ text: `${line.text.padEnd(width)}| ${v[i]?.text ?? ""}`, pad: v[i]?.pad ?? 0 }));
     }
     case "table": {
-      const columns = q.data.map((c) => nested(c, precision, cap));
+      const columns = q.data.map((c) => nested(c, precision, cap, depth + 1, cell));
       const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? { text: "", pad: 0 }));
       // The rule is as wide as the padded names.
       const [header, ...body] = tabulate([unpadded(q.cols), ...rows]);
@@ -701,11 +754,13 @@ function nested(q: QValue, precision = 7, cap = Infinity): Laid {
       if (items.length === 0) {
         return [];
       }
+      // Each item as `-3!` writes it, cut by `-3!` before its column is
+      // padded to it (#2706).
       if (oneLineItems(items)) {
-        return unpadded(items.map((x) => oneLine(x, precision, cap)));
+        return unpadded(items.map((x) => minusThree(oneLine(x, precision, cap, 0, cell), cell)));
       }
       // An item's items are its row's cells: past `cap + 1` of them none is shown.
-      return tabulate(items.map((x) => nested(countOf(x) > cap + 1 ? firstOf(x, cap + 1) : x, precision, cap)));
+      return tabulate(items.map((x) => nested(countOf(x) > cap + 1 ? firstOf(x, cap + 1) : x, precision, cap, depth + 1, cell)));
     }
   }
 }
@@ -733,24 +788,26 @@ export function formatQ(q: QValue, value: unknown, type?: number, precision = 7)
 }
 
 /// `formatQ`'s lines with their padding, the text past `cap` not written.
-function laidOut(q: QValue, value: unknown, type?: number, precision = 7, cap = Infinity): Laid {
-  if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
-    return unpadded([oneLine(q, precision, cap)]);
+function laidOut(q: QValue, value: unknown, type?: number, precision = 7, cap = Infinity, cell = cap): Laid {
+  if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || deeperThan(q, NESTED_DEPTH)) {
+    return unpadded([oneLine(q, precision, cap, 0, cell)]);
   }
   if (q.kind === "func") {
     // A lambda arrives with its text; any other function as no more than
     // its kind.
-    return unpadded(q.text !== undefined || q.parts !== undefined ? funcText(q, precision).split("\n") : formatValue(value, type));
+    return unpadded(q.text !== undefined || q.parts !== undefined ? funcText(q, precision, cell).split("\n") : formatValue(value, type));
   }
-  return nested(q, precision, cap);
+  return nested(q, precision, cap, 0, cell);
 }
 
 /// The lines q's console of `size` (height, width) shows for a value
 /// decoded with its types, cut as `.Q.S` cuts them: a table, keyed or not,
 /// or a dictionary, or a list, to the rows that fit - so its columns are as
 /// wide as the rows shown, not as rows cut off - then `..`, and each line
-/// at the width. `value` and `type` are as `formatQ` takes them.
-export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number, precision = 7): string[] {
+/// at the width. `value` and `type` are as `formatQ` takes them. `cell`:
+/// the width of the process's own console, `\c`, at which `-3!` cuts each
+/// nested cell before its column is padded (#2706).
+export function consoleLines(q: QValue, size: [number, number], value?: unknown, type?: number, precision = 7, cell = size[1]): string[] {
   const [height, width] = size;
   let shown = q;
   let more = false;
@@ -770,14 +827,16 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
     }
   }
   // A line `-3!` writes - an atom, a simple list, a general list's item -
-  // q cuts a character short of the width; a table's or a dictionary's
-  // rows at it (#2571).
-  const short = q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || (q.kind === "list" && q.v.length > 0 && oneLineItems(q.v));
-  const cut = short ? width - 1 : width;
+  // `-3!` cuts a character short of the process's `\c` (#2571, #2706);
+  // then every line is cut at the width, as `.Q.S` cuts.
+  const short = q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || (q.kind === "list" && q.v.length > 0 && oneLineItems(q.v)) || deeperThan(q, NESTED_DEPTH);
   // Cut padded, as q cuts; a line not cut loses its padding (#2572). Only
   // what fits the width is written (#2580).
-  const lines = laidOut(shown, value, type, precision, width).map((l) => (l.text.length > cut ? l.text : l.text.slice(0, l.text.length - l.pad)));
-  return cutLines(more ? [...lines, ".."] : lines, [Infinity, cut]);
+  const lines = laidOut(shown, value, type, precision, width, cell).map((l) => {
+    const text = short ? minusThree(l.text, cell) : l.text;
+    return text.length > width ? text : text.slice(0, short ? text.length : text.length - l.pad);
+  });
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, width]);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
@@ -1258,7 +1317,11 @@ export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): 
 /// item its own or, holding none, its text, `("d";(k;v))` for a dictionary
 /// and `("t";d)` for a table. At most 200 items a list, as
 /// a cell is cut at 200 characters; `false` for anything else.
-function exactOf(q: QValue): unknown[] | false {
+function exactOf(q: QValue, depth = 0): unknown[] | false {
+  // As deep as a value is laid out in rows, and no deeper (#2650).
+  if (depth > NESTED_DEPTH) {
+    return false;
+  }
   if (q.kind === "atom" && (q.t === -9 || q.t === -8)) {
     return [q.t === -9 ? "f" : "e", q.v];
   }
@@ -1277,17 +1340,17 @@ function exactOf(q: QValue): unknown[] | false {
     return [q.t === 9 ? "F" : "E", q.v];
   }
   if (q.kind === "list" && q.v.length <= 200) {
-    const items = q.v.map(exactOf);
+    const items = q.v.map((x) => exactOf(x, depth + 1));
     return items.every((x) => x === false) ? false : ["l", items.map((x, i) => (x === false ? oneLine(q.v[i]) : x))];
   }
   // A dictionary as ("d";(keys;values)), a table as ("t";its dictionary):
   // -3! would write their floats to \P (#1746).
   if (q.kind === "dict") {
-    const pair = exactOf({ kind: "list", attr: 0, v: [q.k, q.v] });
+    const pair = exactOf({ kind: "list", attr: 0, v: [q.k, q.v] }, depth);
     return pair === false ? false : ["d", pair[1]];
   }
   if (q.kind === "table") {
-    const dict = exactOf({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } });
+    const dict = exactOf({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, depth);
     return dict === false ? false : ["t", dict];
   }
   return false;
@@ -1328,16 +1391,17 @@ function castOf(q: QValue): [number, unknown] | undefined {
 /// A value decoded with its types as the tree `GRID` sends for it: a
 /// dictionary's entries and a list's items as children, at most `budget`
 /// nodes, each node's share divided among its children as `GRID` divides it.
-export function treeOfQ(q: QValue, budget = TREE_NODES, key = "", precision = 7): TreeNode {
+export function treeOfQ(q: QValue, budget = TREE_NODES, key = "", precision = 7, depth = 0): TreeNode {
   const dict = q.kind === "dict" && q.k.kind !== "table";
-  const open = dict || q.kind === "list" || q.kind === "vector";
+  // Past NESTED_DEPTH a node is its text, not opened: no frame a level (#2650).
+  const open = (dict || q.kind === "list" || q.kind === "vector") && depth <= NESTED_DEPTH;
   const count = q.kind === "dict" ? countOf(q.k) : countOf(q);
   const shown = open ? Math.min(count, Math.max(0, budget - 1)) : 0;
   const share = shown > 0 ? Math.floor((budget - 1) / shown) : 0;
   // A keyed table is a table, marked `keyed`, as `GRID` sends one (#2503).
   const keyed = q.kind === "dict" && !dict;
   const type = q.kind === "list" ? 0 : q.kind === "chars" ? 10 : q.kind === "table" || keyed ? 98 : q.kind === "dict" ? 99 : q.t;
-  const text = keyed ? "keyed" : open || q.kind === "table" || q.kind === "dict" ? "" : cutCell(oneLine(q, precision));
+  const text = keyed ? "keyed" : open || ((q.kind === "table" || q.kind === "dict") && depth <= NESTED_DEPTH) ? "" : cutCell(oneLine(q, precision, 200));
   let children: TreeNode[] = [];
   if (shown > 0) {
     const items = itemsOf(firstOf(q.kind === "dict" ? q.v : q, shown));
@@ -1345,7 +1409,7 @@ export function treeOfQ(q: QValue, budget = TREE_NODES, key = "", precision = 7)
       q.kind === "dict"
         ? itemsOf(firstOf(q.k, shown)).map((k) => (k.kind === "atom" && k.t === -11 ? String(k.v ?? "") : cutCell(oneLine(k, precision))))
         : items.map((_, i) => String(i));
-    children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i], precision));
+    children = items.slice(0, shown).map((item, i) => treeOfQ(item, share, keys[i], precision, depth + 1));
   }
   return { key, text, type, count, children };
 }
