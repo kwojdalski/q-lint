@@ -1210,7 +1210,7 @@ export class Live {
     if (bound === undefined || bound === this.activeLabel()) {
       return true;
     }
-    if (this.isBusy()) {
+    if (this.queryRunning()) {
       void window.showInformationMessage(
         plainMessage(`q-lint: a query is still running on ${this.activeLabel()}; this file's code goes to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
       );
@@ -1228,6 +1228,13 @@ export class Live {
   /// elsewhere now would stop waiting for it.
   isBusy(): boolean {
     return this.connection?.isBusy ?? false;
+  }
+
+  /// Whether a query, not a background read (`borrow`), is running on the
+  /// active connection. A read is not the user's to wait for or to abort:
+  /// a command that connects elsewhere goes ahead, as Connect does (#3039).
+  queryRunning(): boolean {
+    return this.isBusy() && this.borrowed === undefined;
   }
 
   history(): HistoryEntry[] {
@@ -2904,7 +2911,7 @@ export class Live {
     // A file with a process of its own switches the connection to it.
     const bound = this.controls.binding(uri);
     if (bound !== undefined && bound !== this.activeLabel()) {
-      if (this.connection?.isBusy) {
+      if (this.queryRunning()) {
         void window.showInformationMessage(
           plainMessage(`q-lint: a query is still running on ${this.active?.label}; this file's queries go to ${bound}. q-lint: Abort Current Query stops waiting for it.`),
         );
@@ -3974,7 +3981,7 @@ export class Live {
       }
     }
     if (this.activeLabel() !== label) {
-      if (this.connection?.isBusy) {
+      if (this.queryRunning()) {
         void window.showInformationMessage(plainMessage(`q-lint: a query is still running on ${this.active?.label}; the ${options.what ?? "drill-down query"} goes to ${label}.`));
         return;
       }

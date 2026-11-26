@@ -618,3 +618,34 @@ test("Disconnect while a query runs stops it at once: nothing shown, recorded as
   assert.strictEqual(live.history()[0].code, "slowone");
   assert.strictEqual(live.history()[0].outcome, "aborted");
 });
+
+// A file bound to another process could not send its code while the Process
+// Explorer's read - or any background read - was out on the connection: "a
+// query is still running", of a read Abort does not call one. Only a query
+// holds the connection where it is (#3039).
+test("a file bound elsewhere connects there while a background read is out, and is refused only by a query (#3039)", async (t) => {
+  const dev = await fakeQ(() => undefined);
+  const hdb = await fakeQ(() => undefined);
+  t.after(() => (dev.close(), hdb.close()));
+  const { live, context } = await setUp(t, [proc("dev", dev.port), proc("hdb", hdb.port)]);
+  const bindings = { "file:///hdb.q": "hdb", "file:///dev.q": "dev" };
+  context.workspaceState.get = (key, fallback) => (key === "q-lint.fileConnections" ? bindings : fallback);
+  assert.strictEqual(await live.connectTo("dev"), true);
+  const read = live.borrow((connection) => connection.evaluate("tables[]"), "the Process Explorer's read");
+  read.catch(() => {});
+  assert.strictEqual(live.isBusy(), true);
+  assert.strictEqual(live.queryRunning(), false);
+  stub.messages = [];
+  assert.strictEqual(await live.toFileBinding(vscode.Uri.file("/hdb.q")), true);
+  assert.strictEqual(live.activeLabel(), "hdb");
+  assert.deepStrictEqual(stub.messages, []);
+  // A query is the user's to wait for: the connection stays.
+  const running = live.run("slowone");
+  await until(() => live.isBusy());
+  assert.strictEqual(live.queryRunning(), true);
+  assert.strictEqual(await live.toFileBinding(vscode.Uri.file("/dev.q")), false);
+  assert.strictEqual(live.activeLabel(), "hdb");
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: a query is still running on hdb; this file's code goes to dev. q-lint: Abort Current Query stops waiting for it."]]);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  await running;
+});
