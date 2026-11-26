@@ -16,7 +16,7 @@ import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
 import { GRID, GRID_READ_ONLY, GRID_TREE, GRID_TREE_READ_ONLY, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
-import { EVALUATE, EVALUATE_READ_ONLY, NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer, type Evaluate } from "./query";
+import { EVALUATE, EVALUATE_READ_ONLY, NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, revalRefusal, type Answer, type Evaluate } from "./query";
 
 /// The process answered with an error (`'msg`), as against the connection
 /// failing: the query ran, and this is what it gave.
@@ -336,7 +336,7 @@ export class QConnection {
   /// `reval` twin `readOnly`, and read the answer with `read`. A process
   /// without `reval` is sent `plain` instead, and `noReval` set; a refusal
   /// is kept in `refused`.
-  async trapped<T extends { ok: true } | { ok: false; error: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
+  async trapped<T extends { ok: true } | { ok: false; error: string; trace?: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
     if (this.readOnly && !this.noReval) {
       let answer = read(await this.call(readOnly, ...args));
       // A partitioned table's first count caches into `.Q.PN`, which
@@ -351,7 +351,7 @@ export class QConnection {
       // so no error turns the backstop off (#2638).
       if (answer.ok || answer.error !== NO_REVAL || (await this.call("`reval in key`.q")) === true) {
         if (!answer.ok) {
-          this.noteRefusal(answer.error);
+          this.noteRefusal(answer.error, answer.trace);
         }
         return answer;
       }
@@ -398,10 +398,12 @@ export class QConnection {
   }
 
   /// Keep `error` in `refused` when it is `reval` refusing what `readOnly`
-  /// sent; the first one stays.
-  noteRefusal(error: string): void {
-    if (this.readOnly && this.refused === undefined && refusedByReval(error)) {
-      this.refused = error;
+  /// sent, by its text or, with its backtrace `trace`, by where it was
+  /// raised (`revalRefusal`); the first one stays.
+  noteRefusal(error: string, trace?: string): void {
+    const refused = this.readOnly && this.refused === undefined ? revalRefusal(error, trace) : undefined;
+    if (refused !== undefined) {
+      this.refused = refused;
     }
   }
 

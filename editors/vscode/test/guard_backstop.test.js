@@ -15,8 +15,8 @@ const { NO_REVAL, RUN, RUN_READ_ONLY } = require("../out/query.js");
 const { readEnforce, refusalQuestion } = require("../out/guard.js");
 
 /// A q process played by a socket server. A lambda that evaluates under
-/// `reval` is answered `refuse()`'s error when it gives one, and every
-/// other message as `RUN` answers success.
+/// `reval` is answered `refuse()`'s error when it gives one - a string, or
+/// `{ error, trace }` - and every other message as `RUN` answers success.
 async function fakeQ(refuse = () => undefined) {
   const sent = [];
   const sockets = new Set();
@@ -42,7 +42,7 @@ async function fakeQ(refuse = () => undefined) {
         const out =
           m === "`reval in key`.q"
             ? serialize(refuse(m) !== NO_REVAL)
-            : serialize(error === undefined ? { ok: true, type: -7, text: ["1"] } : { ok: false, error, trace: "" });
+            : serialize(error === undefined ? { ok: true, type: -7, text: ["1"] } : typeof error === "string" ? { ok: false, error, trace: "" } : { ok: false, ...error });
         out.writeUInt8(2, 1);
         socket.write(out);
       }
@@ -148,6 +148,32 @@ test("a read reval refuses is asked about; declined, it is not sent again; confi
     ["RUN", "cache 5"],
   ]);
   assert.strictEqual(live.history()[0].outcome, "ok");
+});
+
+test("an error a trap in the code raised calling its handler, as it does with what reval refuses, is asked about with q's error (#3170)", async (t) => {
+  const trace = '  [6]  (.Q.trp)\n\n  [5]  .Q.trp[f;"k3:1";::]\n       ^\n';
+  const { q, live, query } = await setUp(t, ["prod"], () => ({ error: "type", trace }));
+  await live.connectTo("rdb");
+  stub.picks.push(undefined);
+  await query('.Q.trp[f;"k3:1";::]');
+  assert.deepStrictEqual(warnings(), [refusalQuestion("rdb", "type, raised where .Q.trp called the code's handler, as it does with what reval refuses")]);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", '.Q.trp[f;"k3:1";::]']]);
+  assert.strictEqual(live.history()[0].error, "type");
+  stub.picks.push("Run Anyway");
+  await query('.Q.trp[f;"k3:1";::]');
+  assert.deepStrictEqual(q.queries().slice(1), [
+    ["RUN_READ_ONLY", '.Q.trp[f;"k3:1";::]'],
+    ["RUN", '.Q.trp[f;"k3:1";::]'],
+  ]);
+});
+
+test("a plain 'type in ordinary code is shown as an error, with no Run Anyway (#3170)", async (t) => {
+  const { q, live, query } = await setUp(t, ["prod"], () => ({ error: "type", trace: "  [5]  1+`a\n        ^\n" }));
+  await live.connectTo("rdb");
+  await query("1+`a");
+  assert.deepStrictEqual(warnings(), []);
+  assert.deepStrictEqual(q.queries(), [["RUN_READ_ONLY", "1+`a"]]);
+  assert.strictEqual(live.history()[0].error, "type");
 });
 
 test("an error that is not a refusal is shown, not asked about", async (t) => {

@@ -217,6 +217,29 @@ test("reads run under reval as under value; a refusal is told apart from another
   assert.match(answer.trace, /\.ns\.g/);
 });
 
+test("reval's refusal caught by a trap in the code, whose handler then fails, is a refusal; a plain error is not (#3170)", { skip, timeout: 60_000 }, async (t) => {
+  const box = new Sandbox("f:{value x}; g:{k3::1};");
+  t.after(() => box.stop());
+  await box.start();
+  for (const [code, error, trap] of [
+    ['.Q.trp[f;"k3:1";::]', "type", ".Q.trp"],
+    ['.Q.trp[f;"k3:1";{x}]', "rank", ".Q.trp"],
+    [".Q.trpd[g;enlist 0;::]", "type", ".Q.trpd"],
+    ["-105!(g;enlist 0;::)", "type", "-105!"],
+  ]) {
+    const { answer, refused, diff } = await box.run(code);
+    assert.strictEqual(answer.error, error, `${code}: ${JSON.stringify(answer)}`);
+    assert.strictEqual(refused, `${error}, raised where ${trap} called the code's handler, as it does with what reval refuses`, code);
+    assert.strictEqual(diff, "", code);
+  }
+  // The same 'type of ordinary code, and of a lambda that fails itself, is no refusal.
+  for (const code of ["1+`a", "{x+1}`a", "f 1+`a"]) {
+    const { answer, refused } = await box.run(code);
+    assert.strictEqual(answer.error, "type", code);
+    assert.strictEqual(refused, undefined, code);
+  }
+});
+
 test("a process without reval is sent the plain lambda, and the connection says so", { skip, timeout: 60_000 }, async (t) => {
   const box = new Sandbox(".q:(enlist`reval)_ .q;");
   t.after(() => box.stop());
