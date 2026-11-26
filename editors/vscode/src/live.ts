@@ -476,7 +476,7 @@ export class QTerminals {
     // The folder's own program or env file, in a folder that is not trusted,
     // is the repository's: refused, as dotenvFor and the launcher do (#1825).
     const trusted = workspace.isTrusted !== false;
-    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath ?? "", os.homedir(), trusted) === undefined) {
+    if (qBinaryFrom(settings.qBinary, folder?.uri.fsPath, os.homedir(), trusted) === undefined) {
       void window.showErrorMessage(plainMessage(`q-lint: ${relativeBinaryProblem(settings.qBinary, trusted)}.`));
       return undefined;
     }

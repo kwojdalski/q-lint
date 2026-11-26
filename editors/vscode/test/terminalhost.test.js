@@ -140,6 +140,19 @@ test("a relative q binary is the folder's, also for a file outside every folder"
   }
 });
 
+// With no folder open, a relative binary has nothing to be read from: it
+// was resolved against the extension host's directory and typed as it was
+// written, to run whatever ./bin/q the shell found (#2369).
+test("with no workspace folder a relative q binary is refused, and no terminal opens", async () => {
+  const fake = fakeVscode({ "terminal.qBinary": "./bin/q" });
+  fake.vscode.workspace.workspaceFolders = undefined;
+  fake.vscode.workspace.getWorkspaceFolder = () => undefined;
+  const terminals = load(fake);
+  await terminals.repl();
+  assert.strictEqual(fake.terminals.length, 0);
+  assert.deepStrictEqual(fake.messages, ["q-lint: q-lint.terminal.qBinary ./bin/q is relative, and there is no workspace folder to read it from."]);
+});
+
 // A user setting of ".env.q" or "bin/q" was read from whatever folder was
 // open: in Restricted Mode, the repository's file on q's command line and
 // its program run (#1825).
