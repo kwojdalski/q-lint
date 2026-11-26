@@ -569,6 +569,19 @@ fn a_change_of_directory_in_a_lambda_moves_no_load_below_it() {
         assert_eq!(deps(&g, "a.q"), ["lib.q"], "{helper:?}");
         assert!(kinds(&g, "a.q").is_empty(), "{helper:?}");
     }
+    // The lambda's own loads are moved by it, a lambda in it included.
+    let g = graph(
+        &[
+            ("lib.q", "lf:1\n"),
+            (
+                "a.q",
+                "f:{system \"cd \",x;\n  system \"l lib.q\";\n  @[{system \"l lib.q\"};::;{x}]}\n",
+            ),
+        ],
+        false,
+    );
+    assert!(deps(&g, "a.q").is_empty());
+    assert_eq!(kinds(&g, "a.q"), [(2, "load"), (3, "load")]);
     // At the top level a directory computed moves it as a literal one does.
     let g = graph(
         &[

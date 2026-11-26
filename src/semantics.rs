@@ -1951,11 +1951,11 @@ fn loads(
     moved: &mut Vec<usize>,
 ) -> Vec<(String, String)> {
     let sites = load_sites(code, raw, view);
-    let cd = changes_directory(code, raw, view, scopes).min(loads_directory(raw, &sites, scopes));
+    let changes = changes_directory(code, raw, view, &sites);
     let mut loads = vec![];
     for (at, path, symbol) in sites {
         let path = &raw[path];
-        if !symbol && at > cd && !path.starts_with('/') {
+        if !symbol && displaced(scopes, &changes, at) && !path.starts_with('/') {
             moved.push(at);
         } else {
             loads.push((path.to_string(), namespace_at(at)));
@@ -1966,11 +1966,24 @@ fn loads(
     loads
 }
 
-/// Where the script first changes directory, `\cd lib` or `system "cd lib"`,
-/// or past the end when it never does. Not in a lambda, which changes it
-/// only when called: KDB-X loads the lib.q beside the script for `\l lib.q`
-/// under `cdTo:{system "cd ",x}` (#2821).
-fn changes_directory(code: &str, raw: &str, view: &str, scopes: &[Scope]) -> usize {
+/// Where the script changes directory: `\cd lib`, `system "cd lib"`, or the
+/// load of what may be a directory. q stays in a directory it loads: KDB-X,
+/// after `\l db`, loads db/helper.q for `\l helper.q` and fails where only
+/// the directory it started in has one (#1365). The text cannot tell a
+/// directory from a data file, which moves nowhere, so any last component
+/// without a dot counts; `\l .`, a database reloading itself, stays where it
+/// is.
+fn changes_directory(
+    code: &str,
+    raw: &str,
+    view: &str,
+    sites: &[(usize, Range<usize>, bool)],
+) -> Vec<usize> {
+    let directory = |path: &str| {
+        let name = path.trim_end_matches(['/', '\\']);
+        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        name == ".." || !name.contains('.')
+    };
     raw.split_inclusive('\n')
         .scan(0, |offset, line| {
             let at = *offset;
@@ -1979,42 +1992,38 @@ fn changes_directory(code: &str, raw: &str, view: &str, scopes: &[Scope]) -> usi
         })
         // Not one a block comment holds, which `code` has blank: KDB-X loads
         // the b.q beside the script for `\l b.q` under such a comment (#1363).
-        .find(|(at, line)| {
+        .filter(|(at, line)| {
             re!(r"^\\cd[ \t]+\S").is_match(line) && code.as_bytes().get(*at) == Some(&b'\\')
         })
         .map(|(at, _)| at)
-        .into_iter()
         .chain(
             re!(r#"\bsystem\s*(?:\[\s*|@\s*)?"cd\s+\S"#)
                 .find_iter(raw)
                 .map(|m| m.start())
-                .filter(|&at| view[at..].starts_with("system") && boundary(view, at))
-                .filter(|&at| scope_at(scopes, at).is_none()),
+                .filter(|&at| view[at..].starts_with("system") && boundary(view, at)),
         )
-        .min()
-        .unwrap_or(usize::MAX)
+        .chain(
+            sites
+                .iter()
+                .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
+                .map(|&(at, ..)| at),
+        )
+        .collect()
 }
 
-/// Where the script first loads what may be a directory, or past the end
-/// when it never does. q stays in a directory it loads: KDB-X, after `\l db`,
-/// loads db/helper.q for `\l helper.q` and fails where only the directory it
-/// started in has one (#1365). The text cannot tell a directory from a data
-/// file, which moves nowhere, so any last component without a dot counts;
-/// `\l .`, a database reloading itself, stays where it is, and so does the
-/// script whose lambda loads one, until it is called (#2821).
-fn loads_directory(raw: &str, sites: &[(usize, Range<usize>, bool)], scopes: &[Scope]) -> usize {
-    let directory = |path: &str| {
-        let name = path.trim_end_matches(['/', '\\']);
-        let name = name.rsplit(['/', '\\']).next().unwrap_or(name);
-        name == ".." || !name.contains('.')
-    };
-    sites
-        .iter()
-        .filter(|(_, path, symbol)| !symbol && directory(&raw[path.clone()]))
-        .map(|&(at, ..)| at)
-        .filter(|&at| scope_at(scopes, at).is_none())
-        .min()
-        .unwrap_or(usize::MAX)
+/// Whether a relative load at `at` comes after one of `changes`, a change of
+/// directory that has run by then: one at the top level, or in a lambda the
+/// load is in. A lambda's own change runs only when it is called: KDB-X
+/// loads the lib.q beside the script for `\l lib.q` under
+/// `cdTo:{system "cd ",x}` (#2821).
+fn displaced(scopes: &[Scope], changes: &[usize], at: usize) -> bool {
+    changes.iter().any(|&change| {
+        change < at
+            && scope_at(scopes, change).is_none_or(|lambda| {
+                std::iter::successors(scope_at(scopes, at), |&s| scopes[s].parent)
+                    .any(|s| s == lambda)
+            })
+    })
 }
 
 /// Each load `system` is handed as a string, `"l x.q"`, however it is
@@ -2108,11 +2117,12 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
     let (scopes, _) = scopes(code, raw);
     let sites = load_sites(code, raw, &view);
-    let cd =
-        changes_directory(code, raw, &view, &scopes).min(loads_directory(raw, &sites, &scopes));
+    let changes = changes_directory(code, raw, &view, &sites);
     sites
         .into_iter()
-        .filter(|(at, path, symbol)| *symbol || *at <= cd || raw[path.clone()].starts_with('/'))
+        .filter(|(at, path, symbol)| {
+            *symbol || !displaced(&scopes, &changes, *at) || raw[path.clone()].starts_with('/')
+        })
         .map(|(_, path, _)| path)
         .collect()
 }
