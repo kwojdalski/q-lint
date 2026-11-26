@@ -554,26 +554,36 @@ function cutCell(text: string): string {
 
 /// A value decoded with its types on one line, as q's `-3!` writes it:
 /// `` `a`b!1 2 ``, `(1;`a)`, `,1 2`.
-export function oneLine(q: QValue, precision = 7): string {
+///
+/// `cap`: only the first `cap` characters are wanted, as a console that cuts
+/// its lines at that width shows them. Each item writes at least one
+/// character, so of a longer list only the first `cap + 1` items are
+/// written - a char vector's first `4 * (cap + 2)` bytes, as a character is
+/// at most four - and the text is still longer than `cap`, the same up to
+/// it: 10 million floats cost what 81 do (#2580).
+export function oneLine(q: QValue, precision = 7, cap = Infinity): string {
+  const keep = cap + 1;
   switch (q.kind) {
     case "atom":
       return atomText(q.v, q.t, precision);
     case "vector":
-      return vectorText(q.v, q.t, q.attr, precision);
+      return vectorText(q.v.length > keep ? q.v.slice(0, keep) : q.v, q.t, q.attr, precision);
     case "chars":
-      return vectorText(q.v, 10, q.attr);
-    case "list":
-      return q.v.length === 1 ? `,${oneLine(q.v[0], precision)}` : `(${q.v.map((x) => oneLine(x, precision)).join(";")})`;
+      return vectorText(q.v.length > 4 * (keep + 1) ? q.v.subarray(0, 4 * (keep + 1)) : q.v, 10, q.attr);
+    case "list": {
+      const items = q.v.length > keep ? q.v.slice(0, keep) : q.v;
+      return q.v.length === 1 ? `,${oneLine(q.v[0], precision, cap)}` : `(${items.map((x) => oneLine(x, precision, cap)).join(";")})`;
+    }
     case "dict": {
       // A key that is an empty or one-item vector, a table or a dictionary is
       // put in parentheses, as `-3!` puts them: `` `symbol$()!() `` is read as
       // `` `symbol$(()!()) ``. A general list's `,1 2` or `()` needs none (#2573).
-      const k = oneLine(q.k, precision);
+      const k = oneLine(q.k, precision, cap);
       const short = (q.k.kind === "vector" || q.k.kind === "chars") && q.k.v.length <= 1;
-      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision)}`;
+      return `${attrText(q.sorted ? 1 : 0)}${short || q.k.kind === "table" || q.k.kind === "dict" ? `(${k})` : k}!${oneLine(q.v, precision, cap)}`;
     }
     case "table":
-      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision)}`;
+      return `+${oneLine({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: q.cols }, v: { kind: "list", attr: 0, v: q.data } }, precision, cap)}`;
     case "func":
       return funcText(q, precision);
   }
@@ -616,51 +626,74 @@ function countOf(q: QValue): number {
 }
 
 /// Rows of cells laid out as q's `.Q.tab` lays them: each cell padded to its
-/// place's widest, joined by spaces.
-function tabulate(rows: string[][]): string[] {
+/// place's widest, joined by spaces. A line's padding is what follows the
+/// last of its cells' own text.
+function tabulate(rows: Laid[]): Laid {
   const widths: number[] = [];
   for (const row of rows) {
     row.forEach((cell, i) => {
-      widths[i] = Math.max(widths[i] ?? 0, cell.length);
+      widths[i] = Math.max(widths[i] ?? 0, cell.text.length);
     });
   }
-  return rows.map((row) => row.map((cell, i) => cell.padEnd(widths[i])).join(" "));
+  return rows.map((row) => {
+    let text = "";
+    let end = 0;
+    row.forEach((cell, i) => {
+      const start = text.length + (i > 0 ? 1 : 0);
+      text += `${i > 0 ? " " : ""}${cell.text.padEnd(widths[i])}`;
+      if (cell.text.length > cell.pad) {
+        end = start + cell.text.length - cell.pad;
+      }
+    });
+    return { text, pad: text.length - end };
+  });
 }
+
+/// Lines as q lays them out, each with how many of its last characters are
+/// only the padding that lines up its columns: dropped from a line the
+/// console does not cut, kept on one it cuts, as q cuts the padded line.
+/// A blank, tab or newline a cell holds is the cell's, never padding
+/// (#2572).
+type Laid = { text: string; pad: number }[];
+
+const unpadded = (lines: string[]): Laid => lines.map((text) => ({ text, pad: 0 }));
+
+/// `lines` as the console shows them uncut: without their padding.
+const trimmed = (lines: Laid): string[] => lines.map((l) => l.text.slice(0, l.text.length - l.pad));
 
 /// `y` with a blank and a dashed line in front when it has fewer lines than
 /// `n`, as q's `.Q.t0` lines up a dictionary's keys with a table's values.
-function lineUp(n: number, y: string[]): string[] {
-  return n > y.length && y.length > 0 ? [" ".repeat(y[0].length), "-".repeat(y[0].length), ...y] : y;
+function lineUp(n: number, y: Laid): Laid {
+  return n > y.length && y.length > 0 ? [{ text: " ".repeat(y[0].text.length), pad: 0 }, { text: "-".repeat(y[0].text.length), pad: 0 }, ...y] : y;
 }
 
 /// The lines of a value inside the console's text, as q's `.Q.s2` writes
 /// them: a simple list's items as `string` writes them (no suffixes, nulls
 /// blank); a general list's with `-3!`, or as rows lined up when every item
 /// is a list of the same count; a table's names, a rule and its rows; a
-/// dictionary's keys and values with `| ` between.
-function nested(q: QValue, precision = 7): string[] {
+/// dictionary's keys and values with `| ` between. `cap` is `oneLine`'s.
+function nested(q: QValue, precision = 7, cap = Infinity): Laid {
   switch (q.kind) {
     case "atom":
     case "func":
-      return [oneLine(q, precision)];
+      return unpadded([oneLine(q, precision, cap)]);
     case "vector":
-      return q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t, precision) ?? (q.t === 2 ? NULL_GUID : ""))));
+      return unpadded(q.v.map((x) => (q.t === 11 ? (x === null ? "" : String(x)) : (itemText(x, q.t, precision) ?? (q.t === 2 ? NULL_GUID : "")))));
     case "chars":
-      return [...q.v].map((c) => String.fromCharCode(c));
+      return unpadded([...q.v].map((c) => String.fromCharCode(c)));
     case "dict": {
-      const d = nested(q.v, precision);
-      const k = lineUp(d.length, nested(q.k, precision));
+      const d = nested(q.v, precision, cap);
+      const k = lineUp(d.length, nested(q.k, precision, cap));
       const v = lineUp(k.length, d);
-      const width = k.reduce((w, line) => Math.max(w, line.length), 0);
-      return k.map((line, i) => `${line.padEnd(width)}| ${v[i] ?? ""}`);
+      const width = k.reduce((w, line) => Math.max(w, line.text.length), 0);
+      return k.map((line, i) => ({ text: `${line.text.padEnd(width)}| ${v[i]?.text ?? ""}`, pad: v[i]?.pad ?? 0 }));
     }
     case "table": {
-      const columns = q.data.map((c) => nested(c, precision));
-      const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? ""));
-      // The rule is as wide as the padded names; no line keeps the spaces
-      // that pad its last column.
-      const [header, ...body] = tabulate([q.cols, ...rows]);
-      return [header.trimEnd(), "-".repeat(header.length), ...body.map((line) => line.trimEnd())];
+      const columns = q.data.map((c) => nested(c, precision, cap));
+      const rows = Array.from({ length: columns[0]?.length ?? 0 }, (_, r) => columns.map((c) => c[r] ?? { text: "", pad: 0 }));
+      // The rule is as wide as the padded names.
+      const [header, ...body] = tabulate([unpadded(q.cols), ...rows]);
+      return [header, { text: "-".repeat(header.text.length), pad: 0 }, ...body];
     }
     case "list": {
       const items = q.v;
@@ -668,9 +701,10 @@ function nested(q: QValue, precision = 7): string[] {
         return [];
       }
       if (oneLineItems(items)) {
-        return items.map((x) => oneLine(x, precision));
+        return unpadded(items.map((x) => oneLine(x, precision, cap)));
       }
-      return tabulate(items.map((x) => nested(x, precision))).map((line) => line.trimEnd());
+      // An item's items are its row's cells: past `cap + 1` of them none is shown.
+      return tabulate(items.map((x) => nested(countOf(x) > cap + 1 ? firstOf(x, cap + 1) : x, precision, cap)));
     }
   }
 }
@@ -694,15 +728,20 @@ function oneLineItems(items: QValue[]): boolean {
 /// other function is left to `formatValue`, which writes the codec's
 /// `value` of it, of q type `type`.
 export function formatQ(q: QValue, value: unknown, type?: number, precision = 7): string[] {
+  return trimmed(laidOut(q, value, type, precision));
+}
+
+/// `formatQ`'s lines with their padding, the text past `cap` not written.
+function laidOut(q: QValue, value: unknown, type?: number, precision = 7, cap = Infinity): Laid {
   if (q.kind === "atom" || q.kind === "vector" || q.kind === "chars") {
-    return [oneLine(q, precision)];
+    return unpadded([oneLine(q, precision, cap)]);
   }
   if (q.kind === "func") {
     // A lambda arrives with its text; any other function as no more than
     // its kind.
-    return q.text !== undefined || q.parts !== undefined ? funcText(q, precision).split("\n") : formatValue(value, type);
+    return unpadded(q.text !== undefined || q.parts !== undefined ? funcText(q, precision).split("\n") : formatValue(value, type));
   }
-  return nested(q, precision);
+  return nested(q, precision, cap);
 }
 
 /// The lines q's console of `size` (height, width) shows for a value
@@ -729,12 +768,15 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
       shown = q.kind === "dict" ? { ...q, k: firstOf(q.k, m), v: firstOf(q.v, m) } : firstOf(q, m);
     }
   }
-  const lines = formatQ(shown, value, type, precision);
   // A line `-3!` writes - an atom, a simple list, a general list's item -
   // q cuts a character short of the width; a table's or a dictionary's
   // rows at it (#2571).
   const short = q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || (q.kind === "list" && q.v.length > 0 && oneLineItems(q.v));
-  return cutLines(more ? [...lines, ".."] : lines, [Infinity, short ? width - 1 : width]);
+  const cut = short ? width - 1 : width;
+  // Cut padded, as q cuts; a line not cut loses its padding (#2572). Only
+  // what fits the width is written (#2580).
+  const lines = laidOut(shown, value, type, precision, width).map((l) => (l.text.length > cut ? l.text : l.text.slice(0, l.text.length - l.pad)));
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, cut]);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
@@ -1125,7 +1167,7 @@ export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): 
   const types = shown.map((c) => columnTypeOf(c.q));
   const cells = shown.map((c) =>
     c.q.kind === "vector" || c.q.kind === "chars"
-      ? nested(c.q, precision)
+      ? nested(c.q, precision).map((l) => l.text)
       : itemsOf(c.q).map((x) => {
           return cutCell(oneLine(x, precision));
         }),

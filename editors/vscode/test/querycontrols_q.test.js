@@ -186,6 +186,19 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
 
   const options = { size: SIZE, limit: 100, unlimited: false, grid: false };
 
+  // The padding was trimmed before the cut, and blanks a cell holds with it (#2572).
+  await t.test("unwrapped: a line is cut padded, as q cuts it, and a cell's own blank, tab or newline is kept", async () => {
+    const at = async (code, width) => (await runUnwrapped(connection, [code], { ...options, size: [25, width] })).text;
+    const own = async (code, width) => (await connection.query([code], [25, width])).text;
+    for (const [code, width] of [["([] a:2#0Ng)", 20], ["([] a:`a`b; b:2#enlist `x`y)", 4], ["([] a:(\" \";\"\"))", 2]]) {
+      assert.deepStrictEqual(await at(code, width), await own(code, width), code);
+    }
+    assert.deepStrictEqual(await at('([] a:"a b")', 80), ["a", "-", "a", " ", "b"]);
+    assert.deepStrictEqual(await at('([] a:"\n\t")', 80), ["a", "-", "\n", "\t"]);
+    assert.deepStrictEqual(await at("([] a:(12:30 0Nu;12:30 0Nu))", 80), ["a", "------", "12:30", "12:30"]);
+    assert.deepStrictEqual(await at("([] a:`a`bbb; b:`x`)", 80), ["a   b", "-----", "a   x", "bbb"]);
+  });
+
   await t.test("unwrapped: a string is evaluated, and its value and type come back", async () => {
     const r = await connection.evaluate("1+1");
     assert.strictEqual(r.type, -7);
