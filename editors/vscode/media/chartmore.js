@@ -534,9 +534,31 @@
     return hi - lo <= Math.abs(full || 0) / 200 ? null : { min: lo, max: hi };
   }
 
-  /// The points of a pane inside `range` ({min, max}), or all of them.
+  /// The points of a pane (rising x) inside `range` ({min, max}), or all of
+  /// them, and a point where its line crosses an edge of the range: on
+  /// screen a zoomed pane clips the line at its edges, so that it runs
+  /// through, where the points inside alone left a gap to each edge, or
+  /// nothing between two points (#3130).
   function inRange(points, range) {
-    return range ? points.filter(function (p) { return p.x >= range.min && p.x <= range.max; }) : points;
+    if (!range) {
+      return points;
+    }
+    const valued = function (p) { return p.y !== null && isFinite(p.y); };
+    const out = [];
+    points.forEach(function (p, i) {
+      const from = points[i - 1];
+      if (from && valued(from) && valued(p)) {
+        [range.min, range.max].forEach(function (edge) {
+          if (from.x < edge && p.x > edge) {
+            out.push({ x: edge, y: from.y + ((p.y - from.y) * (edge - from.x)) / (p.x - from.x) });
+          }
+        });
+      }
+      if (p.x >= range.min && p.x <= range.max) {
+        out.push(p);
+      }
+    });
+    return out;
   }
 
   /// Chart.js's configuration for one pane of a linkedData(): its series

@@ -133,7 +133,7 @@ test("linked panes share the x axis: the nearest point, the crosshair's reading 
   assert.deepStrictEqual(M.readout(g, d, 1900), { x: "00:00:02.000", values: [{ label: "px", text: "" }, { label: "qty", text: "20" }] });
   assert.deepStrictEqual(M.zoomRange(2500, 1200, 2000), { min: 1200, max: 2500 });
   assert.strictEqual(M.zoomRange(1000, 1005, 2000), null, "a click is no zoom");
-  assert.deepStrictEqual(M.inRange(d.panes[1].data, { min: 1500, max: 3000 }).map((p) => p.x), [2000, 3000]);
+  assert.deepStrictEqual(M.inRange(d.panes[1].data, { min: 1500, max: 3000 }).map((p) => [p.x, p.y]), [[1500, 15], [2000, 20], [3000, 30]]);
   assert.strictEqual(M.xText(g, d, 61000, 1000), "00:01:01");
   const byRow = M.linkedData(grid([["sym", 11, ["a", "b"]], ["px", 9, ["1", "2"]]]), [1, 0], [1]);
   assert.deepStrictEqual(byRow.panes[0].data.map((p) => [p.x, p.row]), [[0, 1], [1, 0]]);
@@ -270,4 +270,25 @@ test("a linked pane marks a value with nulls either side with a point, on screen
   // One row is one point.
   const one = grid([["t", 7, ["1"]], ["a", 9, ["5"]]]);
   assert.strictEqual((M.linkedSvg(one, M.linkedData(one, [0], [1]), look, ["#ff0000"], {}).match(/<circle /g) || []).length, 1);
+});
+
+test("the SVG of zoomed linked panes runs each line to the edges of the zoom, as on screen (#3130)", () => {
+  const g = grid([["t", 7, ["0", "10", "20", "30"]], ["a", 9, ["1", "2", "3", "4"]]]);
+  const d = M.linkedData(g, all(g), [1]);
+  const points = (range) => M.inRange(d.panes[0].data, range).map((p) => [p.x, +p.y.toFixed(6)]);
+  assert.deepStrictEqual(points({ min: 5, max: 25 }), [[5, 1.5], [10, 2], [20, 3], [25, 3.5]]);
+  assert.deepStrictEqual(points({ min: 11, max: 29 }), [[11, 2.1], [20, 3], [29, 3.9]]);
+  assert.deepStrictEqual(points({ min: 12, max: 18 }), [[12, 2.2], [18, 2.8]], "between two points: a line on screen");
+  assert.deepStrictEqual(points({ min: 10, max: 20 }), [[10, 2], [20, 3]]);
+  assert.deepStrictEqual(points({ min: 40, max: 50 }), []);
+  // No line is made up across a null.
+  const gaps = grid([["t", 7, ["0", "10", "20", "30"]], ["a", 9, ["1", "", "3", ""]]]);
+  assert.deepStrictEqual(M.inRange(M.linkedData(gaps, all(gaps), [1]).panes[0].data, { min: 5, max: 25 }).map((p) => [p.x, p.y]), [[10, null], [20, 3]]);
+  for (const range of [{ min: 12, max: 18 }, { min: 11, max: 29 }, { min: 5, max: 25 }]) {
+    const svg = M.linkedSvg(g, d, look, ["#ff0000"], { range });
+    assert.ok(!svg.includes("Nothing to chart."), JSON.stringify(range));
+    // From the left edge of the plot to its right one: 64 to 780 of 800.
+    const path = svg.match(/<path d="M([\d.]+) [\d.]+(?: L[\d.]+ [\d.]+)* L([\d.]+) [\d.]+" fill="none" stroke="#ff0000"/);
+    assert.deepStrictEqual(path && [path[1], path[2]], ["64.0", "780.0"], JSON.stringify(range));
+  }
 });
