@@ -97,8 +97,12 @@ fn definitions(sources: &Sources) -> Value {
 }
 
 /// The words spelled in a file's symbol and string literals: the names a
-/// value computed at run time could reach.
+/// value computed at run time could reach. Not those of a comment, which q
+/// does not read: `` / calls `helper `` kept `helper` from the list, and a
+/// comment with one `"` opened a string that ran to the next quote in the
+/// file, hiding every function between (#2956).
 fn spelled(text: &str, words: &mut HashSet<String>) {
+    let text = q_lint_rs::comments_view(text);
     let b = text.as_bytes();
     let mut i = 0;
     let mut in_string = false;

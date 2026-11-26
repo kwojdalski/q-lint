@@ -1822,6 +1822,43 @@ fn the_workspace_definitions_and_its_unused_functions_are_listed() {
     assert!(reply["result"]["dynamic"].as_u64().unwrap() >= 1, "{reply}");
 }
 
+/// The names `q-lint/deadCode` lists for a workspace of `files`, sorted.
+fn dead(files: &[(&str, &str)]) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = Server::over(dir.path(), files, client(), Value::Null);
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let mut dead: Vec<String> = reply["result"]["functions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|d| d["name"].as_str().unwrap().to_string())
+        .collect();
+    dead.sort();
+    dead
+}
+
+// #2956: the symbols and strings that may reach a function by name were
+// read from the source with its comments in it.
+#[test]
+fn a_function_a_comment_names_is_dead_all_the_same() {
+    // A comment naming a function in backticks - as its documentation
+    // does - is no read of it.
+    let documented = "/ Calls `helper on each row, and \"other\" too\nhelper:{x}\nother:{x}\n";
+    assert_eq!(dead(&[("a.q", documented)]), ["helper", "other"]);
+    // Nor does a quote in one open a string: this one ran to the quote of
+    // the next comment, and hid every function between.
+    let quoted = "/ don't use \"quotes\nhelper:{x}\nother:{x}\n/ end\" here\nmain:{1}\n";
+    assert_eq!(dead(&[("a.q", quoted)]), ["helper", "main", "other"]);
+    // A comment after code, and a block of them.
+    let trailing = "helper:{x} / see `helper\n/\n`other\n\\\nother:{x}\n";
+    assert_eq!(dead(&[("a.q", trailing)]), ["helper", "other"]);
+    // What q does read still counts: a symbol, a string, and a `/` that is
+    // an iterator and not a comment.
+    let read =
+        "helper:{x}\nother:{x}\nplus:{x+y}\nd:`a`helper!1 2\ns:\"other[1]\"\nr:(`plus)/[1 2]\n";
+    assert!(dead(&[("a.q", read)]).is_empty());
+}
+
 #[test]
 fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     let dir = tempfile::tempdir().unwrap();

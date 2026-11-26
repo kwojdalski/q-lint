@@ -618,6 +618,12 @@ pub fn code_view(source: &str) -> String {
     views(source).code
 }
 
+/// `source` with its comments blanked and its strings kept, byte for byte:
+/// what is left is what q reads, a symbol or a string literal included.
+pub fn comments_view(source: &str) -> String {
+    views(source).comments
+}
+
 /// Whether the name ending at byte `end` of `code` (a code view) is amended
 /// through an index - `v[0]:2`, `v[i][j]+:1` - which writes it (KDB-X).
 pub fn amended_at(code: &str, end: usize) -> bool {
