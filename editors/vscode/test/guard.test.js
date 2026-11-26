@@ -2109,3 +2109,12 @@ test("embedPy and PyKX named by a symbol run Python as their names do (#2636)", 
   // Its namespace listed is a read.
   assert.deepStrictEqual(writes("key `.p"), []);
 });
+
+test("handle 0 given to apply or a trap, or applied by each or peach, evaluates the strings it is given (#2625, #2626)", () => {
+  for (const code of ['@[0;"a:1"]', '.[0;enlist"a:1"]', '@[0;"a:1";::]', '.[0;enlist"a:1";::]', '0 each enlist "a:1"', '(0)each enlist"a:1"', '0 peach enlist "a:1"', '(0 each) enlist "a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  // A string that only reads, reads.
+  assert.deepStrictEqual(writes('0 each enlist "count t"'), []);
+  assert.deepStrictEqual(writes('@[0;"count t"]'), []);
+});

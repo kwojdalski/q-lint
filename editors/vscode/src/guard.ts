@@ -2633,6 +2633,21 @@ function readStatement(statement: string, found: Set<string>): void {
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||
         (t[i - 2]?.text === "(" && t[i - 1]?.text === "neg" && next?.text === ")");
+      // Given to apply or a trap, `@[0;"a:1"]`, `.[0;enlist"a:1";h]`, it is
+      // applied to the argument after it (#2625); applied by `each` or
+      // `peach`, `0 each x`, `(0 each) x`, to each item of it (#2626).
+      const trapped = !wrapped && t[i - 1]?.text === "[" && t[i - 1].kind === "open" && t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text) && next?.text === ";";
+      const iterated = wrapped ? t[i + 2] : next;
+      const each = iterated?.kind === "name" && (iterated.text === "each" || iterated.text === "peach");
+      if (trapped || each) {
+        const after = trapped ? i + 1 : wrapped ? i + 2 : t[i - 1]?.text === "(" && t[i + 2]?.text === ")" ? i + 2 : i + 1;
+        const what = evaluates(t, after, true);
+        if (what !== undefined) {
+          found.add(`evaluates ${what.reason} on handle 0`);
+          i = what.at;
+          continue;
+        }
+      }
       const last = wrapped ? i + 1 : i;
       const first = t[last + 1];
       // A function's result too, `0 raze("a:";"1")`, `0 {x}"a:1"` (#2204) - not
