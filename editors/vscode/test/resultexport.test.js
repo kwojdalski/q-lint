@@ -559,6 +559,31 @@ const grid = (columns, cells, values, rank) => ({
   total: cells[0].length,
 });
 
+test("a pivot's sum, avg, min and max take an infinity as q's do, not as a null (#3077)", () => {
+  const by = (type, cells, values, agg) => page.pivot(grid([["s", 11], ["v", type]], [cells.map((_, i) => "aabbcdd"[i]), cells], [null, values], [cells.map((_, i) => "aabbcdd".charCodeAt(i) - 97), null]), cells.map((_, i) => i), { row: 0, column: -1, value: 1, agg }).cells.map((c) => c[0]);
+  // q: select agg v by s from ([] s:`a`a`b`b`c`d`d; v:1 0w 3 -0w 0n 0w -0w)
+  const f = [["1", "0w", "3", "-0w", "", "0w", "-0w"], [1, null, 3, null, null, null, null]];
+  assert.deepStrictEqual(by(9, ...f, "sum"), ["0w", "-0w", "", ""]);
+  assert.deepStrictEqual(by(9, ...f, "avg"), ["0w", "-0w", "", ""]);
+  assert.deepStrictEqual(by(9, ...f, "min"), ["1", "-0w", "", "-0w"]);
+  assert.deepStrictEqual(by(9, ...f, "max"), ["0w", "3", "", "0w"]);
+  assert.deepStrictEqual(by(9, ...f, "count"), ["2", "2", "0", "2"]);
+  // A long's infinity is its largest value: 1+0W is 0N, a null.
+  const j = [["1", "0W", "3", "-0W", ""], [1, null, 3, null, null]];
+  assert.deepStrictEqual(by(7, ...j, "sum"), ["", "-9223372036854775804", ""]);
+  assert.deepStrictEqual(by(7, ...j, "min"), ["1", "-0W", ""]);
+  assert.deepStrictEqual(by(7, ...j, "max"), ["0W", "3", ""]);
+  assert.deepStrictEqual(by(7, ...j, "avg").map(Number), [0, -4611686018427387902, 0]);
+  assert.strictEqual(by(7, ...j, "avg")[0], "");
+  // An int's sum is an int, its avg a float of the values.
+  assert.deepStrictEqual(by(6, ...j, "sum"), ["", "-2147483644", ""]);
+  assert.deepStrictEqual(by(6, ...j, "avg"), ["1073741824", "-1073741822", ""]);
+  assert.deepStrictEqual(by(6, ...j, "max"), ["0W", "3", ""]);
+  // A short's sum is an int: 1+0Wh is 32768i.
+  assert.deepStrictEqual(by(5, ...j, "sum"), ["32768", "-32764", ""]);
+  assert.deepStrictEqual(by(5, ...j, "min"), ["1", "-0W", ""]);
+});
+
 test("a pivot groups by two columns in q's order and aggregates a third", () => {
   const g = grid(
     [["sym", 11], ["side", 11], ["qty", 7]],

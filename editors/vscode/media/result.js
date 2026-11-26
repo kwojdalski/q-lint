@@ -295,8 +295,12 @@
   /// `spec.row`, one column per distinct value of `spec.column` (-1: one
   /// column), each cell `spec.agg` of column `spec.value` over the rows
   /// with both. `count` counts the non-null values (every row, with
-  /// `spec.value` -1); the others take a numeric column's values, nulls and
-  /// infinities left out. Values are ordered as q sorts them (the ranks),
+  /// `spec.value` -1); the others take a numeric column's values, nulls
+  /// left out. An infinity is a value, as q's aggregates take it (#3077):
+  /// a float's is 0w, so a sum holding one is 0w and one holding both is a
+  /// null; a whole number's is the largest its type holds, and its sum
+  /// wraps as q's does (a long's is a long, a short's or an int's an int).
+  /// Values are ordered as q sorts them (the ranks),
   /// or by text where q could not. At most `maxColumns` column values; the
   /// note says how many more there were. {rows: [text], columns: [text],
   /// cells: [[text]], note?}.
@@ -306,6 +310,9 @@
     const valueColumn = spec.value >= 0 && spec.value < grid.columns.length ? spec.value : -1;
     const numbers = valueColumn >= 0 && grid.columns[valueColumn].numeric ? grid.values[valueColumn] : null;
     const whole = numbers !== null && [5, 6, 7].indexOf(grid.columns[valueColumn].type) >= 0;
+    // A whole column's bits, and its infinity.
+    const bits = !whole ? 0 : grid.columns[valueColumn].type === 7 ? 64 : grid.columns[valueColumn].type === 6 ? 32 : 16;
+    const top = whole ? (1n << BigInt(bits - 1)) - 1n : 0n;
     if (agg !== "count" && !numbers) {
       return { rows: [], columns: [], cells: [], note: "Choose a numeric column to take the " + agg + " of, or count." };
     }
@@ -351,7 +358,15 @@
         }
         return;
       }
-      const v = numbers[r];
+      // `values` holds an infinity as a null: the cell tells them apart.
+      const cell = grid.cells[valueColumn][r];
+      const inf = numbers[r] === null && /^-?0w$/i.test(cell) ? (cell.charAt(0) === "-" ? -1 : 1) : 0;
+      if (inf !== 0 && !whole) {
+        a.n++;
+        a[inf > 0 ? "up" : "down"] = true;
+        return;
+      }
+      const v = inf !== 0 ? inf * Number(top) : numbers[r];
       if (v !== null) {
         a.n++;
         a.sum += v;
@@ -360,15 +375,22 @@
         a.max = Math.max(a.max, v);
         // A short, int or long by its digits: a double past 2^53 is a
         // number no cell holds (#2451).
-        const digits = whole ? grid.cells[valueColumn][r] : "";
-        if (whole && /^-?\d+$/.test(digits) && a.exact !== false) {
-          const b = BigInt(digits);
+        const digits = whole ? cell : "";
+        if (whole && (inf !== 0 || /^-?\d+$/.test(digits)) && a.exact !== false) {
+          const b = inf !== 0 ? BigInt(inf) * top : BigInt(digits);
           a.exact = { sum: (a.exact ? a.exact.sum : 0n) + b, min: a.exact && a.exact.min < b ? a.exact.min : b, max: a.exact && a.exact.max > b ? a.exact.max : b };
         } else {
           a.exact = false;
         }
       }
     });
+    // A whole number of `width` bits as q writes it: wrapped to them, its
+    // infinities 0W and -0W, its null blank.
+    const wholeText = function (b, width) {
+      const most = (1n << BigInt(width - 1)) - 1n;
+      const w = BigInt.asIntN(width, b);
+      return w === most ? "0W" : w === -most ? "-0W" : w === -most - 1n ? "" : String(w);
+    };
     const text = function (a) {
       if (agg === "count") {
         return String(a.n);
@@ -376,8 +398,19 @@
       if (a.n === 0) {
         return "";
       }
+      if (a.up || a.down) {
+        if (agg === "min" || agg === "max") {
+          return (agg === "min" ? a.down : a.up) ? (agg === "min" ? "-0w" : "0w") : meanText(agg === "min" ? a.min : a.max);
+        }
+        return a.up && a.down ? "" : a.up ? "0w" : "-0w";
+      }
       if (a.exact && agg !== "avg") {
-        return String(a.exact[agg === "sum" ? "sum" : agg]);
+        return wholeText(a.exact[agg], agg === "sum" ? Math.max(bits, 32) : bits);
+      }
+      if (a.exact && bits === 64) {
+        // A long's avg is of its sum, which wraps: of 1 and 0W, a null.
+        const sum = BigInt.asIntN(64, a.exact.sum);
+        return sum === -top - 1n ? "" : meanText(Number(sum) / a.n);
       }
       return meanText(agg === "sum" ? a.sum : agg === "avg" ? average(a.sum, a.mean, a.n) : agg === "min" ? a.min : a.max);
     };

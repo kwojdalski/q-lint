@@ -257,6 +257,21 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
       assert.strictEqual(`${distinct} ${pivot(grid, rows, { row: 0, column: -1, value: 1, agg: "sum" }, 50).rows.length}`, q, code);
     }
   });
+  await t.test("a pivot's sum, avg, min and max of a group holding an infinity are q's (#3077)", async () => {
+    const { toGrid } = require("../out/grid.js");
+    const { pivot } = require("../media/result.js");
+    for (const v of ["1 0w 3 -0w 2 5", "1 0W 3 -0W 2 5", "(1i;0Wi;3i;neg 0Wi;2i;5i)", "(1h;0Wh;3h;neg 0Wh;2h;5h)", "1 0w 3 -0w 2 5e"]) {
+      const code = `([] s:\`a\`a\`b\`b\`c\`c; v:${v})`;
+      const shown = toGrid((await connection.queryGrid(statements(code), SIZE, 100)).grid, -1);
+      for (const agg of ["sum", "avg", "min", "max"]) {
+        const q = toGrid((await connection.queryGrid(statements(`select ${agg} v by s from ${code}`), SIZE, 100)).grid, -1).cells[1];
+        const got = pivot(shown, [0, 1, 2, 3, 4, 5], { row: 0, column: -1, value: 1, agg }).cells.map((c) => c[0]);
+        // q writes a float to seven digits.
+        const same = (a, b) => a === b || (a !== "" && b !== "" && Math.abs(Number(a) - Number(b)) <= 1e-6 * Math.abs(Number(b)));
+        assert.ok(got.length === 3 && got.every((x, i) => same(x, q[i])), `${agg} of ${v}: ${JSON.stringify(got)}, q ${JSON.stringify(q)}`);
+      }
+    }
+  });
   await t.test("a general column pages though the rows of a cut or a page are all of one type, which q makes a vector of (#3068)", async () => {
     const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
     const cases = [
