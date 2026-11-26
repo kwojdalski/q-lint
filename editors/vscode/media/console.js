@@ -296,7 +296,13 @@
       if (pointer >= 0) pointer = history.indexOf(input.value);
     } else if (m.type === "found" && search !== undefined) {
       search.index = m.index;
-      if (m.index >= 0) setValue(m.code);
+      // The walk through the history goes on from the entry found, as
+      // readline's does (#2497); the draft is what was typed before it.
+      if (m.index >= 0) {
+        if (pointer === -1) draft = input.value;
+        pointer = m.index;
+        setValue(m.code);
+      }
       showSearch();
     } else if (m.type === "completions") {
       // The answer is slow (a process, the workspace): the input may have run or changed since.
