@@ -10491,6 +10491,11 @@ fn lint_rules(
             continue;
         }
         if system_command(first_raw) {
+            // `k)\d .ns` is q's context too, and the views hold none of a k
+            // line: read from the source, as QF018 reads it (#2997).
+            if let Some(ns) = semantics::opens(first, first_raw) {
+                namespace = !ns.is_empty();
+            }
             offset += line.len();
             continue;
         }
@@ -10508,6 +10513,22 @@ fn lint_rules(
         if let Some(ns) = semantics::opens(first, first_raw) {
             namespace = !ns.is_empty();
         }
+        // So does a later statement of the line, for what follows it: the
+        // statements before it were in the context the line began in. The
+        // next line starts in the last one (#2997).
+        let later = semantics::opens_later(line, raw);
+        let entered = namespace;
+        if let Some((_, ns)) = later.last() {
+            namespace = !ns.is_empty();
+        }
+        let namespace_at = |at: usize| {
+            later
+                .iter()
+                .rev()
+                .find(|(from, _)| *from <= at)
+                .map_or(entered, |(_, ns)| !ns.is_empty())
+        };
+        let namespace = entered;
         // More from the same guidelines:
         //
         //   "Do not use unnecessary parentheses - the compiler doesn't need
@@ -10672,6 +10693,7 @@ fn lint_rules(
             }
         }
         for &(at, head) in &heads {
+            let namespace = namespace_at(at);
             // Of the 181 reserved names q refuses to assign inside a namespace
             // all but two: `from` and `by` are accepted there and read back fine,
             // checked one by one. TorQ's email settings define `.email.from`.

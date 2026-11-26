@@ -789,6 +789,22 @@ fn string_items(s: &str) -> Option<usize> {
     }
     Some(n)
 }
+/// A `d` command q is handed as a string, up to the string's close, in each
+/// spelling that switches the context as `\d .ns` does. KDB-X 5 leaves
+/// `system "d"` at the namespace after `system "d .a"`, `system@"d .a"`,
+/// `system["d .a"]`, `system("d .a")`, `@[system;"d .a";::]` and
+/// `value "\\d .a"`, and a `from:1` on the next line defines `.a.from`
+/// (#2997). Read in the source, where the string is still there; only a
+/// literal - a computed command names a context no reading can know.
+macro_rules! switch {
+    () => {
+        concat!(
+            r#"(?:(?:system|@\[[ \t]*system[ \t]*;)[ \t]*(?:@[ \t]*)?[(\[]?[ \t]*"d"#,
+            r#"|value[ \t]*(?:@[ \t]*)?[(\[]?[ \t]*"\\\\d)"#,
+            r#"[ \t]+(\.[\w.]*)[ \t]*""#
+        )
+    };
+}
 /// The context a top-level line switches to, if it switches: `""` for the
 /// root. `code_line` and `raw_line` are the same line in the two views.
 ///
@@ -804,27 +820,50 @@ pub(crate) fn opens(code_line: &str, raw_line: &str) -> Option<String> {
     // whole k line, so it is read from the source. Any run of prefixes is
     // read past, as q does: KDB-X 5 runs `q)k)\d .qux`, `d:1`, `\d .` and
     // `.qux.d` is 1 (#2194). A command holds no string to mask, so it too
-    // is read from the source.
+    // is read from the source. After a prompt the statement is q, and both
+    // views are read from where it starts: the views blank a line in
+    // another language whole, so nothing of it is read here.
     let prefixes = crate::language_prefixes(raw_line);
-    let code_line = if prefixes > 0 && raw_line[prefixes..].starts_with('\\') {
-        &raw_line[prefixes..]
+    let (code_line, raw_line) = if prefixes > 0 && raw_line[prefixes..].starts_with('\\') {
+        (&raw_line[prefixes..], &raw_line[prefixes..])
     } else if raw_line.starts_with("q)") {
-        &code_line[2..]
+        (&code_line[prefixes..], &raw_line[prefixes..])
     } else {
-        code_line
+        (code_line, raw_line)
     };
     let ns = if let Some(m) =
         re!(r"^\\d[ \t]+(\.[\w.]*)(?:[ \t]+/.*)?[ \t\r]*\n?$").captures(code_line)
     {
         m.get(1)
-    } else if re!(r"^system\b").is_match(code_line) {
-        re!(r#"^system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#)
-            .captures(raw_line)?
-            .get(1)
+    } else if re!(r"^(?:system|@\[[ \t]*system|value)\b").is_match(code_line) {
+        re!(concat!("^", switch!())).captures(raw_line)?.get(1)
     } else {
         None
     };
     Some(ns?.as_str().trim_end_matches('.').into())
+}
+/// Each context a later statement of a top-level line switches to, with the
+/// offset in the line it is in force from: q 5 ends `system "d .ns";system
+/// "d .";lim:1` at the root, `lim` and all (#767), and after `a:1;system
+/// "d .ns"` the next line's `from:1` defines `.ns.from` (#2997). Only a
+/// statement of the line itself: one in brackets may not run.
+pub(crate) fn opens_later(code_line: &str, raw_line: &str) -> Vec<(usize, String)> {
+    let mut out = vec![];
+    for m in re!(concat!(r";[ \t]*", switch!())).captures_iter(raw_line) {
+        let at = m.get(0).unwrap().start();
+        let depth = code_line[..at].bytes().fold(0i32, |d, b| match b {
+            b'(' | b'[' | b'{' => d + 1,
+            b')' | b']' | b'}' => d - 1,
+            _ => d,
+        });
+        if depth == 0 && code_line[at..].starts_with(';') {
+            out.push((
+                m.get(0).unwrap().end(),
+                m[1].trim_end_matches('.').to_string(),
+            ));
+        }
+    }
+    out
 }
 /// The namespace in force from each offset on, as `scopes` reads it.
 pub(crate) fn contexts(code: &str, raw: &str) -> Vec<(usize, String)> {
@@ -852,23 +891,11 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
             namespace = ns;
         }
         namespaces.push((offset, namespace.clone()));
-        // A later statement on the line switches too, from where it ends:
-        // q 5 ends `system "d .ns";system "d .";lim:1` at the root, `lim`
-        // and all (#767).
+        // A later statement on the line switches too, from where it ends.
         if stack.is_empty() {
-            let raw_line = &raw[offset..offset + line.len()];
-            for m in re!(r#";[ \t]*system[ \t]*"d[ \t]+(\.[\w.]*)[ \t]*""#).captures_iter(raw_line)
-            {
-                let at = m.get(0).unwrap().start();
-                let depth = line[..at].bytes().fold(0i32, |d, b| match b {
-                    b'(' | b'[' | b'{' => d + 1,
-                    b')' | b']' | b'}' => d - 1,
-                    _ => d,
-                });
-                if depth == 0 && line[at..].starts_with(';') {
-                    namespace = m[1].trim_end_matches('.').into();
-                    namespaces.push((offset + m.get(0).unwrap().end(), namespace.clone()));
-                }
+            for (end, ns) in opens_later(line, &raw[offset..offset + line.len()]) {
+                namespace = ns;
+                namespaces.push((offset + end, namespace.clone()));
             }
         }
         // `\t` and `\ts` run their argument as q, lambdas and all (#312).

@@ -226,6 +226,65 @@ fn the_last_prefix_of_a_run_names_the_language() {
 }
 
 #[test]
+fn a_context_switch_is_followed_in_each_spelling_q_runs() {
+    // #2997. KDB-X 5 leaves `system "d"` at `.foo` after each of these, and
+    // the `from:1` under it defines `.foo.from`. Only `\d .foo` and
+    // `system "d .foo"` at the start of a line were followed, so the rest
+    // drew QF012's "Root-level assignment" and QF004's root message.
+    for switch in [
+        "system[\"d .foo\"]",
+        "system(\"d .foo\")",
+        "system (\"d .foo\")",
+        "system@\"d .foo\"",
+        "@[system;\"d .foo\";::]",
+        "value \"\\\\d .foo\"",
+        "a:1;system \"d .foo\"",
+        "a:1;value \"\\\\d .foo\";b:2",
+        "k)\\d .foo",
+        "q)system \"d .foo\"",
+        "q)q)system[\"d .foo\"]",
+    ] {
+        let source = format!("{switch}\nfrom:1\nsum:1\n");
+        let findings = lint(&source, "t.q", Profile::Style);
+        let said: Vec<_> = findings.iter().map(|f| (&*f.code, &*f.detail)).collect();
+        assert_eq!(
+            said,
+            [(
+                "QF004",
+                "Namespace-level assignment to `sum`: q refuses it ('assign)"
+            )],
+            "{switch}"
+        );
+        // The one reader: the names after it are the namespace's for the
+        // editor too.
+        let contexts = q_lint_rs::contexts(&source);
+        assert_eq!(contexts.last().unwrap().1, ".foo", "{switch}");
+    }
+    // The statements before a switch later on the line were in the context
+    // the line began in.
+    let findings = lint(
+        "from:1;system \"d .foo\";from:2\nby:1\n\\d .\nby:2\n",
+        "t.q",
+        Profile::Style,
+    );
+    let at: Vec<_> = findings
+        .iter()
+        .map(|f| (&*f.code, f.line, f.column))
+        .collect();
+    assert_eq!(at, [("QF012", 1, Some(1)), ("QF012", 4, Some(1))]);
+    // A computed command, and one that may not run, name no context.
+    for none in [
+        "system \"d \",x",
+        "if[0b;system \"d .foo\"]",
+        "a:\"system[\\\"d .foo\\\"]\"",
+        "f:{system \"d .foo\"}",
+    ] {
+        let findings = lint(&format!("{none}\nfrom:1\n"), "t.q", Profile::Style);
+        assert!(findings.iter().any(|f| f.code == "QF012"), "{none}");
+    }
+}
+
+#[test]
 fn a_block_comment_folds_into_the_foreign_statement_an_indented_line_continues() {
     // #3010. KDB-X 5 hands `t)e`, `/`, `  f`, `\`, `  g` to `.t.e` as one
     // statement, "e\n/\n/  f\n/\n  g", and loads `k)f:{[a;b] a+`, `/`,
