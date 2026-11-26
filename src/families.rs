@@ -1184,13 +1184,14 @@ fn holds_table(code: &str, name: &str, scope: Option<(usize, usize)>) -> bool {
 /// Only where the other side cannot be untyped. `()~key p` is how q asks
 /// whether a path exists - `key` of a missing file is `()` - and a name
 /// set to `()` as a sentinel is rightly compared with it, so a name or an
-/// expression of unknown type is left alone. What is reported is `where`,
-/// `til`, `getenv` or `read1` - always a typed list - or a local of the
-/// lambda whose every assignment is one of those or a typed literal: a
-/// string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of an atom.
+/// expression of unknown type is left alone. What is reported is a whole
+/// call of `til`, `getenv` or `read1` - always a typed list (`typed_call`) -
+/// or a local of the lambda whose every assignment is one of those or a
+/// typed literal: a string, `` `$() ``, `` `long$() ``, `"j"$()` or `0#` of
+/// an atom. Not `where`: of a dictionary it is the keys, and q 5
+/// `()~where ()!()` is 1b (#2684).
 fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut Vec<Finding>) {
     let b = code.as_bytes();
-    let typed_start = re!(r"^(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.]|$)");
     for (at, _) in code.match_indices('~') {
         // `()` read in `comments` too, where a string is still there:
         // `("")~x` is no `()`. Nor is the key list of `()!()`.
@@ -1244,7 +1245,7 @@ fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 continue;
             };
         let operand = operand.trim_start();
-        let typed = typed_start.is_match(operand)
+        let typed = typed_call(operand)
             || re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(operand)
                 .filter(|n| {
@@ -1266,6 +1267,32 @@ fn empty_match(path: &str, source: &str, code: &str, comments: &str, out: &mut V
                 .into(),
         ));
     }
+}
+
+/// Whether `operand` is, as a whole, one call of `til`, `getenv` or `read1`.
+/// The first word alone says nothing: q 5 `()~til[x]#y` is 1b for `y` `()`,
+/// as is `()~til each ()` (#2685). So a bracket call has to end the
+/// expression, and a juxtaposed one has to be given its argument - which
+/// then runs to the end, q reading right to left - not an iterator.
+fn typed_call(operand: &str) -> bool {
+    let Some(name) = re!(r"^(?:til|getenv|read1)\b").find(operand) else {
+        return false;
+    };
+    let rest = &operand[name.end()..];
+    let arg = rest.trim_start_matches([' ', '\t']);
+    if arg.starts_with('[') {
+        let open = operand.len() - arg.len();
+        let Some(close) = matching(operand, open, b'[', b']') else {
+            return false;
+        };
+        let after = operand[close..].trim_start_matches([' ', '\t']);
+        return after.is_empty() || after.starts_with([';', ')', ']', '}', '\n', '\r']);
+    }
+    if arg.len() == rest.len() && !arg.starts_with(['(', '"', '`']) {
+        return false;
+    }
+    re!(r#"^(?:-?[0-9.]|[("`]|\.?[A-Za-z])"#).is_match(arg)
+        && !re!(r"^(?:each|peach|over|scan|prior)\b").is_match(arg)
 }
 
 /// Whether `name`, read at `at`, is a local of the lambda around it whose
@@ -1302,9 +1329,10 @@ fn typed_local(source: &str, code: &str, comments: &str, at: usize, name: &str) 
         let stop = text.find([';', '\n', '}']).unwrap_or(text.len());
         let v = text[..stop].trim();
         if !re!(
-            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*")|(?:where|til|getenv|read1)(?:[^A-Za-z0-9_.].*)?)$"#
+            r#"^(?:"(?:[^"\\]|\\.)*"|`[a-z]*\$\(\)|"[A-Za-z]"\$\(\)|0#(?:`[A-Za-z0-9_.]*|-?\d[A-Za-z0-9.]*|"(?:[^"\\]|\\.)*"))$"#
         )
         .is_match(v)
+            && !typed_call(v)
         {
             return false;
         }

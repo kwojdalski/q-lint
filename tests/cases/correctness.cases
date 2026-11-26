@@ -1196,11 +1196,24 @@ r3:{h:{g::1}; count h; x} peach 1 2
 r4:{g::1;x} each 1 2
 
 === QB023 | () matched with a side that is always typed (q 5: ()~0#0, ()~`symbol$() and ()~"" are 0b; #1141)
-a:{()~where x}
+a:{()~til x}
 b:{(til x)~()}
 c:{r:0#0; r,:x; r~()}
 d:{s:`$(); s,:x; ()~s}
 e:{v:getenv x; v~()}
+f:{()~til[x]}
+g:{()~til count x}
+h:{v:til[x]; v~()}
+
+=== clean | where of a dictionary is its keys, which can be () (q 5: ()~where ()!() is 1b, #2684)
+a:{()~where x}
+b:{v:where x; v~()}
+
+=== clean | a typed builtin that is only the first word of its side (q 5: ()~til[0]#() and ()~til each () are 1b, #2685)
+a:{[x;y] ()~til[x]#y}
+b:{()~til each x}
+c:{(til[x]#y)~()}
+d:{v:til[x]#y; v~()}
 
 === clean | () matched with key, a parameter, an untyped local, (::) or ()!() (#1141)
 a:{()~key x}
