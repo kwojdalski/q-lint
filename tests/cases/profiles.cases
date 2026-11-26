@@ -404,6 +404,22 @@ h:hopen `:.z.T
 === QP002 profile: uqf | .z.z is UTC, but still a datetime
 c:.z.z
 
+=== clean profile: uqf | a symbol that spells a clock is data, alone or in a vector (q 5: `a`.z.T is two symbols) (#2721)
+h:`.z.P
+i:`a`.z.T
+j:`.z.Z
+k:`a`.z.z
+m:(`.z.z;"the clock as a datetime")
+
+=== QP002 profile: uqf | but one that get or value looks up reads the clock (q 5: type value `.z.z is -15h) (#2721)
+a:value `.z.z
+
+=== QP002 profile: uqf | in brackets too (#2721)
+b:get[`.z.Z]
+
+=== QP002 QP003 profile: uqf | and a symbol leaves the clock beside it reported (#2721)
+a:(`.z.Z;.z.Z)
+
 === clean profile: uqf | a dotted name that ends in .z.z or .z.Z is a variable, not the clock (#510; q 5: .my.z.z[] is 1)
 .my.z.z:{1}
 .my.z.Z:2

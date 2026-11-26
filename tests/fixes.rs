@@ -465,6 +465,8 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     ("QP003", "f:{x}\n  .z.P", "f:{x}\n  .z.p", false),
     // Not `.z.z`, the datetime QP002 reports in the same profile (#519).
     ("QP003", "a:.z.Z", "a:.z.p", false),
+    // The clock, not the symbol that spells it (#2721).
+    ("QP003", "a:(`.z.P;.z.P)", "a:(`.z.P;.z.p)", false),
     (
         "QB006",
         "t:([]a:1 2;b:3 4);r:select from t where a=1 and b=3",

@@ -10740,9 +10740,18 @@ fn lint_rules(
             // first is the one pattern whose string is the point - `"z"$`.
             let in_code = |m: &regex::Match| line[m.range()] == *m.as_str();
             // A symbol may spell a datetime and hold none: `` `2020.01.01T10 ``
-            // is -11h in q 5 (#409). Only the literal's own spelling: a
-            // symbol naming the clock, `` `.z.z ``, is there to be looked up.
+            // is -11h in q 5 (#409). One naming the clock is data as well,
+            // `` `a`.z.z `` and `` (`.z.Z;"local") ``, and reads it only where
+            // `get` or `value` looks the name up (#2721).
             let symbols = unsymbolled(line);
+            let in_symbol = |at: usize| symbols.as_bytes()[at] != line.as_bytes()[at];
+            let looked_up = |at: usize| {
+                let lead = line[..at - 1].trim_end_matches([' ', '\t']);
+                let lead = lead.strip_suffix('[').unwrap_or(lead);
+                line.as_bytes()[at - 1] == b'`'
+                    && !line[at + 4..].starts_with('`')
+                    && re!(r"(?:^|[^\w.`])(?:get|value)$").is_match(lead)
+            };
             // A file handle names a file whatever it spells: `` `:.z.P `` and
             // `` `:log/.z.Z `` read no clock (#651).
             let paths: Vec<_> = re!(r"`:[A-Za-z0-9_.:/]*")
@@ -10754,7 +10763,10 @@ fn lint_rules(
                 in_code(m)
                     && !in_path(m.start())
                     && (!m.as_str().starts_with(|c: char| c.is_ascii_digit())
-                        || symbols.as_bytes()[m.start()] == line.as_bytes()[m.start()])
+                        || !in_symbol(m.start()))
+                    && (!(m.as_str().ends_with(".z.z") || m.as_str().ends_with(".z.Z"))
+                        || !in_symbol(m.end() - 4)
+                        || looked_up(m.end() - 4))
             };
             // Reported at the first of them, which is where the fix starts.
             // Any cast whose type string holds a `z` or `Z`: q 5 `"Z"$"2023.01.01"`
@@ -10835,6 +10847,8 @@ fn lint_rules(
                         .ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
                 })
                 .filter(|m| line[m.range()] == *m.as_str() && !in_path(m.start()))
+                // Nor does a symbol, whose fix would rename the data (#2721).
+                .filter(|m| !in_symbol(m.start()))
             {
                 let utc = utc_clock(m.as_str());
                 add(
