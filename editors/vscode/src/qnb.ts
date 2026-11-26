@@ -329,12 +329,17 @@ const trimEnd = (line: string): string => line.replace(/\s+$/, "");
 /// closed; a lone `\`, which ends the cell's code, would end the script, and
 /// opens a block comment over the rest of the cell instead. Block comments
 /// nest, in a cell as in KDB-X (#1462), so each level the cell leaves open is
-/// closed by a `\` of its own (#1731).
+/// closed by a `\` of its own (#1731). An indented first line that is a
+/// command once unindented - `  \\`, `  \l lib.q` - is none as the cell
+/// sends it, and q runs nothing of its statement: unindented, `\\` ended q
+/// there and lost every later cell, so the statement is a comment (#3000).
 function scriptCell(source: string): string[] {
   const out: string[] = [];
   let depth = 0;
   let ended = false;
   let first = true;
+  // In the statement of such a command, which runs to the next unindented line.
+  let unrun = false;
   for (const line of source.split(/\r?\n/)) {
     const text = trimEnd(line);
     if (ended) {
@@ -355,9 +360,17 @@ function scriptCell(source: string): string[] {
       continue;
     } else if (first && text !== "" && !text.startsWith("/")) {
       const unindented = line.trimStart();
-      if (trimEnd(unindented) === "/" || trimEnd(unindented) === "\\") {
-        // Unindented, a lone `/` would open a block comment and a lone `\`
-        // end the script, losing every later cell (#1563): a line comment.
+      if (unindented !== line && (unrun || unindented.startsWith("\\"))) {
+        // Unindented it would be a command, which the cell never ran: a
+        // lone `\` ends the script (#1563), `\\` ends q, `\l` loads a file
+        // (#3000). A line comment, as are the lines that continue it.
+        unrun = true;
+        out.push(`/ ${unindented}`);
+        continue;
+      }
+      if (trimEnd(unindented) === "/") {
+        // Unindented, a lone `/` would open a block comment over every
+        // later cell (#1563): a line comment.
         out.push(`/ ${unindented}`);
         continue;
       }

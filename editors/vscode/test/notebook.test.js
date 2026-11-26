@@ -523,6 +523,24 @@ test("an indented lone / or \\ on a cell's first line opens no block comment and
   assert.strictEqual(exportScript([{ kind: "code", source: " /\n x:1" }]), "/ /\nx:1\n");
 });
 
+// As the cell sends it, an indented `\\` or `\l` is no command and q runs
+// nothing of its statement (`value "  \\\\"` on KDB-X): unindented in the
+// script it was one, and `\\` ended q there (#3000).
+test("export: an indented command on a cell's first line is a comment, with the lines that continue it (#3000)", () => {
+  const { statements } = require("../out/statements.js");
+  const code = (source) => ({ kind: "code", source });
+  for (const first of ["  \\\\", "\t\\\\", "  \\\\ ", "  \\\\x", "  \\l lib.q", "  \\d .foo", " / note\n  \\\\"]) {
+    const script = exportScript([code("a:1"), code(first), code("g:{x}")]);
+    assert.deepStrictEqual(statements(script), ["a:1", "g:{x}"], script);
+  }
+  assert.strictEqual(exportScript([code("  \\\\"), code("g:{x}")]), "/ \\\\\n\ng:{x}\n");
+  // Its statement runs to the next unindented line, comments and blanks in it.
+  assert.strictEqual(exportScript([code("  \\\\\n  x:1\n\n  / c\n/ d\n   y:2\nz:3\n  +1")]), "/ \\\\\n/ x:1\n\n/ / c\n/ d\n/ y:2\nz:3\n  +1\n");
+  assert.strictEqual(exportScript([code(" \\\n x:1"), code("b:2")]), "/ \\\n/ x:1\n\nb:2\n");
+  // At the margin it is the command the cell ran, and stays one.
+  assert.strictEqual(exportScript([code("\\l lib.q\n  a"), code("b:2")]), "\\l lib.q\n  a\n\nb:2\n");
+});
+
 test("a chart past what a cell's output holds draws its first rows and says why, not 'Invalid string length' (#2156)", () => {
   const { OUTPUT_LIMIT, chartOutputs } = require("../out/celldata.js");
   const rows = 190_000;

@@ -395,6 +395,17 @@ test("an exported notebook puts the root back after a cell that left it behind a
   }
 });
 
+test("an exported notebook loads past a cell whose first line is an indented \\\\, which q does not run as one (#3000)", { skip }, async (t) => {
+  for (const cells of [
+    ["a:1", "  \\\\", "b:2"],
+    ["a:1", "\t\\", "b:2"],
+  ]) {
+    const { cells: ran, script } = await ranAndLoaded(t, cells, "`a`b in key `.");
+    assert.deepStrictEqual(script, ran, JSON.stringify(cells));
+    assert.strictEqual(ran[0].replace(/\s/g, ""), "11b");
+  }
+});
+
 test("an exported cell that opens with an indented comment does not continue the cell above (#1935)", { skip }, async (t) => {
   for (const cells of [
     ["f:{x+1}", " / note\n g:3"],
