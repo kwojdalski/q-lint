@@ -232,6 +232,20 @@ test("a process file is read with a byte order mark and CRLF line ends", () => {
   assert.throws(() => readProcessFile("{nope"), SyntaxError);
 });
 
+// "tls": "true" in a shared or imported list was read as no TLS: the
+// handshake's password went in cleartext, and nothing was said (#2520).
+test("a tls that is not true or false skips the entry and says so, in a shared list and an import", () => {
+  const { readSharedFile } = require("../out/shared.js");
+  for (const tls of ["true", 1, "yes", null, {}]) {
+    const text = JSON.stringify({ processes: [{ label: "rdb", host: "h", port: 5010, tls }, { label: "hdb", host: "h", port: 5012, tls: false }] });
+    for (const read of [readProcessFile(text), readSharedFile(text, true)]) {
+      assert.deepStrictEqual(read.processes, [{ label: "hdb", host: "h", port: 5012, tags: [] }], JSON.stringify(tls));
+      assert.deepStrictEqual(read.problems, [`Entry 1 (rdb): tls is ${JSON.stringify(tls)}, not true or false, so it was skipped rather than connected to without TLS.`]);
+    }
+  }
+  assert.deepStrictEqual(readProcessFile(JSON.stringify([{ label: "rdb", host: "h", port: 5010, tls: true }])).processes[0].tls, true);
+});
+
 test("an import replaces processes of the same label and adds the rest", () => {
   const a = { label: "a", host: "h", port: 1, tags: [] };
   const b = { label: "b", host: "h", port: 2, tags: [] };

@@ -210,6 +210,12 @@ export function parseProcesses(json: unknown, scripts = false, stored = false): 
       problems.push(`${where} (${label}): ${bad}`);
       return;
     }
+    // "true", 1 or "yes" read as no TLS sent the handshake's password in
+    // cleartext to a process meant to be reached over TLS (#2520).
+    if (e.tls !== undefined && typeof e.tls !== "boolean") {
+      problems.push(`${where} (${label}): tls is ${JSON.stringify(e.tls)}, not true or false, so it was skipped rather than connected to without TLS.`);
+      return;
+    }
     if (seen.has(label)) {
       problems.push(`${where} (${label}) repeats a label, and was skipped.`);
       return;
