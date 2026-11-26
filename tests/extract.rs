@@ -197,6 +197,44 @@ const ACCEPTED: &[(&str, &str, &str, &str)] = &[
         "extracted:{[a] update c:a from ([]b:1 2)}\ng:{[a] 0!extracted[a]}\n",
         "g 3 4",
     ),
+    // The call stays a token of its own after a name, a symbol or the `.`
+    // of an apply that the selection stood right after (#2791).
+    (
+        "g:{sum x}\nh:{[a;b] g(a;b)}\n",
+        "(a;b)",
+        "g:{sum x}\nextracted:{[a;b] (a;b)}\nh:{[a;b] g extracted[a;b]}\n",
+        "h[1;2]",
+    ),
+    (
+        "g:{x+y}\nh:{[a;b] g .(a;b)}\n",
+        "(a;b)",
+        "g:{x+y}\nextracted:{[a;b] (a;b)}\nh:{[a;b] g . extracted[a;b]}\n",
+        "h[1;2]",
+    ),
+    (
+        "h:{[a] a+count\"abc\"}\n",
+        "\"abc\"",
+        "extracted:{[] \"abc\"}\nh:{[a] a+count extracted[]}\n",
+        "h 1",
+    ),
+    (
+        "h:{[a] `x`y(a;0)}\n",
+        "(a;0)",
+        "extracted:{[a] (a;0)}\nh:{[a] `x`y extracted[a]}\n",
+        "h 1",
+    ),
+    (
+        "h:{[a] neg$[a>1;a;0]}\n",
+        "$[a>1;a;0]",
+        "extracted:{[a] $[a>1;a;0]}\nh:{[a] neg extracted[a]}\n",
+        "h 3",
+    ),
+    (
+        "h:{[a] 10 20 30(a;0)}\n",
+        "(a;0)",
+        "extracted:{[a] (a;0)}\nh:{[a] 10 20 30 extracted[a]}\n",
+        "h 2",
+    ),
 ];
 
 #[test]

@@ -27,6 +27,8 @@ const NAME: &str = r"\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*";
 /// becomes the call, `params` (in the order the lambda around introduces
 /// them) and `body`, the new lambda's text after its signature, and
 /// `insert_at`, the start of the line the new definition goes above.
+/// `spaced` is whether the call needs a blank before it, to stay a token
+/// of its own after what stands before the selection.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Extraction {
     pub start: usize,
@@ -34,6 +36,7 @@ pub struct Extraction {
     pub params: Vec<String>,
     pub body: String,
     pub insert_at: usize,
+    pub spaced: bool,
 }
 
 impl Extraction {
@@ -44,7 +47,8 @@ impl Extraction {
 
     /// The call that takes the selection's place.
     pub fn call(&self, name: &str) -> String {
-        format!("{name}[{}]", self.params.join(";"))
+        let blank = if self.spaced { " " } else { "" };
+        format!("{blank}{name}[{}]", self.params.join(";"))
     }
 }
 
@@ -167,6 +171,13 @@ pub fn extract(
     if cut {
         return Err("the selection starts inside a name, a number or a symbol".into());
     }
+    // A name, a number, a symbol or the `.` of an apply right before the
+    // selection would read the call's name into itself: `g(a;b)` is not
+    // `gextracted[a;b]`, nor `g .(a;b)` `g .extracted[a;b]` (#2791).
+    let spaced = before.is_some_and(|c| word(c) || c == '.')
+        || raw[..start]
+            .trim_end_matches(|c: char| word(c) || ".:/".contains(c))
+            .ends_with('`');
     // A keyword q applies infix takes the value on its left as its own
     // argument: `{[b] mod b}` is refused by KDB-X (#1303). Called with
     // brackets, `mod[a;2]`, it is a value.
@@ -290,6 +301,7 @@ pub fn extract(
         params,
         body: raw[start..end].to_string(),
         insert_at: line_of(statement.min(start)),
+        spaced,
     })
 }
 
