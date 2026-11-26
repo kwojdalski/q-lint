@@ -94,13 +94,19 @@ const symbols = (names: string[]): string => {
 
 /// The joins `left` and `right` allow, the likeliest first.
 export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
-  const l = operand(left.expression);
+  // q joins no partitioned table on the left - lj and ij signal 'splay, aj
+  // 'date - so the left is one partition of it, the last, which the why
+  // says to change to the one wanted (#2539).
+  const field = left.where === "partitioned" ? left.columns[0] : undefined;
+  const l = field === undefined ? operand(left.expression) : `(select from ${operand(left.expression)} where ${field}=last .Q.pv)`;
+  const leftNote = field === undefined ? "" : ` ${left.expression.trim()} is partitioned, which q joins only one partition of at a time: this takes its last ${field}; change last .Q.pv to the ${field} wanted.`;
   const r = operand(right.expression);
   const type = (s: Shape, c: string) => s.types[s.columns.indexOf(c)] ?? " ";
   const attr = (s: Shape, c: string) => s.attributes[s.columns.indexOf(c)] ?? "";
   const common = left.columns.filter((c) => right.columns.includes(c));
   const out: Suggestion[] = [];
-  const onDisk = (s: Shape): string => (s.where === "partitioned" ? ` ${s.expression.trim()} is partitioned: select one date first (select from ${s.expression.trim()} where date=d), or every partition is read.` : "");
+  const onDisk = (s: Shape): string =>
+    (s.where === "partitioned" ? ` ${s.expression.trim()} is partitioned: select one date first (select from ${s.expression.trim()} where date=d), or every partition is read.` : "") + leftNote;
 
   // lj and ij: on the right table's keys, or on the columns it shares.
   if (right.keys.length > 0 && right.keys.every((k) => left.columns.includes(k))) {
@@ -167,8 +173,8 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
       expression: `${l} uj ${r}`,
       why:
         left.keys.length > 0
-          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.`
-          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.`,
+          ? `Both keyed on ${left.keys.join(", ")}: one table, ${right.expression.trim()}'s rows replacing ${left.expression.trim()}'s where the keys match.${leftNote}`
+          : `The rows of both, ${right.expression.trim()}'s after ${left.expression.trim()}'s; a column only one has is null in the other's rows.${leftNote}`,
     });
   }
   return out;

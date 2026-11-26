@@ -82,3 +82,30 @@ test("lj and ij on an unkeyed right table keep the left table's own time, joinin
     assert.strictEqual(same.value, true, s.expression);
   }
 });
+
+// q joins no partitioned table on the left: lj and ij signalled 'splay,
+// aj 'date. The left is written as one partition of it (#2539).
+test("every join suggested with a partitioned table on the left runs", { skip }, async (t) => {
+  const source = [
+    'r:hsym`$"$DIR/hdb";',
+    "{[r;d] .Q.dd[r;d,`trade`] set .Q.en[r] ([] sym:`a`b`a; time:09:00 09:01 09:02t; px:1 2 3f)}[r] each 2026.01.05 2026.01.06;",
+    "\\l $DIR/hdb",
+    "ks:([sym:`a`b] sector:`x`y)",
+    "q2:([] sym:`a`a`b; date:3#2026.01.06; time:08:59 09:01:30 09:00:30t; bid:10 11 12f)",
+    "",
+  ].join("\n");
+  const { connection } = await connect(t, source);
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const trade = await shape("trade");
+  assert.strictEqual(trade.where, "partitioned");
+  let ran = 0;
+  for (const right of [await shape("ks"), await shape("q2")]) {
+    for (const s of suggestJoins(trade, right)) {
+      const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+      assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+      assert.match(s.why, /trade is partitioned, which q joins only one partition of at a time/, s.join);
+      ran++;
+    }
+  }
+  assert.ok(ran >= 4, `${ran} joins run`);
+});
