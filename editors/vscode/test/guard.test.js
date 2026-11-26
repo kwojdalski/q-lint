@@ -2196,3 +2196,27 @@ test("a lambda .Q.trp, .Q.trpd, .Q.ts, .Q.fu, .Q.fc or .Q.sp applies is read wit
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a lambda value, get, parse or -5! makes of a string, applied, is read with its arguments in place of its parameters (#2635)", () => {
+  const cases = {
+    "(value\"{.[x;();:;1]}\")`zz": "applies what value makes of a string: amends `zz in place",
+    "(get\"{.[x;();:;1]}\")`zz": "applies what get makes of a string: amends `zz in place",
+    "(eval parse\"{.[x;();:;1]}\")`zz": "applies what eval makes of a string: amends `zz in place",
+    "(parse\"{.[x;();:;1]}\")`zz": "applies what parse makes of a string: amends `zz in place",
+    "(-5!\"{.[x;();:;1]}\")`zz": "applies what -5! makes of a string: amends `zz in place",
+    "(value\"{.[x;();:;y]}\")[`zz;1]": "applies what value makes of a string: amends `zz in place",
+    "(value\"{.[x;();:;1]}\") . enlist`zz": "applies what value makes of a string: amends `zz in place",
+    '(value"{value x}")"a:1"': "applies what value makes of a string: evaluates a string with value",
+    // Given a name, with a symbol it could hold.
+    '(value"{.[x;();:;1]}") v': "applies what value makes of a string: applies a lambda that may change the process through what it is given",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  // One that writes itself is said as before.
+  assert.deepStrictEqual(writes("(value\"{x set 1}\")`zz"), ["evaluates a string with value"]);
+  // Made and not applied, or applied and only reading, reads.
+  for (const code of ['value"{.[x;();:;1]}"', '(value"{x+1}") 1', '(value"{value x}")"count t"', '(get"{x+y}")[1;2]', '(parse"{x+1}")[1]']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

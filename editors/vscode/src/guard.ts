@@ -115,7 +115,9 @@
 //   `{value x} each enlist "a:1"`), and where an argument is a name or not
 //   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
 //   applied by `.Q.trp`, `.Q.trpd`, `.Q.ts`, `.Q.fu`, `.Q.fc` or `.Q.sp` to
-//   the data given it, `.Q.trp[{value x};"a:1";::]` (#2628);
+//   the data given it, `.Q.trp[{value x};"a:1";::]` (#2628); and made by
+//   `value`, `get`, `parse` or `-5!` of a string and applied,
+//   `` (get"{.[x;();:;1]}")`a `` (#2635);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
 //   which runs it on the gateway's servers (#909), given to `.` or `@` or
@@ -845,6 +847,23 @@ function groupApplied(t: Token[], open: number): boolean {
       ["str", "sym", "num"].includes(after.kind) ||
       (after.kind === "name" && !INFIX.has(after.text)))
   );
+}
+
+/// What a lambda that the string `t[str]` defines does applied where it is
+/// written, when what makes it - `value`, `get`, `parse` - is in the group
+/// opening at `t[open]` and that group is applied: `` (get"{.[x;();:;1]}")`a ``
+/// is read as `` ({.[x;();:;1]})`a ``, with its arguments in place of its
+/// parameters (#2635). Undefined for a string that is not a lambda.
+function lambdaStringApplied(t: Token[], str: number, open: number): string | undefined {
+  const code = qText(t[str].text).trim();
+  if (!code.startsWith("{") || !groupApplied(t, open)) {
+    return undefined;
+  }
+  const close = items(t, open).at(-1)?.[1] ?? -1;
+  if (close < 0) {
+    return undefined;
+  }
+  return rereadOf(`(${code})${joined(t, close + 1, expressionEnd(t, close))}`).find((r) => r !== TOO_MUCH);
 }
 
 /// Whether the `upsert` at `t[i]`, applied infix, is given a value on its
@@ -2270,9 +2289,15 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(what);
           continue;
         }
-        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634).
+        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634),
+        // with what it is given, `` (parse"{.[x;();:;1]}")`a `` (#2635).
         if (t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" && groupApplied(t, i - 1) && writes([valued(qText(t[i + 1].text))]).length > 0) {
           found.add(`applies what ${k.text} makes of a string that changes the process`);
+          continue;
+        }
+        const lambda = t[i - 1]?.text === "(" && t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" ? lambdaStringApplied(t, i + 1, i - 1) : undefined;
+        if (lambda !== undefined) {
+          found.add(`applies what ${k.text} makes of a string: ${lambda}`);
           continue;
         }
       }
@@ -2451,6 +2476,16 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
           continue;
+        }
+        // A lambda it makes of a string, applied, runs with what it is
+        // given: `` (value"{.[x;();:;1]}")`a ``, `` (eval parse"{..}")`a `` (#2635).
+        const made = ["value", "get", ".h.val"].includes(unqualified(k.text)) ? 1 : t[i + 1]?.text === "parse" ? 2 : 0;
+        if (made > 0 && t[i - 1]?.text === "(" && t[i + made]?.kind === "str" && t[i + made + 1]?.text === ")") {
+          const lambda = lambdaStringApplied(t, i + made, i - 1);
+          if (lambda !== undefined) {
+            found.add(`applies what ${k.text} makes of a string: ${lambda}`);
+            continue;
+          }
         }
       }
       // A TorQ gateway runs the strings it is given on its servers (#909):
@@ -2832,6 +2867,12 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       if (t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" && writes([valued(qText(t[bang + 1].text))]).length > 0) {
         found.add("applies what -5! makes of a string that changes the process");
+        continue;
+      }
+      // With what it is given, `` (-5!"{.[x;();:;1]}")`a `` (#2635).
+      const what = t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" ? lambdaStringApplied(t, bang + 1, i - 1) : undefined;
+      if (what !== undefined) {
+        found.add(`applies what -5! makes of a string: ${what}`);
         continue;
       }
     }
