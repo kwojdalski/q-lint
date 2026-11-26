@@ -2118,3 +2118,19 @@ test("handle 0 given to apply or a trap, or applied by each or peach, evaluates 
   assert.deepStrictEqual(writes('0 each enlist "count t"'), []);
   assert.deepStrictEqual(writes('@[0;"count t"]'), []);
 });
+
+test("an evaluator derived by each or peach in brackets, or passed as an argument, runs the strings and trees around it (#2627)", () => {
+  const cases = {
+    '(value each) enlist "k1:1"': "evaluates a string with value",
+    '@[value each;enlist"k2:1"]': "evaluates a string with value",
+    '.[value each;enlist enlist"k3:1"]': "evaluates a string with value",
+    '{x y}[value each;enlist "k4:1"]': "evaluates a string with value",
+    '.Q.fu[value peach;enlist"k5:1"]': "evaluates a string with value",
+    '(get peach) enlist "k9:1"': "evaluates a string with get",
+    "(eval each) enlist (:;`zz;1)": "evaluates an assignment with eval",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  assert.deepStrictEqual(writes('(value each) enlist "count t"'), []);
+});

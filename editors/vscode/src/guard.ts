@@ -2313,10 +2313,13 @@ function readStatement(statement: string, found: Set<string>): void {
         // applied to the argument after it.
         const trapped = t[i - 1]?.text === "[" && t[i - 1]?.kind === "open" && next?.text === ";";
         // Passed as a value instead - `value/["a:1"]`, `(value@)"a:1"`,
-        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766) - it runs what the
-        // expression around it gives it: each string there is read.
+        // `'[value;::]"a:1"`, `@[(value);"a:1";h]` (#1766), and derived by
+        // `each` or `peach` in brackets, `(value each)x`, `@[get peach;x]`
+        // (#2627) - it runs what the expression around it gives it: each
+        // string there is read.
         let n = i + 1;
-        while (t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) n++;
+        const iterated = (by: Token | undefined): boolean => by?.kind === "name" && (by.text === "each" || by.text === "peach");
+        while ((t[n]?.kind === "op" && ["@", ".", "'"].includes(t[n].text)) || (iterated(t[n]) && [")", ";"].includes(t[n + 1]?.text ?? ""))) n++;
         const applied = t[n] !== undefined && (["str", "name", "sym", "num"].includes(t[n].kind) || (t[n].kind === "open" && t[n].text !== "{"));
         const byValue = unqualified(k.text) !== "eval" && unqualified(k.text) !== "reval";
         const what =
