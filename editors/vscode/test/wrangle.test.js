@@ -118,7 +118,10 @@ test("a cell edit is an update of the table, its rows found by the row's values,
     matchedBy: ["sym", "px", "note", "e"],
   });
   // A general column takes a list as long as the rows found.
-  assert.strictEqual(w.editStatement(payload(), 2, 0, ".ns.t", '"new"').code, 'update note:(count i)#enlist "new" from `.ns.t where (sym=`a),(px~\\:(1.5f)),(note~\\:("x y")),(e=`a)');
+  assert.strictEqual(w.editStatement(payload(), 2, 0, ".ns.t", '"new"').code, 'update note:(count i)#enlist ("new") from `.ns.t where (sym=`a),(px~\\:(1.5f)),(note~\\:("x y")),(e=`a)');
+  // In parentheses: a comma would start a second column, and :: alone make enlist a projection (#3078, #3079).
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", '"x","y"').code, 'update note:(count i)#enlist ("x","y") from `kt where (sym=`a)');
+  assert.strictEqual(w.editStatement(payload({ keys: 1 }), 2, 0, "kt", "::").code, "update note:(count i)#enlist (::) from `kt where (sym=`a)");
   // A keyed result is found by its keys alone.
   const keyed = w.editStatement(payload({ keys: 1 }), 1, 0, "kt", "2");
   assert.deepStrictEqual(keyed, { code: "update px:(2) from `kt where (sym=`a)", matchedBy: ["sym"] });

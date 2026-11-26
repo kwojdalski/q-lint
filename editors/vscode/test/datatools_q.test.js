@@ -349,3 +349,23 @@ test("Show steps as q runs when the wrangled query reads a global named w (#2466
     assert.deepStrictEqual(cells(answer, "a"), ["2", "3"]);
   }
 });
+
+test("a general cell's new value is one item: a join adds no column, and :: is the generic null (#3078, #3079)", { skip }, async (t) => {
+  const q = await startQ(() => 'tt:([] id:1 2 3; s:("ab";"cd";"ef"))\ng:([] id:1 2 3; g:(1;`a;"s"))\n');
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const shown = async (table) => (await connection.queryGrid(statements(table), SIZE, 1000)).grid;
+  const edit = async (table, row, value) => {
+    const edited = w.editStatement(await shown(table), 1, row, table, value);
+    const answer = await connection.query(statements(edited.code), SIZE);
+    assert.ok(answer.ok, `${edited.code}: ${answer.error}`);
+  };
+  await edit("tt", 0, '"x","y"');
+  let after = await shown("tt");
+  assert.deepStrictEqual([after.names, after.cells[1]], [["id", "s"], ['"xy"', '"cd"', '"ef"']]);
+  await edit("g", 1, "1,2");
+  await edit("g", 0, "::");
+  after = await shown("g");
+  assert.deepStrictEqual([after.names, after.cells[1]], [["id", "g"], ["::", "1 2", '"s"']]);
+});
