@@ -50,6 +50,15 @@ export function directRefusal(mode: DirectMode): string {
 /// A call refused on a direct connection: nothing was sent.
 export class DirectRefused extends Error {}
 
+/// An answer the codec cannot make a value of: it holds a string past the
+/// longest V8 makes (0x1fffffe8 characters), which the codec makes of every
+/// char vector. The message is whole, and `evaluate` answers it with no
+/// codec value, for `qdecode.ts` to read: it keeps chars as bytes (#2583).
+export class TooLongForCodec extends Error {}
+
+/// Whether `error` is V8's refusal of a string too long to make.
+const stringTooLong = (error: unknown): boolean => error instanceof Error && (error as { code?: unknown }).code === "ERR_STRING_TOO_LONG";
+
 export interface Target {
   host: string;
   port: number;
@@ -400,7 +409,8 @@ export class QConnection {
   /// for the process to evaluate as its `.z.pg` does (`value`, unless it is
   /// set): nothing of ours runs there. Resolves with the value as the codec
   /// decodes it, its q type and the message it came in; rejects with a
-  /// `QError` for a q error.
+  /// `QError` for a q error. A value the codec cannot make, of a string
+  /// past V8's longest, is undefined, its message still there (#2583).
   async evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }> {
     const body = Buffer.from(text, "utf8");
     // A char vector (type 10, no attribute, its length), built here: the
@@ -412,7 +422,15 @@ export class QConnection {
     message.writeInt8(10, 8);
     message.writeUInt32LE(body.length, 10);
     body.copy(message, 14);
-    const value = await this.send(message);
+    let value: unknown;
+    try {
+      value = await this.send(message);
+    } catch (error) {
+      if (!(error instanceof TooLongForCodec)) {
+        throw error;
+      }
+      value = undefined;
+    }
     return { value, type: this.answerType, message: this.answerMessage };
   }
 
@@ -573,7 +591,15 @@ export class QConnection {
             : error instanceof Error
               ? error.message
               : String(error);
-        pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
+        pending.reject(
+          this.answerType === -128
+            ? new QError(text)
+            : stringTooLong(error)
+              ? new TooLongForCodec(text)
+              : error instanceof Error
+                ? error
+                : new Error(text),
+        );
       }
     }
   }

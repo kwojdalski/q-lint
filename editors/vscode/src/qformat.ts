@@ -1155,6 +1155,12 @@ function qOrder(a: QValue, b: QValue): number {
   if (a.kind === "atom" && b.kind === "atom") {
     return itemOrder(a.v, b.v);
   }
+  // Two strings byte by byte, as their chars are ordered, and the shorter
+  // first where one starts the other: not made atoms a char at a time, as a
+  // string past V8's longest would be by the hundred million (#2583).
+  if (a.kind === "chars" && b.kind === "chars") {
+    return Buffer.compare(a.v, b.v);
+  }
   if (a.kind === "dict" && b.kind === "dict") {
     // Item by item, whatever the value lists' own types: q sorts
     // `a`b!1 2 before `a`b!(1;`x) (#2575).
@@ -1265,9 +1271,9 @@ export function gridOfQ(q: QValue, limit: number, precision = 7, last = false): 
   const cells = shown.map((c) =>
     c.q.kind === "vector" || c.q.kind === "chars"
       ? nested(c.q, precision).map((l) => l.text)
-      : itemsOf(c.q).map((x) => {
-          return cutCell(oneLine(x, precision));
-        }),
+      : // Written no further than a cell shows: a string past V8's longest
+        // is not written whole to be cut (#2583).
+        itemsOf(c.q).map((x) => cutCell(oneLine(x, precision, 200))),
   );
   // The numbers of a numeric, temporal or guid column, as `GRID` sends them.
   // A long, timestamp or timespan past 2^53 keeps its digits as a string,
