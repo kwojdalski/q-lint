@@ -213,6 +213,32 @@ test("the grid lambda against a real q process", { skip }, async (t) => {
     await connection.queryGrid(statements("([] a:til 50)"), SIZE, 10);
     assert.strictEqual((await connection.query(statements("key `.qlint"), SIZE)).text.join(""), before);
   });
+  await t.test("a general column pages though the rows of a cut or a page are all of one type, which q makes a vector of (#3068)", async () => {
+    const { gridLambda, PAGE, readPage, appendPage, readGridAnswer } = require("../out/grid.js");
+    const cases = [
+      ['([] a:(1;2;`a;3;"x"))', 2],
+      ['([] a:("b";"a";"";"abc";"B";"ab";"a"))', 2],
+      ["([] a:(1;`b;3;4;5))", 2],
+      ['([] a:(1 2;"ab";3;4;5;6;7))', 3],
+      ["([] a:(1;2;3;4;5f))", 2],
+      ["([] a:(`a`b!1 2;`a`b!3 4;1;2;`c))", 2],
+    ];
+    for (const [code, limit] of cases) {
+      const full = (await connection.queryGrid(statements(code), SIZE, 100)).grid;
+      let grid = readGridAnswer(await connection.call(gridLambda(false, TOKEN), statements(code), SIZE, limit)).grid;
+      // The rows shown of a general column are a general column's, cut or not.
+      assert.deepStrictEqual(grid.types, [0], code);
+      assert.deepStrictEqual(grid.cells[0], full.cells[0].slice(0, limit), code);
+      assert.deepStrictEqual((await connection.queryGrid(statements(code), SIZE, limit)).grid.cells, grid.cells, code);
+      while (grid.cells[0].length < grid.count) {
+        const page = readPage(await connection.call(PAGE, TOKEN, grid.cells[0].length, limit));
+        assert.notStrictEqual(typeof page, "string", page);
+        grid = appendPage(grid, page);
+      }
+      assert.deepStrictEqual(grid.cells, full.cells, code);
+      assert.deepStrictEqual(grid.raw, full.raw, code);
+    }
+  });
 
   await t.test("an exported q literal rebuilds the table exactly, and a drill-down's value runs as written (#921, #927)", async () => {
     const { tableLiteral } = require("../out/qliteral.js");

@@ -99,11 +99,14 @@ function holdLiteral(token: string): string {
 }
 
 /// How `GRID` writes each column's cells, raw numbers and ranks, given the
-/// escapes `e` and the columns `c`; `PAGE` writes a page's the same way.
+/// escapes `e`, the columns `c` and their types `y`; `PAGE` writes a page's
+/// the same way. `y` is the type each column has in the whole table: q
+/// makes a vector of a general column's rows when those cut are all of one
+/// type, and they are written as a general column's all the same (#3068).
 const COLUMN_LINES = [
-  "          {[e;x]$[type[x] within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
-  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e] each c;",
-  "          {[c]u:type c;$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
+  "          {[e;u;x]$[u within 1 76h;string x;{$[200<count x;(197#x),\"...\";x]} each",
+  "            {[e;x]$[10h=type x;$[1=count x;\",\";\"\"],\"\\\"\",raze[e\"i\"$200 sublist x],\"\\\"\";-3!x]}[e] each x]}[e]'[y;c];",
+  "          {[u;c]$[u in 12 16h;\"j\"$c;u in 13 14 17 18 19h;\"i\"$c;u=15h;\"f\"$c;u=10h;\"x\"$c;u in 2 5 6 7 8 9h;c;",
   "            (u=11h)|u within 20 76h;$[any 127<\"i\"$\"x\"$raze s:string c;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;0b]} each s;()];",
   "            (u=0h)|u within 77 98h;{[g;x]$[-9h=t:type x;$[null x;0b;x];-8h=t;$[null x;0b;\"f\"$x];g x]}[{$[-9h=t:type x;(\"f\";x);-8h=t;(\"e\";\"f\"$x);",
   "              (t in 8 9h)&200>=count x;($[t=9h;\"F\";\"E\"];\"f\"$x);(0h=t)&200>=count x;",
@@ -115,7 +118,7 @@ const COLUMN_LINES = [
   "              t within 100 111h;$[{$[100h=t:type x;\"k)\"~2#-3!x;105h=t;1b;104h=t;any .z.s each value x;t within 106 111h;.z.s value x;0h=t;any .z.s each x;0b]}x;(\"u\";-3!x);0b];",
   "              abs[t]within 17 19h;$[any(abs w:\"i\"$x)within(1+5999 359999 359999999 abs[t]-17),2147483646;(\"c\";(t;w));0b];",
   "              15h=abs t;$[any 0.001<abs m-\"j\"$m:86400000*\"f\"$x;(\"c\";(t;\"f\"$x));0b];",
-  "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]} each c;",
+  "              12h=abs t;$[all(null x)|(x in -0W 0Wp)|x within 1709.01.01D00:00 2290.12.31D23:59:59.999999999;0b;(\"c\";(t;\"j\"$x))];0b]}] each c;()]}'[y;c];",
   "          {@[{i:iasc x:x til count x;\"i\"$@[count[x]#0;i;:;-1+sums differ x i]};x;{[e]()}]} each c;",
 ];
 
@@ -155,9 +158,10 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
         `        ${HELD}:$[(n>0)&m>n;h,(enlist .z.w)!enlist(${holdLiteral(hold)};t);(enlist .z.w)_h];`,
       ]
     : []),
-  "        t:$[1b~.Q.qp t;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
-  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
+  "        y:$[p:1b~.Q.qp t;();type each $[count[cols t]=count distinct cols t;t cols t;value flip t]];",
+  "        t:$[p;[j:$[n<0;(m+n)|0;0]+til m&abs n;$[count j;.Q.ind[t;j];select from t where i<0]];n sublist t];",
+  "        c:$[count[cols t]=count distinct cols t;t cols t;value flip t];if[p;y:type each c];",
+  "        `count`keys`names`types`cells`raw`rank`tree!(\"f\"$m;\"i\"$k;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each y;",
   ...COLUMN_LINES,
   tree ? `          $[(0h=type v)|$[99h=type v;98h<>type key v;0b];g[g;e;${TREE_NODES};"";v];()])]]};` : "          ())]]};",
   "     (r 1;\"j\"$limit);{[e]e}]);",
@@ -184,9 +188,10 @@ export const PAGE = [
   `   h:@[value;\`${HELD};()!()];h:$[99h=type h;$[.z.w in key h;h .z.w;()];()];if[not tok~first h;'\`held];`,
   `   t:last h;if[not 98h=type t;'\`held];m:count t;e:{1_-1_-3!x} each "c"$til 256;`,
   "   j:(\"j\"$off)+til 0|(\"j\"$n)&m-\"j\"$off;",
-  "   t:$[1b~.Q.qp t;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
-  "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];",
-  "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each type each c;",
+  "   y:$[p:1b~.Q.qp t;();type each $[count[cols t]=count distinct cols t;t cols t;value flip t]];",
+  "   t:$[p;$[count j;.Q.ind[t;j];select from t where i<0];t j];",
+  "   c:$[count[cols t]=count distinct cols t;t cols t;value flip t];if[p;y:type each c];",
+  "   `count`names`types`cells`raw`rank!(\"f\"$m;$[any 127<\"i\"$\"x\"$raze nm:string cols t;{$[any 127<\"i\"$\"x\"$x;\"x\"$x;`$x]} each nm;cols t];{$[x within 77 97h;0h;x]}each y;",
   ...COLUMN_LINES.map((line, i) => line.replace(/^ {7}/, "").replace(/;$/, i === COLUMN_LINES.length - 1 ? ")};" : ";")),
   "   (tok;off;n);{x}]}",
 ].join("\n");
