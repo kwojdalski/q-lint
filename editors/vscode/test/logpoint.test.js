@@ -5,7 +5,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const { stub, vscode } = require("./vscode_stub");
-const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, readLogpoints, hitLines } = require("../out/logpoint.js");
+const { LOGPOINT_COMMANDS, LOG_ADD, LOG_REMOVE, LOG_LIST, addLogpoint, readLogpoints, hitLines } = require("../out/logpoint.js");
 const { registerLogpoints } = require("../out/logpointview.js");
 const { DRIFT } = require("../out/definitions.js");
 
@@ -17,6 +17,15 @@ test("the process's list and hits are read whatever shape q gives them", () => {
   });
   assert.throws(() => readLogpoints(1), /something other than its logpoints/);
   assert.deepStrictEqual(hitLines("dev", []), ["# dev: no logpoint has been hit"]);
+});
+
+// A run's text in the function goes when the run ends: a logpoint written
+// into it would go too, so none is sent meanwhile.
+test("a function a coverage run holds takes no logpoint until the run is over", async () => {
+  const sent = [];
+  const call = async (q, ...args) => (sent.push(q), q === DRIFT ? { name: args, state: ["lambda"], text: ["{x*x}"], via: ["cov"] } : "sq");
+  await assert.rejects(addLogpoint(call, "sq"), /a coverage run holds it just now; add the logpoint when that is over/);
+  assert.deepStrictEqual(sent, [DRIFT]);
 });
 
 function setup() {

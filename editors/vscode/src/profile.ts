@@ -95,10 +95,14 @@ export const PROFILE = [
   " {[nm;w;s] old:@[get;nm;{::}];",
   "   if[not 100h=type old; :(::)]; if[not w~last value old; :(::)];",
   `   r:${DEFINE_AS}[old;s]; if[not first r; :(::)]; if[not 100h=type last r; :(::)];`,
-  "   .qlint.prof.saved[nm]:old; .qlint.prof.inst[nm]:last r;}'[nms;{(),x}each(),was;{(),x}each(),src];",
+  // Kept by amending: assigned, a function with no name yet would take
+  // `.qlint.prof.saved` for one, and show it in a backtrace (#2970).
+  "   @[`.qlint.prof.saved;nm;:;old]; @[`.qlint.prof.inst;nm;:;last r];}'[nms;{(),x}each(),was;{(),x}each(),src];",
   " full:key .qlint.prof.saved; timed:.qlint.prof.inst full; orig:value .qlint.prof.saved;",
   " t0:.z.p;",
-  ' res:@[{[full;timed;stmts] full set\' timed; value each stmts; ""}[full;timed];stmts;{$[10h=type x;x;string x]}];',
+  // Each is assigned as a script assigns it, so that a backtrace of the run
+  // names it; `set` names nothing (#2970).
+  ' res:@[{[full;timed;stmts] {[n;f] .[{eval(:;x;y)};(n;f);{}]; n set f}\'[full;timed]; value each stmts; ""}[full;timed];stmts;{$[10h=type x;x;string x]}];',
   " t1:.z.p;",
   // Only a name still holding its timed text is put back: one the run
   // itself defined anew keeps its new value (#1271), and is answered as

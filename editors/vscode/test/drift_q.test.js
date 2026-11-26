@@ -11,7 +11,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { QConnection } = require("../out/qclient.js");
-const { REDEFINE } = require("../out/funcsource.js");
+const { REDEFINE, SOURCE } = require("../out/funcsource.js");
+const { FUNCTION_TEXTS, readTexts } = require("../out/fndiff.js");
+const { LOG_LIST, addLogpoint, readLogpoints, redefineKeepingLogpoint } = require("../out/logpoint.js");
+const { coveragePlan } = require("../out/coverage.js");
+const { installLambda, restoreExpression, readInstalled, readRestored } = require("../out/instrument.js");
 const { DRIFT, definitions, readDrift, driftRows, changedSince, reloadPlan } = require("../out/definitions.js");
 
 const Q = process.env.QLINT_TEST_Q;
@@ -193,4 +197,42 @@ test("a file run as a query compares the same, its lambdas' blank and comment li
   const edited = file.replace("y+1", "y+2");
   const plan = reloadPlan(changedSince(defs, definitions(edited)), await states(c, definitions(edited)));
   assert.deepStrictEqual(plan.send.map((s) => s.name), ["dr1"]);
+});
+
+// A logpoint is q-lint's text in the function's own: what compares a
+// definition, or replaces one, reads the function it was put on.
+test("a function with a logpoint compares the same, is covered, and takes a reload with its logpoint (#2971)", { skip }, async (t) => {
+  const c = await connect(t, FILE);
+  const call = (...sent) => c.call(...sent);
+  await addLogpoint(call, "f");
+  await addLogpoint(call, ".ns.h");
+  const defs = definitions(FILE);
+  const held = await states(c, defs);
+  assert.deepStrictEqual([...held].map(([name, s]) => [name, s.via]), [["f", "log"], ["g", undefined], [".ns.h", "log"], [".ns.m", undefined]]);
+  assert.deepStrictEqual(driftRows(defs.map((def) => ({ file: "a.q", def })), held).map((r) => r.status), ["same", "same", "same", "same"]);
+  // Diff Function and Open Function Source read the function too.
+  assert.strictEqual(readTexts(await c.call(FUNCTION_TEXTS, ".ns.h")).texts.get(".ns.h"), "{[a] a+k}");
+  assert.strictEqual(readTexts(await c.call(FUNCTION_TEXTS, ".ns")).texts.get(".ns.h"), "{[a] a+k}");
+  assert.strictEqual((await c.call(SOURCE, ".ns.h")).text, "{[a] a+k}");
+  // A coverage run takes it, and its end puts the logpoint back.
+  const plan = coveragePlan([{ uri: "a.q", text: FILE }], held);
+  assert.deepStrictEqual(plan.skipped, []);
+  assert.deepStrictEqual(readInstalled(await c.call(installLambda("cov"), plan.names, plan.was, plan.src, plan.probes.length), plan.names.length), plan.names.map(() => "ok"));
+  assert.strictEqual((await c.evaluate('"f"$f 1')).value, 4);
+  assert.deepStrictEqual(readRestored(await c.call(restoreExpression("cov"))).kept, []);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, ["f", ".ns.h"]);
+  // Hot reload sends the edit, and the new definition has the logpoint.
+  const now = definitions(FILE.replace("  a*2", "  a*3"));
+  const reload = reloadPlan(changedSince(defs, now), await states(c, now));
+  assert.deepStrictEqual(reload.skipped, []);
+  assert.deepStrictEqual(reload.send.map((s) => s.name), ["f"]);
+  const [s] = reload.send;
+  assert.deepStrictEqual(await redefineKeepingLogpoint(call, s.name, s.held, s.text, true), { held: s.text });
+  assert.strictEqual((await c.evaluate('"f"$f 1')).value, 6);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, ["f", ".ns.h"]);
+  assert.deepStrictEqual(driftRows(now.map((def) => ({ file: "a.q", def })), await states(c, now)).map((r) => r.status), ["same", "same", "same", "same"]);
+  // Asked of the process when the caller has not read it.
+  assert.deepStrictEqual(await redefineKeepingLogpoint(call, ".ns.h", "{[a] a+k}", "{[a] a+k*2}"), { held: "{[a] a+k*2}" });
+  assert.strictEqual((await c.evaluate('"f"$.ns.h 1')).value, 21);
+  assert.deepStrictEqual(readLogpoints(await c.call(LOG_LIST)).names, ["f", ".ns.h"]);
 });

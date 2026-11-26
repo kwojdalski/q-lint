@@ -53,7 +53,7 @@ import {
   type DriftRow,
   type ProcessState,
 } from "./definitions";
-import { REDEFINE } from "./funcsource";
+import { redefineKeepingLogpoint } from "./logpoint";
 import { askRedefine } from "./funcsourceview";
 import { borrowWhenFree } from "./infoview";
 import type { Live } from "./live";
@@ -290,11 +290,19 @@ export class Drift implements TextDocumentContentProvider {
         }
         try {
           // Only on the process the question named (#1289).
-          const got = await borrowWhenFree(this.live, (connection) => connection.call(REDEFINE, s.name, s.held, s.text), undefined, process.label);
+          const got = await borrowWhenFree(
+            this.live,
+            (connection) => redefineKeepingLogpoint((q, ...args) => connection.call(q, ...args), s.name, s.held, s.text, states.get(s.name)?.via === "log"),
+            undefined,
+            process.label,
+          );
           if (got === undefined) {
             out.failed.push({ name: s.name, why: `${process.label} is busy with a query` });
           } else {
             out.sent.push(s.name);
+            if (got.value.lost !== undefined) {
+              void window.showWarningMessage(plainMessage(`q-lint: ${s.name} was reloaded on ${process.label} without its logpoint: ${got.value.lost}`));
+            }
           }
         } catch (error) {
           out.failed.push({ name: s.name, why: message(error) });

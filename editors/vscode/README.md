@@ -1447,7 +1447,13 @@ kept, and the function answers as before. A call q refuses on a typed or
 pattern parameter list never starts, and is not logged. The editor marks the definition `logpoint on
 <process>`. **Show Logpoint Hits** reads the calls kept, **Remove
 Logpoint** puts one function back, and **Remove All Logpoints** all of
-them; a function redefined while it had a logpoint is left as it is. With
+them; a function redefined while it had a logpoint is left as it is. What
+reads or replaces a definition takes the function as it was before the
+logpoint: **Check Drift**, **Diff Function** and **Open Function Source**
+show it without the logging, a coverage run and **Capture Locals** work
+over it and put the logpoint back, and hot reload and **Redefine on
+Process** put the logpoint on the new definition. A backtrace names the
+function as before. With
 the last one removed, `.qlint.log` is deleted and `.qlint` is left empty: q
 cannot remove a namespace. Only a lambda takes one, and a projection or
 alias made of the function before keeps calling the original; a reference

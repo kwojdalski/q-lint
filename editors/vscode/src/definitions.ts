@@ -26,6 +26,7 @@
 // the process still holds the exact text it was told it holds, and only
 // when that text is what the file had before the edit.
 import { charKinds } from "./explorer";
+import { ORIGINAL } from "./instrument";
 import { contextSwitch, scriptCode, statementSpans } from "./statements";
 
 export const DRIFT_COMMANDS = {
@@ -167,12 +168,15 @@ export function lastByName(defs: Definition[]): Map<string, Definition> {
 /// Asks the process what each of `nms` (one string, names split by
 /// spaces) holds: `missing`, a lambda and its text, or `other` - a
 /// projection, a builtin, data, a view (which `get` would evaluate, so it is
-/// told by its name, #1865). Reads only; works on KDB-X and PeachQ.
+/// told by its name, #1865). A lambda q-lint instruments - one with a
+/// logpoint, or in a coverage run - is answered as the function it was
+/// before, with which of them holds it as `via` (#2971). Reads only; works
+/// on KDB-X and PeachQ.
 export const DRIFT = [
   "{[nms]",
   " n:\" \" vs(),nms;",
-  " r:{[w;x]if[(`$x)in w;:(`other;\"\")];x:@[{(1b;get x)};`$x;{(0b;x)}];$[not first x;(`missing;\"\");100h<>type last x;(`other;\"\");(`lambda;last value last x)]}[views[]]each n;",
-  " `name`state`text!(n;r[;0];r[;1])}",
+  ` r:{[w;x]if[(\`$x)in w;:(\`other;"";\`)];f:@[{(1b;get x)};\`$x;{(0b;x)}];if[not first f;:(\`missing;"";\`)];if[100h<>type last f;:(\`other;"";\`)];o:${ORIGINAL}[\`$x;last f];(\`lambda;last value first o;last o)}[views[]]each n;`,
+  " `name`state`text`via!(n;r[;0];r[;1];r[;2])}",
 ].join("\n");
 
 /// Names `DRIFT` is asked about in one call.
@@ -182,6 +186,10 @@ export interface ProcessState {
   state: "missing" | "lambda" | "other";
   /// The lambda's text as the process has it; "" unless `lambda`.
   text: string;
+  /// What of q-lint's holds the name just now, `text` being what it held
+  /// before: a logpoint (`log`), a coverage run (`cov`), a locals capture
+  /// (`err`) or a profile (`prof`).
+  via?: string;
 }
 
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]);
@@ -195,11 +203,13 @@ export function readDrift(raw: unknown): Map<string, ProcessState> {
   const names = list(r.name).map(String);
   const states = list(r.state).map(String);
   const texts = list(r.text);
+  const vias = list(r.via).map(String);
   const out = new Map<string, ProcessState>();
   names.forEach((name, i) => {
     const state = states[i] === "lambda" || states[i] === "other" ? states[i] : "missing";
     const text = texts[i];
-    out.set(name, { state: state as ProcessState["state"], text: state === "lambda" && typeof text === "string" ? text : "" });
+    const via = state === "lambda" && ["cov", "err", "log", "prof"].includes(vias[i]) ? { via: vias[i] } : {};
+    out.set(name, { state: state as ProcessState["state"], text: state === "lambda" && typeof text === "string" ? text : "", ...via });
   });
   return out;
 }

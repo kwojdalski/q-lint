@@ -11,6 +11,7 @@
 // told by its name (#1865). The lambda only reads. Works on kdb+ (KDB-X) and
 // PeachQ; held there by processtools_q.test.js.
 import { normalized } from "./definitions";
+import { ORIGINAL } from "./instrument";
 import { isString, listOf } from "./processtools";
 import { FULL_TEXT, TEXT_LIMIT } from "./qtext";
 
@@ -20,11 +21,12 @@ export const FUNCTION_TEXTS = [
   " if[s in views[];:(\"other\";();())];",
   " r:@[{(1b;get x)};s;{(0b;x)}];",
   " if[not first r;:(\"missing\";();())];",
-  ` v:last r; txt:{$[100h=type x;last value x;${FULL_TEXT}[${TEXT_LIMIT};x]]};`,
-  " if[(type v) within 100 112h;:(\"function\";enlist string s;enlist txt v)];",
+  // A function q-lint's logpoint is in is read as it was before (#2971).
+  ` v:last r; txt:{[n;x]$[100h=type x;last value first ${ORIGINAL}[n;x];${FULL_TEXT}[${TEXT_LIMIT};x]]};`,
+  " if[(type v) within 100 112h;:(\"function\";enlist string s;enlist txt[s;v])];",
   " if[99h=type v;if[11h=type key v;if[(::)~first v;",
   "  k:(key v) except `; f:k where (type each v k) within 100 112h;",
-  "  :(\"namespace\";string ` sv' s,'f;txt each v f)]]];",
+  "  :(\"namespace\";string ` sv' s,'f;txt'[` sv' s,'f;v f])]]];",
   " (\"other\";();())}",
 ].join("\n");
 

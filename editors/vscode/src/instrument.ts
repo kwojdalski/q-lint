@@ -309,6 +309,32 @@ export function restoreExpression(ns: "cov" | "err"): string {
 /// error reading it gave).
 export const DEFINE_AS = '{[old;s]c:first(value old)3;o:system"d";system"d ",$[null c;".";".",string c];r:@[{(1b;value x)};s;{(0b;x)}];system"d ",string o;r}';
 
+/// A q function `{[nm;f]}`: what the name `nm`, holding `f`, held before
+/// q-lint's own instrumenting replaced it - a logpoint, a profile, a
+/// coverage run or a locals capture, one over another - and the outermost
+/// of them holding it now (`cov`, `err`, `log` or `prof`; ` when none
+/// does): (function; which). With it what reads a definition reads the
+/// function, not q-lint's text in it (#2970, #2971). Reads only.
+export const ORIGINAL = [
+  "{[nm;f]",
+  " held:{[nm;f]n:`cov`err`log`prof inter key`.qlint;",
+  "  n:n where{[nm;f;n].[{[nm;f;n]i:.qlint[n]`inst;s:.qlint[n]`saved;$[(nm in key i)&nm in key s;f~i nm;0b]};(nm;f;n);0b]}[nm;f]each n;",
+  "  $[count n;(first n;.qlint[first n;`saved]nm);(`;f)]}[nm];",
+  " v:`;i:0;",
+  " while[(8>i+:1)&not null first r:held f;if[null v;v:first r];f:last r];",
+  " (f;v)}",
+].join("\n");
+
+/// q statements that give the name `nm` the function `to`, keeping `old`,
+/// what it held, under `.qlint.<ns>`. The name is assigned as a script
+/// assigns it, which is what names the function in a backtrace: `set` does
+/// not, and the function then went by the first variable assigned it,
+/// `.qlint.<ns>.inst` (#2970). What is kept is amended in, which names
+/// nothing.
+export function keepAndAssign(ns: string, old: string, to: string): string {
+  return `.[{eval(:;x;y)};(nm;${to});{}];@[\`.qlint.${ns}.saved;nm;:;${old}];@[\`.qlint.${ns}.inst;nm;:;${to}];nm set ${to};`;
+}
+
 /// Replaces each of `nms` (strings) whose text on the process is `was` with
 /// `src`, defined in its own context, keeping what it held. `d` is how many
 /// probes coverage counts (`.qlint.cov.d`, longs, through `.qlint.cov.hit`);
@@ -324,12 +350,13 @@ export function installLambda(ns: "cov" | "err"): string {
     " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",
-    "  if[not w~last value old;:\"changed\"];",
+    // The text of the function itself, though it has a logpoint (#2971):
+    // that is put back with it.
+    `  if[not w~last value first ${ORIGINAL}[nm;old];:"changed"];`,
     `  r:${DEFINE_AS}[old;s];`,
     "  if[not first r;:last r];",
     "  if[not 100h=type last r;:\"not a lambda\"];",
-    `  ${n}.saved[nm]:old;${n}.inst[nm]:last r;`,
-    "  nm set last r;\"ok\"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src];",
+    `  r:last r;${keepAndAssign(ns, "old", "r")}"ok"}'[{(),x}each(),nms;{(),x}each(),was;{(),x}each(),src];`,
     // Nothing replaced: nothing is kept for a restore the caller has no
     // reason to send (#1893).
     ` if[0=count ${n}.saved;.qlint:(enlist\`${ns})_.qlint];`,

@@ -35,7 +35,8 @@
 
 import { codeMask, parameters, patternNames } from "./paramcache";
 import { DRIFT, readDrift } from "./definitions";
-import { DEFINE_AS, inserted, outer } from "./instrument";
+import { REDEFINE } from "./funcsource";
+import { DEFINE_AS, inserted, keepAndAssign, outer } from "./instrument";
 import { FULL_TEXT } from "./qtext";
 
 export const LOGPOINT_COMMANDS = {
@@ -86,8 +87,7 @@ export const LOG_ADD = [
   // `-3!` stops at the process's `\c` width, 79 characters (#2547).
   ` .qlint.log.text:${FULL_TEXT}[300];`,
   " .qlint.log.hit:{[nm;a]if[not nm in key .qlint.log.inst;:(::)];0N!(nm;a);@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;nm;300 sublist .qlint.log.text a);{}];};",
-  " .qlint.log.saved[nm]:f;.qlint.log.inst[nm]:last r;",
-  " nm set last r;string nm}",
+  ` r:last r;${keepAndAssign("log", "f", "r")}string nm}`,
 ].join("\n");
 
 /// Adds a logpoint to `fn` on the process `call` sends to: reads the text
@@ -99,7 +99,43 @@ export async function addLogpoint(call: (code: string, ...args: unknown[]) => Pr
   if (state === undefined || src === undefined) {
     throw new Error("not a lambda on the process");
   }
+  // A run's own text in it goes when the run ends, and would take the
+  // logpoint with it.
+  if (state.via !== undefined && state.via !== "log") {
+    throw new Error(`${VIA[state.via] ?? "q-lint"} holds it just now; add the logpoint when that is over`);
+  }
   return String(await call(LOG_ADD, fn, state.text, src));
+}
+
+const VIA: Record<string, string> = { cov: "a coverage run", err: "a locals capture", prof: "a profile" };
+
+/// Whether `nm` (a string) holds its logpoint now. Reads only.
+export const LOG_HAS = "{[nm]nm:`$(),nm;i:@[get;`.qlint.log.inst;{(`$())!()}];$[nm in key i;i[nm]~@[get;nm;{::}];0b]}";
+
+/// Redefines `name`, whose text on the process is `was`, as `text`
+/// (`REDEFINE`), and puts its logpoint, when it had one, on the new
+/// definition: the logpoint is in the old one's text, and went with it
+/// (#2971). `had` says whether it had one, when the caller has read that
+/// (`DRIFT`'s `via`); the process is asked otherwise. Answers what
+/// `REDEFINE` did and, when the logpoint could not be put back, why.
+export async function redefineKeepingLogpoint(
+  call: (code: string, ...args: unknown[]) => Promise<unknown>,
+  name: string,
+  was: string,
+  text: string,
+  had?: boolean,
+): Promise<{ held: unknown; lost?: string }> {
+  had ??= (await call(LOG_HAS, name)) === true;
+  const held = await call(REDEFINE, name, was, text);
+  if (!had) {
+    return { held };
+  }
+  try {
+    await addLogpoint(call, name);
+    return { held };
+  } catch (error) {
+    return { held, lost: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /// Takes the logpoint off `nm` (a string); answers whether the function was

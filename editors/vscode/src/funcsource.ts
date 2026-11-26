@@ -32,6 +32,7 @@
 // A view (`v::expr`) has a lambda's type too, and `get` of its name
 // evaluates it: the root's views (`views[]`) are not read (#1864).
 // Works on kdb+ (KDB-X) and PeachQ; held there by funcsource_q.test.js.
+import { ORIGINAL } from "./instrument";
 import { SLOT_TEXT, slotParams } from "./paramcache";
 import { isProduction } from "./agent";
 import type { Process } from "./processes";
@@ -49,6 +50,8 @@ export const SOURCE = [
   " if[(`$(),nm)in views[];'\"a view, not a function\"];",
   " f:get`$(),nm;t:type f;",
   " if[not t within 100 112h;'\"not a function\"];",
+  // The function itself, though q-lint's logpoint is in its text (#2971).
+  ` if[100h=t;f:first ${ORIGINAL}[\`$(),nm;f]];`,
   " v:$[100h=t;value f;()];",
   ` \`type\`text\`ctx\`params!("f"$t;$[100h=t;last v;${FULL_TEXT}[${TEXT_LIMIT};f]];$[100h=t;string first v 3;""];$[100h=t;(),v 1;\`$()])}`,
 ].join("\n");
@@ -58,7 +61,9 @@ export const REDEFINE = [
   " nm:`$(),nm;if[nm in views[];'\"not a lambda on the process\"];old:get nm;src:(),src;",
   " if[not 10h=type src;'\"the text is not a string\"];",
   " if[not 100h=type old;'\"not a lambda on the process\"];",
-  " if[not((),was)~last value old;'\"changed on the process since it was opened\"];",
+  // `was` is the function's own text, though a logpoint is in what the
+  // name holds (#2971).
+  ` if[not((),was)~last value first ${ORIGINAL}[nm;old];'"changed on the process since it was opened"];`,
   " c:first(value old)3;d:system\"d\";",
   " system\"d \",$[null c;\".\";\".\",string c];",
   " r:@[{(1b;value x)};src;{(0b;x)}];",
