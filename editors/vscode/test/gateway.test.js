@@ -495,6 +495,36 @@ test("on a TorQ gateway, features that need q-lint's lambda refuse, Copy Value a
   assert.strictEqual(live.goesThroughGateway(".gw.servers"), false);
 });
 
+// Copy Value as JSON read only the process's own server types: from a file
+// naming others it copied another server's value than Run Query showed, and
+// under `/ @servertypes none` asked the servers for the gateway's own (#3062).
+test("Copy Value as JSON goes to the server types its file names, as Run Query does (#3062)", { skip }, async (t) => {
+  const gw = await torq(t);
+  const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb"] }]);
+  assert.strictEqual(await live.connectTo("gw"), true);
+  const vscode = require("vscode");
+  let clipboard = "";
+  vscode.env = { clipboard: { readText: async () => clipboard, writeText: async (s) => void (clipboard = s) } };
+  const context = stub.newContext();
+  t.after(() => context.subscriptions.forEach((d) => d.dispose?.()));
+  require("../out/pasteview.js").registerPaste(context, live);
+  stub.config.user["jsonConversion.enable"] = true;
+  const copy = (text) => {
+    vscode.window.activeTextEditor = {
+      document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: text.split("\n")[0] }), getText: () => text },
+      selection: { active: { line: 0 }, isEmpty: true },
+    };
+    return stub.commands.get("q-lint.copyAsJson")();
+  };
+  assert.strictEqual(await copy("exec sym from trade"), '["a","b"]');
+  assert.strictEqual(await copy("exec sym from trade\n/ @servertypes hdb"), '["c","d","e"]');
+  assert.strictEqual(await copy("exec sym from trade\n/ @servertypes hdb rdb"), '["c","d","e","a","b"]');
+  // None: the gateway's own value, which no server has.
+  assert.strictEqual(await copy("role\n/ @servertypes none"), '"gateway"');
+  // Code given without a file goes to the process's own.
+  assert.strictEqual(await stub.commands.get("q-lint.copyAsJson")("exec sym from trade"), '["a","b"]');
+});
+
 test("a query run apart - a dashboard tile, a scheduled export, Query a Tag - goes through the gateway too (#1230)", { skip }, async (t) => {
   const gw = await torq(t);
   const { live } = await setUp(t, [{ label: "gw", host: "127.0.0.1", port: gw, tags: [], gateway: ["rdb", "hdb"] }]);

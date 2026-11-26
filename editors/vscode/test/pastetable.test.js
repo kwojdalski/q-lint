@@ -167,7 +167,7 @@ test("the switches are declared, on by default, and hide the commands when off",
 function fakeEditor(text) {
   const editor = {
     text,
-    document: { uri: { toString: () => "file:///w/a.q" } },
+    document: { uri: { toString: () => "file:///w/a.q" }, getText: () => editor.text },
     selections: [{ start: text.length, end: text.length }],
     edit: async (f) => {
       f({ replace: (s, code) => (editor.text = editor.text.slice(0, s.start) + code + editor.text.slice(s.end)) });

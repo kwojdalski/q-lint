@@ -2968,9 +2968,13 @@ export class Live {
   /// `code` on the active process through `.gw.syncexecj`, its servers'
   /// answers joined by `join` on the gateway, where Run would send it
   /// through `.gw.syncexec`; undefined elsewhere. Copy Value as JSON (#2433).
-  gatewayJoinedOnActive(code: string, join: string): string | undefined {
-    const types = this.activeProcess()?.gateway;
-    return types === undefined || isGatewayOwn(code) || !this.goesThroughGateway(code) ? undefined : gatewayJoined(statements(code), types, join);
+  /// `serverTypes` are those the code's file names, which Run sends it to
+  /// rather than to the process's own; none (`[]`) is the gateway itself
+  /// (#3062).
+  gatewayJoinedOnActive(code: string, join: string, serverTypes?: string[]): string | undefined {
+    const process = this.activeProcess();
+    const types = serverTypes ?? process?.gateway;
+    return process === undefined || types === undefined || isGatewayOwn(code) || this.throughGateway(code, process, serverTypes) === code ? undefined : gatewayJoined(statements(code), types, join);
   }
 
   /// Why `feature`, which runs `code` inside a lambda of q-lint's, refuses
