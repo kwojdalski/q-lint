@@ -549,18 +549,20 @@ const BUILT_IN = { red: "charts.red", blue: "charts.blue", green: "charts.green"
 const COLOUR_ID = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)*$/;
 
 /// `q-lint.processes.tagColors` as written: an object from tag to
-/// ThemeColor id. Keys are lower-cased, as tags are; an entry whose value is
-/// not a colour id is dropped, so a typo leaves the built-in colour.
+/// ThemeColor id. Keys are split and lower-cased as tags are (`parseTags`),
+/// so `live desk` colours both words (#2526); an entry whose value is not a
+/// colour id is dropped, so a typo leaves the built-in colour.
 export function tagColours(value: unknown): Record<string, string> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
   const out: Record<string, string> = {};
   for (const [tag, colour] of Object.entries(value as Record<string, unknown>)) {
-    const key = tag.trim().toLowerCase();
-    if (key !== "" && typeof colour === "string" && COLOUR_ID.test(colour.trim())) {
-      // Defined, not assigned: `out.__proto__ = ...` would set nothing.
-      Object.defineProperty(out, key, { value: colour.trim(), enumerable: true, writable: true, configurable: true });
+    if (typeof colour === "string" && COLOUR_ID.test(colour.trim())) {
+      for (const key of parseTags(tag)) {
+        // Defined, not assigned: `out.__proto__ = ...` would set nothing.
+        Object.defineProperty(out, key, { value: colour.trim(), enumerable: true, writable: true, configurable: true });
+      }
     }
   }
   return out;

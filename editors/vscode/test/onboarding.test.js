@@ -54,6 +54,8 @@ test("the tag colour setting keeps colour ids, lower-cases tags, and drops the r
   for (const junk of [undefined, null, "eu", ["charts.red"], 7]) {
     assert.deepStrictEqual(tagColours(junk), {}, String(junk));
   }
+  // #2526: a key is split as process tags are stored.
+  assert.deepStrictEqual(tagColours({ "live desk": "charts.red" }), { live: "charts.red", desk: "charts.red" });
 });
 
 test("a tag takes the setting's colour, else the built-in one", () => {
