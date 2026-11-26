@@ -482,6 +482,58 @@ fn statement_view(direct: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
+/// `statement_view` of the slots of each `$[...]`, `if[...]`, `while[...]`
+/// and `do[...]` in a lambda body, wherever the construct stands, and of
+/// nothing else: a slot is a statement of the lambda, and an assignment in
+/// one is the lambda's. One pass, so a deep nest of them is not read once
+/// from each (#2726).
+fn control_view(direct: &str) -> String {
+    let bytes = direct.as_bytes();
+    let mut out = vec![b' '; bytes.len()];
+    let before = |i: usize, w: &str| direct[..i].ends_with(w) && boundary(direct, i - w.len());
+    let starts = |i: usize, w: &str| {
+        direct[i..].starts_with(w)
+            && boundary(direct, i)
+            && !bytes
+                .get(i + w.len())
+                .is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_')
+    };
+    // Each open bracket: whether it is one of the four, and whether a qSQL
+    // phrase is running in it, which names columns up to its `;`.
+    let mut open: Vec<(bool, bool)> = vec![];
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'{' => open.push((false, false)),
+            b'[' => open.push((
+                direct[..i].ends_with('$') || ["if", "while", "do"].iter().any(|w| before(i, w)),
+                false,
+            )),
+            b')' | b']' | b'}' => {
+                open.pop();
+            }
+            b'\n' | b'\r' => out[i] = b,
+            _ => {
+                let Some((true, query)) = open.last_mut() else {
+                    continue;
+                };
+                if b == b';' {
+                    *query = false;
+                } else if matches!(b, b's' | b'e' | b'u' | b'd')
+                    && ["select", "exec", "update", "delete"]
+                        .iter()
+                        .any(|w| starts(i, w))
+                {
+                    *query = true;
+                }
+                if !*query {
+                    out[i] = b;
+                }
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
 fn scope_at(scopes: &[Scope], at: usize) -> Option<usize> {
     let mut i = scopes.partition_point(|s| s.start < at).checked_sub(1)?;
     loop {
@@ -3017,29 +3069,69 @@ pub fn check(
                     && !re!(r"^[ \t]*:(?:[^:]|$)").is_match(&text[i + 1..])
             })
         };
+        // Each assignment of `y` or `z`: where the name is, where the text
+        // before the assignment ends and its right side starts, whether it
+        // is `::`, and whether it is a plain `name:`.
+        let mut assigned: Vec<(usize, &str, usize, usize, bool, bool)> = vec![];
+        let mut plain = |view: &str, offset: usize| {
+            for a in assignment.captures_iter(view) {
+                let whole = a.get(0).unwrap();
+                let name = match a.get(1).unwrap().as_str() {
+                    "y" => "y",
+                    "z" => "z",
+                    _ => continue,
+                };
+                if boundary(view, whole.start()) {
+                    let (start, end) = (offset + whole.start(), offset + whole.end());
+                    assigned.push((start, name, start, end, a.get(2).is_some(), true));
+                }
+            }
+        };
+        plain(&statements, 0);
+        // In a slot of `$[...]`, `if`, `while` or `do` too, which is a
+        // statement of this lambda: q 5 gives `{$[x;y:1;y:2]; y}` two
+        // arguments (#2726).
+        plain(&control_view(&direct), 0);
+        // And in a pattern, which assigns every name it binds: `{(y;z):x;
+        // y+z}` takes three (#2726).
+        for (open, close, double) in pattern_targets(&scope.direct) {
+            let target = &scope.direct[open..=close];
+            let right = close + 1 + scope.direct[close + 1..].find(':').unwrap_or(0) + 1;
+            for name in ["y", "z"] {
+                if crate::pattern_names(target).contains(&name)
+                    && let Some(at) = target
+                        .match_indices(name)
+                        .map(|(i, _)| open + i)
+                        .find(|&i| {
+                            boundary(&direct, i)
+                                && !direct[i + 1..].starts_with(|c: char| {
+                                    c.is_ascii_alphanumeric() || "_.".contains(c)
+                                })
+                        })
+                {
+                    assigned.push((at, name, open, right + usize::from(double), double, false));
+                }
+            }
+        }
+        assigned.sort_unstable();
         let mut seen = HashSet::new();
-        for a in assignment.captures_iter(&statements) {
-            let whole = a.get(0).unwrap();
-            let name = a.get(1).unwrap().as_str();
-            if !boundary(&statements, whole.start())
-                || a.get(2).is_some()
-                || !matches!(name, "y" | "z")
-                || !seen.insert(name)
-            {
+        for (at, name, before, right, double, named) in assigned {
+            if !seen.insert(name) {
                 continue;
             }
             // `y[k]:v` amends the argument in place, which reads it: the
             // brackets are blank in `statements` but not in the body.
-            if direct[whole.start() + name.len()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with('[')
+            if named
+                && direct[at + name.len()..]
+                    .trim_start_matches([' ', '\t'])
+                    .starts_with('[')
             {
                 continue;
             }
             // Read first: before the assignment, or on its right, which q
             // evaluates before it stores - up to the `;` or bracket that
             // ends the statement.
-            let (mut end, mut depth, bytes) = (whole.end(), 0i32, direct.as_bytes());
+            let (mut end, mut depth, bytes) = (right, 0i32, direct.as_bytes());
             while end < bytes.len() {
                 match bytes[end] {
                     b'(' | b'[' | b'{' => depth += 1,
@@ -3050,19 +3142,30 @@ pub fn check(
                 }
                 end += 1;
             }
-            if reads(&direct[..whole.start()], name) || reads(&direct[whole.end()..end], name) {
+            if reads(&direct[..before], name) || reads(&direct[right.min(end)..end], name) {
                 continue;
             }
             let rank = crate::lambda_rank(code, raw, scope.start, scope.end);
             out.push(Finding::at(
                 path,
                 raw,
-                scope.body + whole.start(),
+                scope.body + at,
                 "QS009",
-                format!(
-                    "`{name}` is assigned before it is read, so q counts it as an argument: \
-                     this lambda takes {rank}, and the caller's `{name}` is thrown away"
-                ),
+                // `::` amends the argument q made of the name, not a global:
+                // after `setY:{y::42; x}` and `setY[1;0]` there is no `y`
+                // (q 5, #2727).
+                if double {
+                    format!(
+                        "`{name}` is assigned with `::` before it is read, so q counts it as \
+                         an argument: this lambda takes {rank}, and the global `{name}` is \
+                         never set"
+                    )
+                } else {
+                    format!(
+                        "`{name}` is assigned before it is read, so q counts it as an argument: \
+                         this lambda takes {rank}, and the caller's `{name}` is thrown away"
+                    )
+                },
             ));
         }
     }
@@ -3744,9 +3847,14 @@ pub fn check(
         // source and checked back against the views: the name has to be live
         // code, and the quote has to be blank in both views, which is what
         // distinguishes a masked string from a comment.
+        // A symbol or a string needs no blank before it, and a lambda or a
+        // negative literal after one is an argument too: with `f:{x+y}`,
+        // q 5 gives a projection for `` f`a ``, `f"s"`, `f -1` and `f {x}`
+        // alike (#2723).
         let named = re!(
-            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)[ \\t]+([`\"(A-Za-z0-9]|\\.[A-Za-z])"
+            "(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:[ \\t]*([`\"])|[ \\t]+([({A-Za-z0-9]|\\.[A-Za-z]|-\\.?[0-9]))"
         );
+        let argument_of = |m: &regex::Captures| m.get(2).or(m.get(3)).unwrap().start();
         // Each query's phrases, from the keyword to `from` and through a
         // `where`, with the table it reads.
         let queries: Vec<(usize, usize, &str)> = re!(
@@ -3799,11 +3907,14 @@ pub fn check(
         while let Some(m) = named.captures_at(code, from) {
             let name = m.get(1).unwrap();
             candidates.push((name.start(), name.as_str()));
-            from = m.get(2).unwrap().start();
+            from = argument_of(&m);
         }
-        for m in named.captures_iter(raw).filter(|m| &m[2] == "\"") {
+        for m in named
+            .captures_iter(raw)
+            .filter(|m| m.get(2).is_some_and(|q| q.as_str() == "\""))
+        {
             let name = m.get(1).unwrap();
-            let quote = m.get(2).unwrap().start();
+            let quote = argument_of(&m);
             if code.get(name.start()..name.end()) == Some(name.as_str())
                 && code.as_bytes()[quote] == b' '
                 && comments.as_bytes()[quote] == b'"'
@@ -3910,7 +4021,8 @@ pub fn check(
                 });
             let head = match before.chars().next_back() {
                 None => true,
-                Some(c) => ";([{:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword,
+                // After a `}` too: `{x}f 1` is `{x}[f 1]` (#2723).
+                Some(c) => ";([{}:,+-*%&|<>=~!^#$?@".contains(c) || at == line_start || keyword,
             };
             if !head {
                 continue;
@@ -3939,10 +4051,14 @@ pub fn check(
             // name its left operand: q 5 parses `fmt 0: x` as
             // `(0:;`fmt;`x)`, and even `f 0:00` as `(0:;`f;0)` (#508). A
             // qSQL keyword ends the phrase: `select g from t` names a column.
+            // `where` only in a query - anywhere else it is the unary, and
+            // `f where 1 0` applies `f` to what it gives (#2723).
             if re!(r"^[A-Za-z][A-Za-z0-9_]*")
                 .find(&code[argument..])
                 .is_some_and(|w| {
-                    INFIX.contains(&w.as_str()) || matches!(w.as_str(), "from" | "by" | "where")
+                    INFIX.contains(&w.as_str())
+                        || matches!(w.as_str(), "from" | "by")
+                        || w.as_str() == "where" && query_at(at).is_some()
                 })
                 || re!(r"^[012]:").is_match(&code[argument..])
             {

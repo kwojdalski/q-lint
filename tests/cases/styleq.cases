@@ -66,6 +66,16 @@ e:10b (1)
 === clean profile: styleq | and before one ((1) 2 is 1 applied to 2, 1 2 a vector)
 c:(1) 2
 
+=== clean profile: styleq | and after a blank and a minus, which they keep a subtraction (#2724; q 5: x -(1) subtracts, x -1 is x applied to -1, 3 -1 a vector)
+x:10 20 30
+a:x -(1)
+b:3 -(1)
+
+=== QS004 profile: styleq | a minus with no blank before it, or one after it, subtracts either way (#2724)
+x:10 20 30
+a:x-(1)
+b:x - (1)
+
 === QS004 profile: styleq | after a name nothing changes without them
 r:a (3)
 
@@ -115,12 +125,32 @@ unrelated:{[val] val}
 /// Adds two numbers.
 sum2:{[a;b] a+b}
 
-=== clean profile: styleq | a lambda with no declared signature has nothing to compare against
+=== clean profile: styleq | a lambda with no parameter list takes x, y and z up to the highest it reads
 //@param x The argument.
 implicit:{x+1}
+/ @param x one
+/ @param y the other
+both:{x+y}
+
+=== QS007 profile: styleq | and a block naming anything else is stale above it too (#2728)
+/ @param n how many
+m:{til x}
+
+=== QS007 profile: styleq | as is one naming an argument it does not read (#2728)
+/ @param x one
+/ @param y the other
+one:{x+1}
 
 === QS008 profile: styleq | `x` declared somewhere q would not put it
 f:{[t;x] t+x}
+
+=== QS008 profile: styleq | a typed or filtered slot binds the name all the same (#2725; q 5: {[a;x:`j] x}[1;2] is 2)
+g:{[a;x:`j] a+x}
+h:{[y:`j] y}
+k:{[z:neg;b] z+b}
+
+=== clean profile: styleq | and in the position q gives the name it is the default pattern (#2725)
+g:{[x:`j;y:`j] x+y}
 
 === QS008 QF016 profile: styleq | further along a longer signature, and the rest go unread
 f:{[a;b;c;x] x}
@@ -147,6 +177,33 @@ h:{y:x+1; y}
 
 === QS009 profile: styleq | an assignment after another statement still comes before any read
 h:{a:x; z:a*2; z}
+
+=== QS009 QS009 profile: styleq | a pattern assigns every name it binds (#2726; q 5: {(y;z):x; y+z} takes x, y and z)
+f:{(y;z):x; y+z}
+
+=== QS009 profile: styleq | and a slot of a conditional is a statement of the lambda (#2726; q 5: {$[x;y:1;y:2]; y} takes two)
+i:{$[x;y:1;y:2]; y}
+
+=== QS009 QS009 QS009 profile: styleq | of if, while and do too, nested or inside a list (#2726)
+f:{if[x;z:1]; x}
+g:{while[x<3;x+:1;$[x;y:x;0]]; x}
+h:{a:(1;do[2;y:x]); a}
+
+=== clean profile: styleq | a slot that reads the name first, a column a query in one names, and a name with a keyword's ending (#2726)
+f:{$[y;y:1;0]}
+t:([]a:1 2)
+g:{$[x;select y:1 from t;0]}
+h:{.my.if[x;y]}
+
+=== QS009 QF022 profile: styleq | `::` amends the argument q made of the name, and sets no global (#2727; q 5: after setY:{y::42; x} and setY[1;0] there is no y)
+setY:{y::42; x}
+
+=== QS009 QF022 profile: styleq | in a pattern too (#2727; q 5: (value {(a;y)::x; a}) 1 is `x`y)
+g:{(a;y)::x; a}
+
+=== clean profile: styleq | with a parameter list `::` sets the global it names, and any other name does without one (#2727)
+f:{[a] y::a; a}
+g:{w::42; x}
 
 === clean profile: styleq | rebinding `x` keeps the rank (q 5: {x:x+1; x} 1 is 2)
 k:{x:x+1; x}
@@ -268,6 +325,19 @@ f:{[p;q] r:p+q; r}
 
 === clean profile: styleq | a qSQL column alias is not a local
 f:{[t] select y:a+b from t}
+
+=== QS001 QS002 profile: styleq | each name in a chain is assigned (#2730; q 5: after a:my_var:1 and b:c.d:2, (my_var;c.d) is 1 2)
+a:my_var:1
+b:c.d:2
+
+=== QS003 profile: styleq | and so is each name a pattern binds (#2730; q 5: (l;m):3 4 sets l to 3)
+(l;m):3 4
+
+=== clean profile: styleq | a name the chain only reads, a comparison, and a column a query names are not assigned (#2730)
+t:([]a:1 2)
+a:b:my_var
+c:b=my_var
+r:u:select my_col:a from t
 
 === QS010 QS001 profile: styleq | a snake_case name in a file that otherwise writes camelCase
 tradeCount:0
@@ -407,6 +477,12 @@ ratio:{[tape] tape}
 / @param fromts start of the range
 / @return gaps
 gaps:{[fromts] fromts}
+
+=== QS007 QS007 profile: styleq | nor does an anonymous lambda inside another function's body make it another's (#2729)
+/ @param t table
+/ @param c column
+f:{[tbl;col] tbl col}
+g:{[x] {[t;c] t c}[x;`a]}
 
 === clean profile: styleq | the columns of a table literal written across lines are not assignments
 trades:([]
