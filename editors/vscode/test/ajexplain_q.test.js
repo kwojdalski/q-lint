@@ -62,3 +62,19 @@ test("a table written as its name is refused as aj refuses it, and the table it 
   assert.strictEqual(m.matched, 0);
   assert.deepStrictEqual(await keys(), ["sym", "time"]);
 });
+
+// The text said aj0 leaves the right table's columns null, and no more:
+// like aj, it keeps the left row's value of a column both tables have.
+test("a row with no match is worded as aj0 and aj leave it (#2983)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t:([]sym:`a`b;time:09:00 09:00;bid:100 200f)\nq:([]sym:`a`a;time:08:00 10:00;bid:1 2f;ask:3 4f)\n");
+  for (const fn of ["aj", "aj0"]) {
+    // Row 1 has no match: its own bid is kept, and only ask is null.
+    assert.strictEqual((await connection.evaluate(`.Q.s1 ${fn}[\`sym\`time;t;q] 1`)).value, "`sym`time`bid`ask!(`b;09:00;200f;0n)");
+    const m = readMatch(await connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("t"), asCode("q"), 1));
+    const text = worded({ fn, columns: "`sym`time", left: "t", right: "q" }, 1, "p", m);
+    assert.match(text, /No match: none of the 2 rows of q has sym = `b\./);
+    assert.ok(text.includes(`${fn} leaves the columns only q has null in this row, and a column both tables have keeps the left row's value.`), text);
+    const none = readMatch(await connection.call(EXPLAIN_AJ, asCode("`sym`time"), asCode("t"), asCode("0#q"), 1));
+    assert.match(worded({ fn, columns: "`sym`time", left: "t", right: "0#q" }, 1, "p", none), /keeps the left row's value/);
+  }
+});

@@ -147,16 +147,22 @@ export function readMatch(raw: unknown): AjMatch {
   return { row, candidates: p[1], missedKey, missedValue, matched: p[4], matchedRow, earliest, time, sorted: p[8], timeColumn, rightRows: p[10] };
 }
 
+/// What a row with no match is left with - by `aj0` as by `aj`, which
+/// differ only in whose time a matched row takes (#2983).
+function unmatched(call: AjCall): string {
+  return `${call.fn} leaves the columns only ${call.right} has null in this row, and a column both tables have keeps the left row's value.`;
+}
+
 /// The explanation, as plain text lines.
 export function explain(call: AjCall, index: number, process: string, m: AjMatch): string {
   const lines = [`/ ${call.fn}[${call.columns};${call.left};${call.right}] on ${process}: row ${index} of ${call.left}`, "", `left row ${index}: ${m.row}`, ""];
   if (m.rightRows === 0) {
     // No row to be the earliest and no key that missed (#1909).
-    lines.push(`No match: ${call.right} has no rows.`, `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`);
+    lines.push(`No match: ${call.right} has no rows.`, unmatched(call));
   } else if (m.missedKey !== "") {
     lines.push(
       `No match: none of the ${m.rightRows} rows of ${call.right} has ${m.missedKey} = ${m.missedValue}.`,
-      `${call.fn} leaves the right table's columns null in this row${call.fn === "aj0" ? "" : ", keeping the left row's own"}.`,
+      unmatched(call),
     );
   } else if (m.matched < 0) {
     lines.push(
