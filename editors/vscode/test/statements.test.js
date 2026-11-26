@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextLeft, contextSwitch, inContext } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextLeft, contextSwitch, inContext, scriptInContext } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -124,6 +124,25 @@ test("the context a text leaves is the one the next runs in (#2286)", () => {
   assert.strictEqual(contextSwitch("f:{\n  \\d .x}"), undefined);
   assert.deepStrictEqual(inContext(["add:{x+y}"], ".cdlib"), ["\\d .cdlib", "add:{x+y}"]);
   assert.deepStrictEqual(inContext(["a:1"], "."), ["a:1"]);
+});
+
+// q's statement keeps a block comment in a lambda as `/` lines (KDB-X holds
+// "{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}" from this script), which read as
+// a script again open one over the rest of the lambda.
+test("code kept behind a \\d is a script that cuts to the statements it ran as (#3162)", () => {
+  const lambda = "rp:{[x]\n  a:x+1;\n/\n  a:a*100;\n\\\n  a}";
+  const [cut] = statements(lambda);
+  assert.strictEqual(cut, "rp:{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}");
+  assert.deepStrictEqual(statements(cut), ["rp:{[x]\n  a:x+1;"]);
+  assert.strictEqual(scriptInContext(lambda, ".ns"), `\\d .ns\n${lambda}`);
+  assert.deepStrictEqual(statements(scriptInContext(lambda, ".ns")), ["\\d .ns", cut]);
+  // A piece of a statement, as a selection is: its first line does not continue the \d.
+  for (const code of ["  a:1;\n  b:2", "/ note\n\n  f:{\n  x}\ng:2\n/ after", `/\nblock\n\\\n${lambda}\nh:3`]) {
+    assert.deepStrictEqual(statements(scriptInContext(code, ".ns")), inContext(statements(code), ".ns"), code);
+  }
+  // The root needs none, and no code none either.
+  assert.strictEqual(scriptInContext(lambda, "."), lambda);
+  assert.strictEqual(scriptInContext("/ only a comment", ".ns"), "/ only a comment");
 });
 
 test("a \\d with a trailing comment, or after q), switches the context as q does (#2785)", () => {

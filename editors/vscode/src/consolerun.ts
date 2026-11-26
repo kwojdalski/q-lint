@@ -8,7 +8,7 @@ import { fileServerTypes } from "./gateway";
 import { Stopped, type Live } from "./live";
 import { readLive } from "./liveconfig";
 import { render, type Answer } from "./query";
-import { contextSwitch, inContext, statements } from "./statements";
+import { contextSwitch, inContext, scriptInContext, statements } from "./statements";
 import { plainMessage } from "./history";
 import { UNLIMITED, UNLIMITED_READ_ONLY, limits, readUnlimited, runUnwrapped } from "./querycontrols";
 
@@ -45,7 +45,7 @@ export async function runText(live: Live, written: string, uri?: Uri, context = 
   // Kept behind the `\d` it ran in, so Run Query Again and the history's
   // script run it there too and not in the root (#2915); a `\d` of its own
   // needs none.
-  const kept = context === "." || contextSwitch(cut[0]) !== undefined ? code : inContext(cut, context).join("\n");
+  const kept = contextSwitch(cut[0]) !== undefined ? code : scriptInContext(code, context);
   if (!(await live.toFileBinding(uri))) {
     return undefined;
   }

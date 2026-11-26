@@ -215,6 +215,10 @@ test("a .gw. or .dataaccess. name in code sent to a guarded process that is no g
   ]);
   // A REPL, a notebook cell or an agent is not told to send it plain.
   assert.strictEqual(live.gatewayed(["count .gw.servers"]).plain, false);
+  // Its statements go as they were cut, not read as a script again: the `/`
+  // lines q keeps of a block comment in a lambda open none (#3162).
+  const cut = ["rp:{[x]\n  a:x+1;\n/\n/  a:a*100;\n/\n  a}", "rp 1"];
+  assert.deepStrictEqual(live.gatewayed(cut).cut, cut);
 });
 
 test("on a process reval does not hold on, a gateway call still goes as a plain string (#2584, #2637)", async (t) => {
