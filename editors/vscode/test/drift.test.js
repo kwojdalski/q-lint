@@ -85,6 +85,23 @@ test("definitions: top-level lambdas, in their context, with their lines", () =>
   assert.deepStrictEqual(definitions("f:{x\ng::{x}\n"), []);
 });
 
+// q runs `q)g:{x}` as `g:{x}`: left out, a changed `q)` function was never
+// compared, reloaded or documented (#3009).
+test("definitions: one behind q) prompts is a definition, in its context, and one behind k) is none (#3009)", () => {
+  const text = ["f:{x}", "q)g:{x}", "q)q) g2:{x+1}", "k)q)g3:{x+2} / note", "q)g4:{[a]", "  a}", "k)h:{x}", "q)k)h2:{x}", "\\d .ns", "q)g:{x*2}", "q).o.g:{x}", "q)v:42", "q)p:{x+y}[1]"].join("\r\n");
+  assert.deepStrictEqual(definitions(text), [
+    { name: "f", text: "{x}", line: 0, endLine: 0 },
+    { name: "g", text: "{x}", line: 1, endLine: 1 },
+    { name: "g2", text: "{x+1}", line: 2, endLine: 2 },
+    { name: "g3", text: "{x+2}", line: 3, endLine: 3 },
+    { name: "g4", text: "{[a]\n  a}", line: 4, endLine: 5 },
+    { name: ".ns.g", text: "{x*2}", line: 9, endLine: 9 },
+    { name: ".o.g", text: "{x}", line: 10, endLine: 10 },
+  ]);
+  // Only at the statement's start: in a string or a lambda it is no prompt.
+  assert.deepStrictEqual(definitions("a:\"q)f:{x}\"\n"), []);
+});
+
 test("texts compare without trailing blanks", () => {
   assert.strictEqual(normalized("{[x]   \n  x \t\n }"), "{[x]\n  x\n }");
 });

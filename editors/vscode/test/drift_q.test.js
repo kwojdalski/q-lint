@@ -111,6 +111,18 @@ test("the file a process loaded compares the same, name by name", { skip }, asyn
   assert.deepStrictEqual([...one.entries()], [["g", { state: "lambda", text: "{x+1}" }]]);
 });
 
+// q defines `g` from `q)g:{x}`, in the context the script is in; a k lambda's
+// text is another, and it is left out (#3009).
+test("a definition behind q) prompts compares the same on the process that loaded it (#3009)", { skip }, async (t) => {
+  const prompted = "q)pg:{x+1}\nk)q)pg2:{x+2}\nq) pg3:{[a]\n  a}\nk)pk:{x}\n\\d .pn\nq)pg:{x*2}\n\\d .\n";
+  const c = await connect(t, prompted);
+  const defs = definitions(prompted);
+  assert.deepStrictEqual(defs.map((d) => d.name), ["pg", "pg2", "pg3", ".pn.pg"]);
+  const rows = driftRows(defs.map((def) => ({ file: "a.q", def })), await states(c, defs));
+  assert.deepStrictEqual(rows.map((r) => `${r.name}:${r.status}:${r.processText}`), ["pg:same:{x+1}", "pg2:same:{x+2}", "pg3:same:{[a]\n  a}", ".pn.pg:same:{x*2}"]);
+  assert.strictEqual((await c.evaluate("string pk")).value, "k){x}");
+});
+
 // KDB-X runs a module in `.m.<module>`: after `` md:use`modd ``, `` key`.m.modd ``
 // is ``` ``hlp`fd`export ``` and the root has no `fd`, which Check Drift
 // asked about and called missing (#2321).
