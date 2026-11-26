@@ -167,6 +167,21 @@ export function toAdd(rows: BulkRow[]): Process[] {
   return rows.filter((r) => r.process !== undefined && r.duplicate === undefined).map((r) => r.process!);
 }
 
+/// The lines of `text` that `rows` read and did not add - not processes,
+/// or duplicates - with a CSV header kept above them, for the form to keep
+/// once the rest are added (#2506). Empty when every line was added.
+export function leftOver(text: string, rows: BulkRow[]): string {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const read = new Set(rows.map((r) => r.line));
+  const added = new Set(rows.filter((r) => r.process !== undefined && r.duplicate === undefined).map((r) => r.line));
+  if (read.size === added.size) {
+    return "";
+  }
+  // A line read that is no row is the CSV header.
+  const isHeader = (l: string, i: number): boolean => !read.has(i + 1) && l.trim() !== "" && !l.trim().startsWith("#") && !l.trim().startsWith("/");
+  return lines.filter((l, i) => isHeader(l, i) || (read.has(i + 1) && !added.has(i + 1))).join("\n");
+}
+
 /// What a row's status column says.
 export function rowStatus(row: BulkRow): string {
   if (row.problem !== undefined) {

@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { ViewColumn, commands, window, workspace, type ExtensionContext, type WebviewPanel } from "vscode";
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
-import { parseBulk, rowsHtml, toAdd } from "./bulkadd";
+import { leftOver, parseBulk, rowsHtml, toAdd } from "./bulkadd";
 import type { Live } from "./live";
 import { plainMessage } from "./history";
 
@@ -40,7 +40,11 @@ const kept = vscode.getState();
 if (kept && typeof kept.text === "string") text.value = kept.text;
 text.addEventListener("input", () => { vscode.setState({ text: text.value }); vscode.postMessage({ type: "check", text: text.value }); });
 document.getElementById("add").addEventListener("click", () => vscode.postMessage({ type: "add", text: text.value }));
-window.addEventListener("message", (event) => { if (event.data.type === "rows") document.getElementById("rows").innerHTML = event.data.html; });
+window.addEventListener("message", (event) => {
+  if (event.data.type === "rows") document.getElementById("rows").innerHTML = event.data.html;
+  // What was not added, left to fix (#2506).
+  if (event.data.type === "text") { text.value = event.data.text; vscode.setState({ text: text.value }); vscode.postMessage({ type: "check", text: text.value }); }
+});
 vscode.postMessage({ type: "check", text: text.value });
 </script></body></html>`;
 }
@@ -89,16 +93,28 @@ export class BulkAdd {
     const text = typeof message.text === "string" ? message.text : "";
     if (message.type === "check") {
       void this.panel?.webview.postMessage({ type: "rows", html: rowsHtml(parseBulk(text, this.live.processes())) });
-    } else if (message.type === "add" && (await this.add(text)) > 0) {
-      this.panel?.dispose();
+    } else if (message.type === "add") {
+      const { added, rest } = await this.adding(text);
+      // Closed once everything was added; else the lines skipped are kept
+      // in the form to fix (#2506).
+      if (added > 0 && rest === "") {
+        this.panel?.dispose();
+      } else if (added > 0) {
+        void this.panel?.webview.postMessage({ type: "text", text: rest });
+      }
     }
   }
 
   /// Add the processes `text` gives that are not duplicates; how many.
   async add(text: string): Promise<number> {
+    return (await this.adding(text)).added;
+  }
+
+  /// `add`, and the lines of `text` that were not added.
+  private async adding(text: string): Promise<{ added: number; rest: string }> {
     if (!on()) {
       void window.showInformationMessage(plainMessage(adminOff("bulkAdd")));
-      return 0;
+      return { added: 0, rest: text };
     }
     // Read now: the list may have changed while the form was open.
     const now = this.live.processes();
@@ -107,10 +123,10 @@ export class BulkAdd {
     const skipped = rows.length - adding.length;
     if (adding.length === 0) {
       void window.showInformationMessage(plainMessage(`q-lint: no process to add${skipped > 0 ? `: ${skipped} line(s) were duplicates or not processes` : ""}.`));
-      return 0;
+      return { added: 0, rest: text };
     }
     await this.live.saveProcesses([...now, ...adding]);
     void window.showInformationMessage(plainMessage(`q-lint: added ${adding.length} q process(es)${skipped > 0 ? `; skipped ${skipped} line(s)` : ""}.`));
-    return adding.length;
+    return { added: adding.length, rest: leftOver(text, rows) };
   }
 }
