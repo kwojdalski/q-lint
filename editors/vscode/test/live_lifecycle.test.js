@@ -527,6 +527,54 @@ test("an unanswered heartbeat shows as no answer after 5 s, and its wait counts 
   assert.ok(seconds() >= first + 2, `${first} then ${live.api().statusText()}`);
 });
 
+// A network gone with no FIN or RST left the socket open: the heartbeat
+// showed "no answer" for ever, and the automatic reconnect never began.
+test("a heartbeat unanswered three beats on closes the connection of a host that takes none, and keeps a busy process's (#3031)", async (t) => {
+  const a = await fakeQ((sent) => (sent === "::" ? undefined : 1));
+  t.after(() => a.close());
+  // The heartbeat's seconds are the fake clock's.
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.after(() => t.mock.timers.reset());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.heartbeat.enable": true, "connection.heartbeatInterval": 1 });
+  await live.connectTo("a");
+  await until(() => a.sent.includes("::"));
+  const connect = net.connect;
+  const asked = [];
+  let gone = false;
+  net.connect = (...args) => {
+    // The network gone, its host is one no connection reaches.
+    const socket = gone ? new net.Socket() : connect(...args);
+    if (gone) {
+      setImmediate(() => socket.destroy(new Error("connect EHOSTUNREACH")));
+    }
+    asked.push(new Promise((resolve) => socket.once("close", resolve)));
+    return socket;
+  };
+  t.after(() => (net.connect = connect));
+  stub.messages.length = 0;
+  const beats = async (n) => {
+    for (let i = 0; i < n; i++) {
+      t.mock.timers.tick(1000);
+      await sleep(5);
+    }
+  };
+  // A busy process: its host takes a connection, and it keeps its own.
+  await beats(2);
+  assert.strictEqual(asked.length, 0, "its host was asked before the third beat");
+  await beats(1);
+  assert.strictEqual(asked.length, 1);
+  await asked[0];
+  await sleep(20);
+  assert.strictEqual(live.activeLabel(), "a");
+  assert.deepStrictEqual(stub.messages, []);
+  assert.strictEqual(a.logins.length, 1, "asking the host logged in to the process");
+  gone = true;
+  await beats(3);
+  assert.strictEqual(asked.length, 2);
+  await until(() => live.activeLabel() === undefined);
+  assert.deepStrictEqual(stub.messages, [["warning", "q-lint: the connection to a closed."]]);
+});
+
 // Between an auto-reconnect's tries nothing was connecting, so a query
 // asked which process to connect to, and the pick ended the reconnect (#2132).
 test("a query run between an auto-reconnect's tries waits for it, and runs on the process reconnected to (#2132)", async (t) => {

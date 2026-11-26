@@ -65,6 +65,10 @@ export interface Target {
 
 /// How long a connect may take before it is given up.
 export const CONNECT_TIMEOUT_MS = 10_000;
+/// How long a connection is idle before TCP asks the other end whether it
+/// is there: a network gone with no word - a VPN down, a laptop asleep -
+/// closes the connection then, where nothing else ever would (#3031).
+export const KEEPALIVE_MS = 30_000;
 /// Compression, timestamps and timespans, and GUIDs: what a kdb+ 3 client
 /// announces.
 const CAPABILITY = 3;
@@ -138,6 +142,24 @@ export function dialHost(host: string): string {
   return /^localhost\.?$/i.test(host.trim()) ? "127.0.0.1" : host;
 }
 
+/// Whether `host` takes a TCP connection at `port` within `timeoutMs`: one
+/// closed with nothing sent, which the process sees as no client (at most
+/// a `.z.pc` of handle 0). The host of a process busy with a query takes
+/// it; one the network no longer reaches does not (#3031).
+export function reachable(host: string, port: number, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: dialHost(host), port });
+    const done = (answer: boolean): void => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(answer);
+    };
+    const timer = setTimeout(() => done(false), timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
 /// `reval` refusing the cache of a partitioned table's counts, `.Q.PN`,
 /// which q fills on the first count of one (#2647).
 const PN_REFUSAL = /^noupdate: `\.Q `PN$/;
@@ -181,6 +203,7 @@ export class QConnection {
   direct: () => DirectMode | undefined = () => undefined;
 
   private constructor(private readonly socket: net.Socket) {
+    socket.setKeepAlive(true, KEEPALIVE_MS);
     socket.on("data", (chunk) => this.received(chunk));
     socket.on("close", () => this.closedNow());
     // An error is followed by a close, which is what callers hear.

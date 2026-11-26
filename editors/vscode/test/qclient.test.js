@@ -353,6 +353,35 @@ test("a host that takes no connection fails as unreachable, apart from a process
   assert.strictEqual(gone.message, "10.255.255.1:5000 could not be reached in 0.1 s");
 });
 
+// A network gone with no FIN or RST left the socket open for ever: nothing
+// asked whether the other end was still there.
+test("a connection has TCP keepalive on, and a host is asked whether it takes a connection at all (#3031)", async (t) => {
+  const { KEEPALIVE_MS, reachable } = require("../out/qclient.js");
+  const kept = [];
+  const setKeepAlive = net.Socket.prototype.setKeepAlive;
+  net.Socket.prototype.setKeepAlive = function (...args) {
+    kept.push(args);
+    return setKeepAlive.apply(this, args);
+  };
+  t.after(() => (net.Socket.prototype.setKeepAlive = setKeepAlive));
+  // A process busy with a query: connected to, it answers nothing more.
+  const sockets = [];
+  const busy = net.createServer((s) => (sockets.push(s), s.once("data", () => s.write(Buffer.from([3])))));
+  await new Promise((r) => busy.listen(0, "127.0.0.1", r));
+  const { port } = busy.address();
+  const connection = await QConnection.open({ host: "127.0.0.1", port });
+  assert.deepStrictEqual(kept, [[true, KEEPALIVE_MS]]);
+  assert.strictEqual(await reachable("localhost", port, 500), true);
+  // Its host takes no connection: gone, where the open socket says nothing.
+  await new Promise((r) => busy.close(r), sockets.forEach((s) => s.destroy()));
+  connection.abort();
+  assert.strictEqual(await reachable("127.0.0.1", port, 500), false);
+  const connect = net.connect;
+  t.after(() => (net.connect = connect));
+  net.connect = () => new net.Socket();
+  assert.strictEqual(await reachable("10.255.255.1", 5000, 50), false);
+});
+
 test("a connect with no time limit waits for the process until it is cancelled", { timeout: 10_000 }, async (t) => {
   // A process busy with a query accepts a connection and answers the
   // handshake only once it is free: a reconnect after Abort waits for that.

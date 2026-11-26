@@ -72,11 +72,11 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, reachable, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, serverTypesProblem, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
-import { HEARTBEAT, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
+import { HEARTBEAT, MISSED_BEATS, STEADY_MS, UNANSWERED_MS, backoffDelay, latencyText, readHealth } from "./health";
 import { clearedStamp, historyHeading, historyLabel, iconsEscaped, mergedHistory, parseQueryHistory, plainMessage } from "./history";
 import { render } from "./query";
 import { QueryModes, type PageLater, type Rendered } from "./resultpanel";
@@ -678,6 +678,8 @@ export class Live {
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private latency: { millis: number; at: number } | undefined;
   private beatSent: number | undefined;
+  /// How many later heartbeats found that one still unanswered (#3031).
+  private beatsMissed = 0;
   /// The connection the heartbeat was last started for: started again on
   /// the same one, a beat still unanswered stays shown (#1710).
   private beatOn: QConnection | undefined;
@@ -2922,11 +2924,13 @@ export class Live {
   private async beat(): Promise<void> {
     if (this.beatSent !== undefined) {
       this.showStatus();
+      void this.beatMissed();
       return;
     }
     const sent = Date.now();
     const call = this.borrow(async (connection) => {
       this.beatSent = sent;
+      this.beatsMissed = 0;
       try {
         await connection.evaluate(HEARTBEAT);
       } catch (error) {
@@ -2963,6 +2967,26 @@ export class Live {
         this.beatSent = undefined;
       }
       this.showStatus();
+    }
+  }
+
+  /// A heartbeat is still unanswered at a later one's time. The process is
+  /// busy - q answers one message at a time - or the network dropped with
+  /// no word, which leaves the connection open for ever and every query on
+  /// it waiting. At each `MISSED_BEATS`th, its host is asked for a TCP
+  /// connection: a busy process's host gives one, and the connection stays;
+  /// one that gives none has its connection closed as dropped, which the
+  /// automatic reconnect follows (#3031). Not through an SSH tunnel, whose
+  /// near end always answers: ssh closes a tunnel that is gone.
+  private async beatMissed(): Promise<void> {
+    const connection = this.connection;
+    const process = this.active;
+    const sent = this.beatSent;
+    if (++this.beatsMissed % MISSED_BEATS !== 0 || connection === undefined || process === undefined || process.ssh !== undefined) {
+      return;
+    }
+    if (!(await reachable(process.host, process.port)) && this.connection === connection && this.beatSent === sent && connection.isOpen) {
+      connection.abort();
     }
   }
 

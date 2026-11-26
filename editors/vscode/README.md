@@ -1272,7 +1272,12 @@ bar shows its round trip: `q: rdb 3 ms`. It defines nothing on the process,
 and a q error back (a gateway that refuses the string) still counts as an
 answer. It is skipped while a query or the Process Explorer's read is out,
 and a query sent while one is out waits for it; one unanswered for 5 seconds
-shows as `no answer 12s` - the process is busy, or gone. A process that logs
+shows as `no answer 12s` - the process is busy, or gone. Which, q-lint asks
+at every third heartbeat that finds one still out: its host is dialled, and
+a host that takes no connection - a VPN down, a network gone without a
+word - has the connection closed as dropped, where a busy process keeps
+it. Every connection also has TCP keepalive on, so one idle on a dead
+network closes without a heartbeat. A process that logs
 its clients sees every heartbeat. With
 `q-lint.connection.autoReconnect.enable` on, a connection the process or the
 network drops is reconnected: the status bar shows `reconnecting to rdb (2
