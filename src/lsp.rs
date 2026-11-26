@@ -3014,9 +3014,12 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     if above.contains("@param") || above.contains("@return") {
         return None;
     }
+    // An empty slot, the second of `{[a;] a}`, has no name to document
+    // (#2779).
     let mut block: String = definition
         .params
         .iter()
+        .filter(|param| !param.is_empty())
         .map(|param| format!("/ @param {param}\n"))
         .collect();
     block.push_str("/ @return\n");

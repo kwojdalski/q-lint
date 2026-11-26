@@ -593,6 +593,19 @@ fn a_qdoc_block_is_written_above_a_function_from_its_parameters() {
     }
 }
 
+/// An empty slot has no name: no `/ @param ` line with nothing after it,
+/// and no hint that is a colon alone (#2779).
+#[test]
+fn an_empty_parameter_slot_is_neither_documented_nor_hinted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let uri = server.open(dir.path(), "a.q", "f:{[a;] a}\nr:f[1;2]\n");
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(qdoc(&actions, &uri).unwrap().1, "/ @param a\n/ @return\n");
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(hints(&reply), [hint(1, 4, "a:")], "{reply}");
+}
+
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();

@@ -212,7 +212,9 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         for (&(start, len), param) in call.arguments.iter().zip(declared.iter()) {
-            if len == 0 || text[start..start + len] == **param {
+            // An empty slot, the second of `{[a;] a}`, names nothing
+            // (#2779).
+            if len == 0 || param.is_empty() || text[start..start + len] == **param {
                 continue;
             }
             hints.push(json!({
