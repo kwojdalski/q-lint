@@ -1167,10 +1167,16 @@ fn global_writes(
         blanked = at;
     }
     let code = std::str::from_utf8(&view).unwrap_or(code);
+    // Nor does a symbol or a system command assign: `` `:localhost:5000 ``
+    // and `` `a:b:c `` are one symbol each, and after `\t:100 1+1` and
+    // `\l c:/q/lib.q` q 5 has no `localhost`, `b`, `t` or `c` (#2775, #2776).
+    // The expression `\t` times is q and does: `\t:10 aa:1` defines `aa`.
+    // Both stay in `code`, where `` `n set `` and `\l` are read below.
+    let written = crate::unsymbolled(&commands_blanked(code, raw));
     let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
-    for a in assignment.captures_iter(code) {
+    for a in assignment.captures_iter(&written) {
         let m = a.get(0).unwrap();
-        if !boundary(code, m.start()) {
+        if !boundary(&written, m.start()) {
             continue;
         }
         // `::` assigns a parameter or local where the lambda has one: q 5
@@ -1214,10 +1220,10 @@ fn global_writes(
     // `/:` and `\:` are adverbs, `_` and `.` continue a name, and `::` is a
     // view or a global assignment, which the pass above holds.
     for a in re!(r"(\.?[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*[-+*%&|^=<>,#~!?@$]:")
-        .captures_iter(code)
+        .captures_iter(&written)
     {
         let m = a.get(0).unwrap();
-        if !boundary(code, m.start()) || code[m.end()..].starts_with(':') {
+        if !boundary(&written, m.start()) || written[m.end()..].starts_with(':') {
             continue;
         }
         let local = scope_at(scopes, m.start()).is_some_and(|s| scopes[s].locals.contains(&a[1]));
