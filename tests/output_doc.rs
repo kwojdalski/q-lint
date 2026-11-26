@@ -74,6 +74,62 @@ fn every_statistics_field_is_documented() {
     assert_eq!(want, got);
 }
 
+/// The exit code under `--statistics` was documented as 1 with any finding;
+/// rows that count only `information` or `hint` findings exit 0, as the run
+/// without `--statistics` does (#2768).
+#[test]
+fn statistics_exits_as_documented_when_no_finding_fails_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), "f:{[count] count+1}\n").unwrap();
+    let exit = |severity: &str| {
+        std::fs::write(
+            dir.path().join("qlinter.toml"),
+            format!("[severity]\nQF001 = \"{severity}\"\n"),
+        )
+        .unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(dir.path())
+            .env("XDG_CONFIG_HOME", dir.path().join("no-such-config-home"))
+            .args(["--statistics", "--format", "json", "a.q"])
+            .output()
+            .unwrap();
+        let rows: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(rows[0]["code"], "QF001", "{severity}");
+        out.status.code()
+    };
+    assert_eq!(
+        ["error", "warning", "information", "hint"].map(exit),
+        [Some(1), Some(1), Some(0), Some(0)]
+    );
+    let doc = include_str!("../docs/output.md").replace("\r\n", "\n");
+    assert!(!doc.contains("0 with none, 1 with any"));
+    assert!(
+        doc.contains(
+            "1 when any of them is an\n`error` or a `warning`, 0 otherwise - with none, or with rows that count only\n`information` and `hint` findings."
+        ),
+        "docs/output.md lost its exit code under --statistics"
+    );
+}
+
+#[test]
+fn every_show_settings_field_is_documented_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.q"), "a:1\n").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--show-settings", "--format", "json", "a.q"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let printed = String::from_utf8(out.stdout).unwrap();
+    let one = printed
+        .trim_end()
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or_else(|| panic!("{printed}"));
+    assert_eq!(documented("settings-fields"), keys_in_order(one));
+}
+
 #[test]
 fn the_documented_example_is_what_the_cli_prints() {
     let dir = tempfile::tempdir().unwrap();

@@ -118,7 +118,7 @@ struct Args {
     /// Report what does not run on this q release: `3.6`, `4.0`, `4.1` or
     /// `kdbx` (the QK rules). Wins over `target-version` in a configuration
     /// file; without either, the QK rules report nothing.
-    #[arg(long, value_parser = ["3.6", "4.0", "4.1", "kdbx"])]
+    #[arg(long, value_parser = target_version)]
     target_version: Option<String>,
     /// Report only the findings not in this baseline file, which
     /// `--write-baseline` writes. Wins over `baseline` in a configuration.
@@ -304,24 +304,46 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     })
 }
 
+/// `--target-version`'s value: any spelling `target-version` takes in a
+/// configuration - `KDB-X`, `kdb-x` and `5` as well as `kdbx` - so a value
+/// that works in the file is not refused on the command line (#2749).
+fn target_version(text: &str) -> Result<String, String> {
+    match q_lint_rs::Target::parse(text) {
+        Some(_) => Ok(text.to_string()),
+        None => Err(format!(
+            "it must be one of {}",
+            q_lint_rs::Target::NAMES.join(", ")
+        )),
+    }
+}
+
 /// Refuse a run whose `flag` would write `target` over a file it reads.
 ///
 /// Every flag that writes a file goes through this one check, before
 /// anything is written, so a refused run exits 2 and leaves the file as it
 /// was: `--write-baseline o.q`, with `o.q` taken for the flag's value and
 /// the tree linted, would otherwise replace the source with JSON (#2115).
-fn refuse_overwrite(flag: &str, target: Option<&Path>, inputs: &[PathBuf]) -> Result<(), String> {
+fn refuse_overwrite(
+    flag: &str,
+    target: Option<&Path>,
+    inputs: &[PathBuf],
+    what: &str,
+) -> Result<(), String> {
     let Some(target) = target else {
         return Ok(());
     };
     if inputs.iter().any(|f| same_file(target, f)) {
-        return Err(format!(
-            "{flag} {}: it is one of the files to lint",
-            target.display()
-        ));
+        return Err(format!("{flag} {}: it is {what}", target.display()));
     }
     Ok(())
 }
+
+/// What `refuse_overwrite` calls a source the run lints.
+const LINTED: &str = "one of the files to lint";
+/// And a file the run is configured by, which is as much one it reads: a
+/// report written over the baseline in force left every later run refusing
+/// it, and one over `qlinter.toml` left no configuration (#2751).
+const CONFIGURED_BY: &str = "a configuration or a baseline this run reads";
 
 /// Whether two paths reach one file on disk: compared as files, not names,
 /// so a symlink to a source, a hard link, or another case of its name on a
@@ -343,6 +365,14 @@ fn reached(walked: &Path, link: &Path) -> bool {
         (Ok(walked), Ok(target)) => target.starts_with(walked),
         _ => false,
     }
+}
+
+/// Whether a file a flag writes is named as q source is: `.q`, `.k` or `.qnb`.
+/// A run never writes one, read or not - the name is far more often a path
+/// to lint that the flag took for its value than a file meant for it.
+fn named_as_source(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
 /// Whether a path names q source.
@@ -477,7 +507,13 @@ fn run(args: Args) -> Result<u8, String> {
         let stdout = io::stdout();
         return lsp::serve(io::BufReader::new(io::stdin()), &mut stdout.lock(), &policy);
     }
-    if let Some(file) = &args.output_file {
+    // A run that prints no report makes no report file: `--write-baseline`
+    // and `--add-noqa` say what they did on standard error, and the file
+    // made empty for them was no JSON for whoever asked for it (#2753).
+    if let Some(file) = &args.output_file
+        && args.write_baseline.is_none()
+        && !args.add_noqa
+    {
         let _ = OUTPUT_PATH.set(file.clone());
     }
     if args.rules || args.explain.is_some() {
@@ -572,6 +608,14 @@ fn run(args: Args) -> Result<u8, String> {
     }
     let policy = Policy::new(overrides(&args)?, false);
     if args.show_settings {
+        // As `--rules` does: text printed under `--format json` is nothing
+        // the script that asked for JSON can read (#2760).
+        if !matches!(args.format.as_str(), "text" | "json") {
+            return Err(format!(
+                "--format {} reports findings; --show-settings prints text or json",
+                args.format
+            ));
+        }
         // The buffer an editor pipes is the file it asks about (#806),
         // named `-` or not, as Ruff's `--stdin-filename X -` names it.
         let only_stdin = args.paths.is_empty() || args.paths == [Path::new("-")];
@@ -582,6 +626,7 @@ fn run(args: Args) -> Result<u8, String> {
         } else {
             args.paths.clone()
         };
+        let mut described = vec![];
         for path in &paths {
             // A directory is described as a file inside it would be, so its
             // own configuration counts.
@@ -590,7 +635,14 @@ fn run(args: Args) -> Result<u8, String> {
             } else {
                 path.to_path_buf()
             };
-            out!("{}\n", policy.describe(&probe, &args.backend)?);
+            described.push(policy.describe(&probe, &args.backend)?);
+        }
+        if args.format == "json" {
+            out!("{}", serde_json::to_string(&described).unwrap());
+        } else {
+            for one in &described {
+                out!("{one}\n");
+            }
         }
         return Ok(0);
     }
@@ -721,15 +773,67 @@ fn run(args: Args) -> Result<u8, String> {
             }
         }
     }
-    refuse_overwrite("--output-file", args.output_file.as_deref(), &inputs)?;
-    refuse_overwrite("--write-baseline", args.write_baseline.as_deref(), &inputs)?;
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        &inputs,
+        LINTED,
+    )?;
+    refuse_overwrite(
+        "--write-baseline",
+        args.write_baseline.as_deref(),
+        &inputs,
+        LINTED,
+    )?;
+    // One file named to both was written as the baseline, then emptied as
+    // the report, by a run that said it wrote the baseline (#2753).
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        args.write_baseline.as_slice(),
+        "the baseline --write-baseline writes",
+    )?;
+    let read = policy.reads(&inputs);
+    refuse_overwrite(
+        "--output-file",
+        args.output_file.as_deref(),
+        &read,
+        CONFIGURED_BY,
+    )?;
+    // The baseline in force is the one file here `--write-baseline` is for,
+    // and reading none, it has none; the configuration it does read was
+    // replaced with JSON, a `pyproject.toml` with its `[project]` (#2752).
+    refuse_overwrite(
+        "--write-baseline",
+        args.write_baseline.as_deref(),
+        &read,
+        "a configuration this run reads",
+    )?;
     if let Some(file) = &args.write_baseline
         && file
             .extension()
-            .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+            .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
+    {
+        return Err(format!(
+            "--write-baseline {}: a baseline is JSON, not a configuration; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
+    }
+    if let Some(file) = args
+        .write_baseline
+        .as_deref()
+        .filter(|f| named_as_source(f))
     {
         return Err(format!(
             "--write-baseline {}: a baseline is JSON, not q source; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
+    }
+    // The same slip with `--output-file a.q b.q`: `a.q` is the flag's
+    // value, no input, and was replaced by the report on `b.q` (#2764).
+    if let Some(file) = args.output_file.as_deref().filter(|f| named_as_source(f)) {
+        return Err(format!(
+            "--output-file {}: a report is not q source; name it as one, such as report.txt",
             file.display()
         ));
     }
@@ -893,8 +997,15 @@ fn run(args: Args) -> Result<u8, String> {
     // are reported, and the run ends in 2 (#2871).
     let mut silent = false;
     if args.backend != "builtin" {
+        // qls reports on its own; the configuration still decides what is
+        // shown, file by file as it does for the built-in rules.
+        let mut external: std::collections::HashMap<String, Vec<_>> = Default::default();
         match qls::lint(sources.clone(), &args.qls_executable, args.qls_timeout) {
-            Ok(found) => findings.extend(found),
+            Ok(found) => {
+                for f in found {
+                    external.entry(f.path.clone()).or_default().push(f);
+                }
+            }
             Err(e) if args.backend == "all" => {
                 eprintln!("qlinter: {e}; reporting the builtin findings only");
                 silent = true;
@@ -902,15 +1013,13 @@ fn run(args: Args) -> Result<u8, String> {
             }
             Err(e) => return Err(e),
         }
-    }
-    // qls reports on its own; the configuration still decides what is shown.
-    let mut kept = vec![];
-    for f in findings {
-        if policy.enabled(&f.code, Path::new(&f.path))? {
-            kept.push(f);
+        for (path, source) in &sources {
+            if let Some(mut found) = external.remove(path) {
+                policy.adopt(source, path, &mut found)?;
+                findings.extend(found);
+            }
         }
     }
-    let mut findings = kept;
     findings.sort_by(|a, b| {
         (&a.path, a.line, a.column, &a.source, &a.rule)
             .cmp(&(&b.path, b.line, b.column, &b.source, &b.rule))
@@ -932,10 +1041,14 @@ fn run(args: Args) -> Result<u8, String> {
         }
         let text = baseline::render(file, &findings, &sources);
         fs::write(file, text).map_err(|e| format!("{}: {e}", file.display()))?;
+        // The files the baseline holds, not every file linted: a clean one
+        // has no row in it (#2770).
+        let files: std::collections::BTreeSet<&str> =
+            findings.iter().map(|f| f.path.as_str()).collect();
         eprintln!(
             "qlinter: wrote {} finding(s) in {} file(s) to the baseline {}",
             findings.len(),
-            sources.len(),
+            files.len(),
             file.display()
         );
         return Ok(if failed { 2 } else { 0 });
@@ -1571,11 +1684,13 @@ impl Paint {
     fn for_stdout(flag: &str) -> Self {
         use std::io::IsTerminal;
         let on = match flag {
+            // Text written to a file is never coloured: `--color always` is
+            // for the log a CI job prints, not the report it keeps (#2763).
+            _ if OUTPUT_PATH.get().is_some() => false,
             "always" => true,
             "never" => false,
-            // A file is never a terminal, whatever stdout is.
             _ => auto_colour(
-                std::io::stdout().is_terminal() && OUTPUT_PATH.get().is_none(),
+                std::io::stdout().is_terminal(),
                 std::env::var_os("NO_COLOR").as_deref(),
             ),
         };

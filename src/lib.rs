@@ -6817,6 +6817,18 @@ fn utf16(path: &str, source: &str) -> Option<Finding> {
     Some(finding)
 }
 
+/// Every QE001 a file has, each `noqa` applied, where `lint_every_rule`
+/// reports the first and stops: for a caller that passes over some of them
+/// itself - a baseline - to report the next, as a `noqa` on one does
+/// (#2750).
+pub fn structure_findings(source: &str, path: &str) -> Vec<Finding> {
+    let _lines = LineScope::install(source);
+    let v = views(source);
+    let mut out = structure(path, source, &v);
+    suppress(&mut out, source, &v);
+    out
+}
+
 fn lint_rules(
     source: &str,
     path: &str,

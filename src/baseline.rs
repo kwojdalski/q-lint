@@ -39,8 +39,17 @@ pub struct Baseline {
 pub(crate) struct SourceLines<'a>(Vec<&'a str>);
 
 impl<'a> SourceLines<'a> {
+    /// A leading BOM is no part of line 1's text, as it is no column of it
+    /// (#2097): QE005's own fix removes it, and a finding on line 1 is the
+    /// same finding after (#2759).
     pub(crate) fn new(source: &'a str) -> Self {
-        SourceLines(source.lines().collect())
+        SourceLines(
+            source
+                .strip_prefix('\u{feff}')
+                .unwrap_or(source)
+                .lines()
+                .collect(),
+        )
     }
 
     /// The text a finding is matched on: its line, blanks trimmed, and a
@@ -58,15 +67,27 @@ impl<'a> SourceLines<'a> {
     }
 }
 
+/// A path's text with `/` between its parts. Only Windows separates them
+/// with `\`: anywhere else it is a character of a file's name, and `a\b.q`
+/// read as `a/b.q` names another file, one that is not there (#2766).
+pub(crate) fn slashed(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text.into_owned()
+    }
+}
+
 /// `path` relative to `root`, with `/`; as it is where it is not under it.
 /// Both are made absolute the same way: on Windows that adds the `\\?\`
 /// prefix, which one side alone would keep from matching the other.
 pub(crate) fn relative(root: &Path, path: &Path) -> String {
     let full = crate::config::absolute(path);
-    full.strip_prefix(crate::config::absolute(root))
-        .unwrap_or(&full)
-        .to_string_lossy()
-        .replace('\\', "/")
+    slashed(
+        full.strip_prefix(crate::config::absolute(root))
+            .unwrap_or(&full),
+    )
 }
 
 /// `path` as a baseline in `root` names it: relative, with `/`, and through
@@ -82,7 +103,7 @@ fn key_path(root: &Path, path: &Path) -> String {
         .take_while(|(a, b)| a == b)
         .count();
     if common == 0 {
-        return full.to_string_lossy().replace('\\', "/");
+        return slashed(&full);
     }
     let up = root.components().skip(common).map(|_| "..".to_string());
     let down = full
@@ -96,8 +117,11 @@ impl Baseline {
     pub fn read(file: &Path) -> Result<Baseline, String> {
         let shown = file.display();
         let text = fs::read_to_string(file).map_err(|e| format!("baseline {shown}: {e}"))?;
+        // A BOM is what a Windows editor saves a file with, and no JSON:
+        // passed over, as a configuration's is (#2758).
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
         let data: Value =
-            serde_json::from_str(&text).map_err(|e| format!("baseline {shown}: {e}"))?;
+            serde_json::from_str(text).map_err(|e| format!("baseline {shown}: {e}"))?;
         if data["qlinter-baseline"] != 1 {
             return Err(format!(
                 "baseline {shown}: not a qlinter baseline (no \"qlinter-baseline\": 1)"
@@ -113,6 +137,10 @@ impl Baseline {
                 ));
             };
             let n = f["count"].as_u64().unwrap_or(1) as usize;
+            // A baseline written before #2759 kept a BOM in line 1's text.
+            let line = line
+                .strip_prefix('\u{feff}')
+                .map_or(line, |rest| rest.trim_start());
             *counts
                 .entry((path.to_string(), code.to_string(), line.to_string()))
                 .or_insert(0) += n;

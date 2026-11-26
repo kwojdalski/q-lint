@@ -216,6 +216,62 @@ def test_real_qls():
     assert isinstance(json.loads(result.stdout), list)
 
 
+def test_qls_findings_are_baselined_and_take_a_severity(tmp_path):
+    """The configuration has the say over a qls finding it has over its own.
+
+    qls's findings joined the run after the baseline and `[severity]` had
+    been applied: `--write-baseline` wrote them and `--baseline` never took
+    them back, so each returned as new and failed the run (#2754), and a
+    severity for QLS001 was read and did nothing (#2755).
+    """
+    server = tmp_path / "fake qls"
+    server.write_text(f"#!{sys.executable}\nMODE='normal'\n" + SERVER)
+    server.chmod(0o755)
+    (tmp_path / "a.q").write_text("x:1\nBAD:2\n")
+    (tmp_path / "b.q").write_text("y:1\n")
+
+    def qls(*args, backend="all"):
+        result = run(
+            *args,
+            "--backend",
+            backend,
+            "--qls-executable",
+            server,
+            "--format",
+            "json",
+            "a.q",
+            "b.q",
+            cwd=tmp_path,
+        )
+        found = [(f["code"], f["severity"], f["line"]) for f in json.loads(result.stdout or "[]")]
+        return result.returncode, found, result.stderr
+
+    assert qls("--isolated") == (1, [("QLS001", "warning", 2)], "")
+    code, found, stderr = qls("--isolated", "--write-baseline", "base.json")
+    assert (code, found) == (0, []), stderr
+    assert "wrote 1 finding(s) in 1 file(s)" in stderr
+    assert '"code":"QLS001"' in (tmp_path / "base.json").read_text()
+    for backend in ("all", "qls"):
+        code, found, stderr = qls("--isolated", "--baseline", "base.json", backend=backend)
+        assert (code, found) == (0, []), (backend, stderr)
+        assert "1 finding(s) in the baseline not shown" in stderr, backend
+    # One more than the baseline holds is new, as it is for a built-in rule.
+    (tmp_path / "b.q").write_text("y:1\nBAD:3\n")
+    code, found, _ = qls("--isolated", "--baseline", "base.json")
+    assert (code, found) == (1, [("QLS001", "warning", 2)])
+    (tmp_path / "b.q").write_text("y:1\n")
+
+    (tmp_path / "qlinter.toml").write_text('[severity]\nQLS001 = "hint"\n')
+    for backend in ("all", "qls"):
+        assert qls(backend=backend) == (0, [("QLS001", "hint", 2)], ""), backend
+    (tmp_path / "qlinter.toml").write_text('[severity]\nQLS = "error"\n')
+    assert qls() == (1, [("QLS001", "error", 2)], "")
+    # A baseline named in the configuration is the one in force for them too.
+    (tmp_path / "qlinter.toml").write_text('baseline = "base.json"\n')
+    code, found, _ = qls()
+    assert (code, found) == (0, [])
+
+
 def test_only_q_files_are_linted_however_the_path_arrives(tmp_path):
     """`qlinter *` hands over whatever the shell expanded.
 

@@ -233,7 +233,11 @@ the one the run would give without it, and messages still go to standard
 error. Text written to a file is never coloured. A file the run reads is
 never the one it writes: one reached through a symlink or a hard link, or by
 another case of its name on a disk that ignores case, and the file
-`--stdin-filename` names, are refused with exit 2 and left as they were.
+`--stdin-filename` names, are refused with exit 2 and left as they were, and
+so are the configuration the run reads, a file that one extends and the
+baseline in force. So is a name that ends `.q`, `.k` or `.qnb`, read or not:
+`--output-file a.q b.q` is a path to lint taken for the flag's value far more
+often than a report meant for `a.q`.
 
 ### The dependency graph: `qlinter analyze graph`
 
@@ -323,9 +327,10 @@ are not in it, says on standard error how many it passed over, and exits 0
 when nothing is new. Name the file in a configuration, `baseline =
 "qlinter-baseline.json"`, and every run under it - the language server's
 included - uses it without the flag; `--write-baseline` reads no baseline, so
-it always writes everything. It never writes over a file the run lints, nor
-to a name ending `.q`, `.k` or `.qnb`: `qlinter --write-baseline o.q`, which
-lints the tree, is refused with exit 2 and leaves `o.q` as it was. Nor
+it always writes everything. It never writes over a file the run lints or a
+configuration it reads, nor to a name ending `.q`, `.k`, `.qnb` or `.toml`:
+`qlinter --write-baseline o.q`, which lints the tree, is refused with exit 2
+and leaves `o.q` as it was, and so is `--write-baseline pyproject.toml`. Nor
 does a run that could not read one of its inputs write anything: it exits 2
 and keeps the baseline there, which a partial one would replace.
 
@@ -337,7 +342,15 @@ new. A line that is edited is new, which is the point. Paths are written
 relative to the baseline file, so it means the same in every checkout. A
 baseline that is missing or is not one is an error (exit 2), not a run that
 silently reports everything; the language server says so once and shows
-every finding.
+every finding. A finding from qls (`--backend qls` or `all`) is written and
+passed over as a built-in rule's is.
+
+A file whose brackets do not balance reports its first QE001 and nothing
+else. A baseline that holds that QE001 accepts it as a `noqa` on its line
+would: the file's next QE001 reports, and behind the last of them every other
+rule, so what is new in the file is new. `--write-baseline` therefore writes
+what stands behind such a file's QE001 as well, more than the run without it
+prints, and reading the baseline back reports nothing.
 
 ### The q version check: `--target-version`
 
@@ -426,7 +439,8 @@ QS006 = "warning"    # except this one
 The text, `json`, `sarif` and `github` reports and the language server all
 show it, and only an `error` or a `warning` fails the run (exit 1). It changes
 how a finding is reported, never whether: that is `select` and `ignore`. An
-editor's own `lint.severity` overrides it again, for that user.
+editor's own `lint.severity` overrides it again, for that user. `QLS001` sets
+every qls finding, whatever severity qls gave it.
 
 `[rules.<CODE>]` holds a rule's own options, for the few rules with a
 threshold or a word list of their own:
@@ -455,7 +469,13 @@ which the VS Code extension hands Even Better TOML for completion and
 validation; a test keeps it equal to what qlinter reads.
 
 `exclude`, `extend-exclude`, `--exclude` and the keys of `per-file-ignores`
-are globs read the way Ruff reads them. A pattern with a `/` anywhere in it -
+are globs read the way Ruff reads them, and with the crate Ruff reads them
+with: `*` and `?` match any text and any one character, a `/` included;
+`[ab]` and `[a-z]` match one character of those and `[!a]` or `[^a]` one that
+is not; `{gen,vendor}` matches either name; and a `\` before any of these
+makes it a literal character (except on Windows, where `\` separates
+directories - write `[*]` there). A pattern that does not parse - `[bad`,
+`{gen,vendor` - is a configuration error. A pattern with a `/` anywhere in it -
 `lib/`, `./lib`, `src/gen/*.q`, a trailing slash included - is anchored at the
 configuration's directory (the current directory for `--exclude` and the
 user-level file), so `lib/` excludes the root's `lib` and not `tests/lib`. A
@@ -485,7 +505,8 @@ directory below that root - the configuration's directory, or the current
 one without a configuration (in the language server, the workspace folder
 holding the file, wherever the editor started it) - since a test may build a datetime or read the
 local clock on purpose. A `tests` above the root exempts nothing, and
-`--select` naming one of them reports it regardless.
+`--select` or `--extend-select` naming one of them by its own code reports it
+regardless; a prefix such as `QP` leaves the exemption standing, as `ALL` does.
 
 In `pyproject.toml` the same keys go under `[tool.qlinter]`, and
 `[tool.qlinter.lint]`. Also: `extend-exclude`, and `extend = "../qlinter.toml"`
@@ -500,7 +521,8 @@ The command line wins over the file: `--profile`, then `--select`,
 `--extend-select` and `--ignore` (comma-separated or repeated) applied after
 it, and `--exclude` added to it. `--config FILE` uses one file for everything,
 `--isolated` ignores them all, and `--show-settings PATH` prints which file
-governs a path and the rules it turns on. Exclusions apply before a file is
+governs a path, the `target-version` in force and the rules that report there.
+Exclusions apply before a file is
 read or sent to qls, to the files a directory walk finds: a file named on the
 command line is linted whatever `exclude` says, as in Ruff, unless
 `--force-exclude` is given - which pre-commit hooks and scripts that pass every

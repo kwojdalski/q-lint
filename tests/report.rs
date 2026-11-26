@@ -193,6 +193,28 @@ fn output_file_takes_the_report_and_leaves_the_exit_code() {
     assert!(err.contains("no/such/dir/r.out"), "{err}");
 }
 
+/// Text written to a file is never coloured, as the README says: a CI job
+/// that passes `--color always` for its log and keeps the report in a file
+/// once found escape codes in it (#2763).
+#[test]
+fn output_file_is_never_coloured() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), TWO).unwrap();
+    let (_, plain, _) = run(d, &["--color", "never", "a.q"]);
+    let (_, coloured, _) = run(d, &["--color", "always", "a.q"]);
+    assert!(coloured.contains('\x1b'), "{coloured}");
+    for colour in ["always", "auto", "never"] {
+        let (status, out, err) = run(
+            d,
+            &["--color", colour, "--output-file", "report.txt", "a.q"],
+        );
+        assert_eq!((status, out.as_str()), (Some(1), ""), "{colour}: {err}");
+        let written = fs::read_to_string(d.join("report.txt")).unwrap();
+        assert_eq!(written, plain, "{colour}");
+    }
+}
+
 /// The input an `--output-file` may not be is a file, not a name: a symlink
 /// to a source, a hard link to one, another case of its name on a disk that
 /// ignores case, and the file `--stdin-filename` lints the buffer as were
@@ -285,6 +307,97 @@ fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     assert_eq!(status, Some(2));
     assert!(err.contains("one of the files to lint"), "{err}");
     assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
+}
+
+/// A configuration and the baseline it names are files the run reads too:
+/// a report written over the baseline in force left every later run refusing
+/// it, and one over `qlinter.toml`, or a file it extends, left none (#2751).
+#[test]
+fn output_file_is_never_a_configuration_or_a_baseline_the_run_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let configured = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(d)
+            .env("XDG_CONFIG_HOME", d.join("no-user-config"))
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    fs::write(d.join("a.q"), TWO).unwrap();
+    fs::write(d.join("base.toml"), "profile = \"uqf\"\n").unwrap();
+    let config = "extend = \"base.toml\"\nbaseline = \"known.json\"\n";
+    fs::write(d.join("qlinter.toml"), config).unwrap();
+    let (status, err) = configured(&["--write-baseline", "known.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    let known = fs::read_to_string(d.join("known.json")).unwrap();
+    for (target, holds) in [
+        ("known.json", known.as_str()),
+        ("qlinter.toml", config),
+        ("./base.toml", "profile = \"uqf\"\n"),
+    ] {
+        let (status, err) = configured(&["--format", "json", "--output-file", target, "a.q"]);
+        assert_eq!(status, Some(2), "{target}: {err}");
+        assert!(
+            err.contains("a configuration or a baseline this run reads"),
+            "{target}: {err}"
+        );
+        assert_eq!(fs::read_to_string(d.join(target)).unwrap(), holds);
+    }
+    // The file `--config` and `--baseline` name, as much as one found.
+    fs::write(d.join("other.toml"), "profile = \"uqf\"\n").unwrap();
+    let (status, err) = configured(&[
+        "--config",
+        "other.toml",
+        "--output-file",
+        "other.toml",
+        "a.q",
+    ]);
+    assert_eq!(status, Some(2), "{err}");
+    let (status, err) = configured(&[
+        "--isolated",
+        "--baseline",
+        "known.json",
+        "--output-file",
+        "known.json",
+        "a.q",
+    ]);
+    assert_eq!(status, Some(2), "{err}");
+    assert_eq!(fs::read_to_string(d.join("known.json")).unwrap(), known);
+    // One the run does not read is a file like any other.
+    let (status, err) = configured(&["--isolated", "--output-file", "base.toml", "a.q"]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(
+        fs::read_to_string(d.join("base.toml"))
+            .unwrap()
+            .contains("QS001")
+    );
+}
+
+/// `--output-file a.q b.q` is `--output-file` with a path to lint taken for
+/// its value: `a.q` is no input, so nothing refused it and the report on
+/// `b.q` replaced it (#2764). A name that looks like source is refused, as
+/// `--write-baseline` refuses one, and nothing is written.
+#[test]
+fn output_file_is_never_named_as_q_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "f:{x+1}\n").unwrap();
+    fs::write(d.join("b.q"), TWO).unwrap();
+    let (status, _, err) = run(d, &["--output-file", "a.q", "b.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(err.contains("a report is not q source"), "{err}");
+    assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), "f:{x+1}\n");
+    for name in ["new.q", "new.K", "new.qnb"] {
+        let (status, _, err) = run(d, &["--output-file", name, "b.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains("a report is not q source"), "{name}: {err}");
+        assert!(!d.join(name).exists(), "{name}");
+    }
 }
 
 /// An editor, and GitHub's file view, hide a leading BOM and count no column
@@ -446,4 +559,27 @@ fn rules_and_explain_refuse_what_they_would_ignore() {
     let (status, out, _) = run(d, &["--rules"]);
     assert_eq!(status, Some(0));
     assert!(out.lines().count() > 100, "{out}");
+}
+
+/// Off Windows `\` is a character of a file's name, not what separates its
+/// directories: `a\b.q` is reported as itself, not as `a/b.q`, a file that
+/// is not there for an annotation to land on (#2766). A baseline keeps it
+/// too, so a file of each name is told from the other.
+#[cfg(unix)]
+#[test]
+fn a_backslash_in_a_file_name_stays_one_in_every_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a\\b.q"), TWO).unwrap();
+    let (status, out, err) = run(d, &["--format", "github", "."]);
+    assert_eq!(status, Some(1), "{err}");
+    assert!(out.starts_with("::warning file=a\\b.q,line=1"), "{out}");
+    let (_, out, err) = run(d, &["--format", "sarif", "."]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap_or_else(|_| panic!("{err}"));
+    let loc = &report["runs"][0]["results"][0]["locations"][0]["physicalLocation"];
+    assert_eq!(loc["artifactLocation"]["uri"], "a%5Cb.q", "{loc}");
+    let (status, _, err) = run(d, &["--write-baseline", "base.json", "."]);
+    assert_eq!(status, Some(0), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    assert!(written.contains(r#""path":"a\\b.q""#), "{written}");
 }

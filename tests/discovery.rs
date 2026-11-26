@@ -196,6 +196,93 @@ fn exclude_patterns_are_relative_to_the_configuration_and_a_bare_name_matches_an
     assert!(paths[0].ends_with("lib/l.q"), "{paths:?}");
 }
 
+/// A pattern is read the way Ruff reads one, with the crate it reads them
+/// with. `{gen,vendor}` named one file of that name, so it excluded and
+/// ignored nothing; `[^x]` was `^` or `x`, the reverse of anything but `x`;
+/// and `a**.q` was refused. None of it was said (#2746).
+#[test]
+fn a_pattern_takes_alternatives_and_a_negated_class_as_ruffs_does() {
+    let repo = Repo::new();
+    for file in [
+        "a.q",
+        "ab.q",
+        "x.q",
+        "gen/a.q",
+        "gen/deep/a.q",
+        "vendor/a.q",
+        "src/a.q",
+        "src/gen/a.q",
+    ] {
+        repo.write(file, SOURCE);
+    }
+    let excluding = |patterns: &str| {
+        repo.write("qlinter.toml", &format!("exclude = [{patterns}]\n"));
+        linted(&repo, &["."])
+    };
+    assert_eq!(
+        excluding("\"{gen,vendor}\""),
+        ["a.q", "ab.q", "src/a.q", "x.q"]
+    );
+    assert_eq!(
+        excluding("\"gen\", \"vendor\""),
+        excluding("\"{gen,vendor}\"")
+    );
+    // With a `/` it is anchored at the root, as any pattern is.
+    assert_eq!(
+        excluding("\"{gen,vendor}/*\""),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    assert_eq!(
+        excluding("\"src/{gen,none}/**\""),
+        [
+            "a.q",
+            "ab.q",
+            "gen/a.q",
+            "gen/deep/a.q",
+            "src/a.q",
+            "vendor/a.q",
+            "x.q"
+        ]
+    );
+    assert_eq!(excluding("\"[^x].q\""), ["ab.q", "x.q"]);
+    assert_eq!(excluding("\"[!x].q\""), excluding("\"[^x].q\""));
+    assert_eq!(excluding("\"a**.q\""), ["x.q"]);
+    // `--exclude` reads one the same way, an absolute one included.
+    repo.write("qlinter.toml", "");
+    assert_eq!(
+        linted(&repo, &["--exclude", "{gen,vendor}", "."]),
+        ["a.q", "ab.q", "src/a.q", "x.q"]
+    );
+    let absolute = repo.path(".").canonicalize().unwrap().join("{gen,vendor}");
+    assert_eq!(
+        linted(&repo, &["--exclude", absolute.to_str().unwrap(), "."]),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    // And so are the keys of per-file-ignores, negated or not.
+    let ignoring = |key: &str| {
+        let config = format!("[lint.per-file-ignores]\n\"{key}\" = [\"ALL\"]\n");
+        repo.write("qlinter.toml", &config);
+        linted(&repo, &["."])
+    };
+    assert_eq!(
+        ignoring("{gen,vendor}/*"),
+        ["a.q", "ab.q", "src/a.q", "src/gen/a.q", "x.q"]
+    );
+    assert_eq!(
+        ignoring("!{gen,vendor}/*"),
+        ["gen/a.q", "gen/deep/a.q", "vendor/a.q"]
+    );
+    // A group left open is an error, not a name nothing has.
+    repo.write("qlinter.toml", "exclude = [\"{gen,vendor\"]\n");
+    let out = run(&repo.path("."), &["."]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("exclude: {gen,vendor: unclosed alternate group"),
+        "{stderr}"
+    );
+}
+
 /// The files a run from the repository root reports on, relative to it.
 fn linted(repo: &Repo, args: &[&str]) -> Vec<String> {
     linted_from(repo, ".", args)
@@ -455,7 +542,7 @@ fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
         ),
         (
             "exclude = [\"[bad\"]\n",
-            "exclude: [bad: Pattern syntax error",
+            "exclude: [bad: unclosed character class",
         ),
         (
             "[lint.per-file-ignores]\n\"a.q\" = [\"QZ\"]\n",
@@ -463,7 +550,7 @@ fn a_bad_selector_or_glob_in_a_configuration_names_the_file() {
         ),
         (
             "[lint.per-file-ignores]\n\"[bad\" = [\"QF\"]\n",
-            "per-file-ignores: [bad: Pattern",
+            "per-file-ignores: [bad: unclosed character class",
         ),
     ] {
         let repo = Repo::new();
@@ -521,6 +608,69 @@ fn show_settings_names_the_file_in_force() {
     assert!(text.contains("profile: style"), "{text}");
     assert!(!text.contains("QF016"), "{text}");
     assert!(text.contains("QE004"), "{text}");
+}
+
+/// `--show-settings --format json` is JSON, one object for each path: it
+/// printed the text whatever the format, which no `json.loads` reads, and
+/// took `sarif` and `github`, which `--rules` refuses (#2760).
+#[test]
+fn show_settings_prints_json_when_asked_and_refuses_a_findings_format() {
+    let repo = Repo::new();
+    repo.write(
+        "qlinter.toml",
+        "profile = \"style\"\ntarget-version = \"4.1\"\n[lint]\nselect = [\"QS001\", \"QF016\"]\n",
+    )
+    .write("src/a.q", SOURCE)
+    .write("b.q", SOURCE);
+    let out = run(&repo.path("."), &["--show-settings", "src/a.q", "b.q"]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.starts_with("[{\"file\":\""), "{text}");
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let shown: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let shown = shown.as_array().unwrap();
+    assert_eq!(shown.len(), 2, "{text}");
+    for (one, name) in shown.iter().zip(["a.q", "b.q"]) {
+        assert!(one["file"].as_str().unwrap().ends_with(name), "{one}");
+        let file = one["configuration"].as_str().unwrap();
+        assert!(file.ends_with("qlinter.toml"), "{one}");
+        assert_eq!(one["profile"], "style");
+        assert_eq!(one["target-version"], "4.1");
+        assert_eq!(one["rules"], serde_json::json!(["QF016", "QS001"]));
+    }
+    // No configuration and no target are `null`, not left out.
+    let out = run(&repo.path("."), &["--isolated", "--show-settings", "b.q"]);
+    let shown: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(shown[0]["configuration"].is_null(), "{shown}");
+    assert!(shown[0]["target-version"].is_null(), "{shown}");
+    assert_eq!(shown[0]["profile"], "uqf");
+    // `run` asks for JSON; these ask for another format, or for none.
+    let asked = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path("."))
+            .env("XDG_CONFIG_HOME", repo.path("no-such-config-home"))
+            .arg("--show-settings")
+            .args(args)
+            .arg("b.q")
+            .output()
+            .unwrap()
+    };
+    for format in ["sarif", "github"] {
+        let out = asked(&["--format", format]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(2), "{format}: {stderr}");
+        assert!(
+            stderr.contains("--show-settings prints text or json"),
+            "{format}: {stderr}"
+        );
+        assert!(out.stdout.is_empty(), "{format}");
+    }
+    // Text is what it prints unasked, and under `--format text`.
+    for args in [&[][..], &["--format", "text"]] {
+        let text = String::from_utf8(asked(args).stdout).unwrap();
+        assert!(text.starts_with("file: "), "{text}");
+        assert!(text.contains("\nrules (2): QF016 QS001\n"), "{text}");
+    }
 }
 
 #[test]
@@ -1335,6 +1485,46 @@ fn the_tests_exemption_from_qp002_counts_only_directories_below_the_root() {
     ));
 }
 
+/// The command line lifts the tests exemption for the rule it names by its
+/// code. A prefix lifted it too - `--select Q` and `--select QP` reported
+/// in `tests/` what `--select ALL`, which names the same rules, did not
+/// (#2757).
+#[test]
+fn the_tests_exemption_is_lifted_by_a_code_not_by_a_prefix_or_all() {
+    let repo = Repo::new();
+    repo.write("tests/x.q", "t:.z.Z\nu:.z.T\n")
+        .write("src/x.q", "t:.z.Z\nu:.z.T\n");
+    let clock = |args: &[&str], file: &str| -> Vec<String> {
+        let args = [&["--isolated"], args, &[file]].concat();
+        let mut codes = repo.codes(".", &args);
+        codes.retain(|c| c == "QP002" || c == "QP003");
+        codes
+    };
+    for selector in ["ALL", "Q", "QP", "QP00"] {
+        for flag in ["--select", "--extend-select"] {
+            assert_eq!(
+                clock(&[flag, selector], "tests/x.q"),
+                Vec::<String>::new(),
+                "{flag} {selector}"
+            );
+            assert_eq!(
+                clock(&[flag, selector], "src/x.q"),
+                ["QP002", "QP003", "QP003"],
+                "{flag} {selector}"
+            );
+        }
+    }
+    assert_eq!(clock(&["--select", "QP002"], "tests/x.q"), ["QP002"]);
+    assert_eq!(
+        clock(&["--select", "QP,QP003"], "tests/x.q"),
+        ["QP003", "QP003"]
+    );
+    assert_eq!(
+        clock(&["--extend-select", "QP002,QP003"], "tests/x.q"),
+        ["QP002", "QP003", "QP003"]
+    );
+}
+
 #[test]
 fn the_routine_mix_is_in_no_profile_and_reports_only_where_it_is_selected() {
     // QP007 is the mix school precedence reads as q does: no profile turns
@@ -1626,9 +1816,40 @@ fn show_settings_describes_the_stdin_filename_and_refuses_fix() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert_eq!(out.status.code(), Some(0), "{text}");
-    // Windows prints the path with its own separator.
-    assert!(text.replace('\\', "/").contains("tests/x.q"), "{text}");
+    // `run` asks for JSON, which `--show-settings` now prints (#2760): the
+    // path is read out of it, since searched for in the text it is not
+    // there on Windows, where JSON writes each `\` of it as two.
+    let file_of = |printed: &str| -> PathBuf {
+        let described: serde_json::Value =
+            serde_json::from_str(printed).unwrap_or_else(|e| panic!("{e}: {printed}"));
+        described[0]["file"].as_str().unwrap().into()
+    };
+    assert!(
+        file_of(&text).ends_with(Path::new("tests").join("x.q")),
+        "{text}"
+    );
     assert!(!text.contains("QE004"), "{text}");
+    // A `\` in a name is escaped the same way wherever it is one.
+    #[cfg(unix)]
+    {
+        let out = run(
+            &repo.path("."),
+            &["--show-settings", "--stdin-filename", "tests/x\\y.q"],
+        );
+        let escaped = String::from_utf8(out.stdout).unwrap();
+        assert!(escaped.contains(r"x\\y.q"), "{escaped}");
+        assert!(file_of(&escaped).ends_with("tests/x\\y.q"), "{escaped}");
+    }
+    // As text, Windows prints the path with its own separator.
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path("."))
+        .args(["--show-settings", "--stdin-filename", "tests/x.q"])
+        .output()
+        .unwrap();
+    let plain = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{plain}");
+    assert!(plain.replace('\\', "/").contains("tests/x.q"), "{plain}");
+    assert!(!plain.contains("QE004"), "{plain}");
     // Ruff's form, with the buffer named `-`, describes the same file (#1198).
     let out = run(
         &repo.path("."),

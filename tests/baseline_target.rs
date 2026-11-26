@@ -72,6 +72,80 @@ fn a_baseline_hides_todays_findings_and_shows_new_ones() {
     assert!(err.contains("wrote 2 finding(s)"), "{err}");
 }
 
+/// "N finding(s) in M file(s)" is what the baseline holds: M counted every
+/// file linted, so one finding in a tree of six read "in 6 file(s)", which
+/// the editor's Write Lint Baseline dialog repeated (#2770).
+/// A baseline accepts a QE001 as a `noqa` does: the next one reports, and
+/// behind the last every other rule. It passed over the QE001 and stopped
+/// there, so a file whose brackets did not balance on the day reported
+/// nothing at all, errors q refuses included, until they did (#2750).
+#[test]
+fn a_baselined_qe001_does_not_hide_what_is_new_in_its_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let isolated = |args: &[&str]| run(d, &[&["--isolated"], args].concat());
+    let code = |c: &str, line| (c.to_string(), line);
+    fs::write(d.join("a.q"), "x:(1;2\ng:{x+1}\n").unwrap();
+    let (status, _, err) = isolated(&["--write-baseline", "b.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 1 finding(s) in 1 file(s)"), "{err}");
+    let (status, found, err) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    let new = "x:(1;2\ng:{x+1}\nf:{[count] count}\nh:{[sum] sum}\n";
+    fs::write(d.join("a.q"), new).unwrap();
+    let (status, found, err) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!(
+        (status, found),
+        (Some(1), vec![code("QF001", 3), code("QF001", 4)]),
+        "{err}"
+    );
+    assert!(
+        err.contains("1 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+    // What `--ignore QE001` reports there, no more.
+    let (_, ignored, _) = isolated(&["--ignore", "QE001", "a.q"]);
+    assert_eq!(ignored, vec![code("QF001", 3), code("QF001", 4)]);
+    // A second bracket left open is new, and stops the file as the first did.
+    fs::write(d.join("a.q"), format!("{new}y:(3;4\n")).unwrap();
+    let (status, found, _) = isolated(&["--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(1), vec![code("QE001", 5)]));
+
+    // A baseline written over such a file holds what stands behind its
+    // QE001, which the run prints nothing of: read back, nothing is new.
+    let both = "x:(1;2\ng:{[count] count}\ny:(3;4\nk:{[sum] sum}\n";
+    fs::write(d.join("c.q"), both).unwrap();
+    let (_, found, _) = isolated(&["c.q"]);
+    assert_eq!(found, vec![code("QE001", 1)]);
+    let (status, _, err) = isolated(&["--write-baseline", "c.json", "c.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 4 finding(s) in 1 file(s)"), "{err}");
+    let (status, found, err) = isolated(&["--baseline", "c.json", "c.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    assert!(
+        err.contains("4 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+    fs::write(d.join("c.q"), format!("{both}m:{{[til] til}}\n")).unwrap();
+    let (status, found, _) = isolated(&["--baseline", "c.json", "c.q"]);
+    assert_eq!((status, found), (Some(1), vec![code("QF001", 5)]));
+}
+
+#[test]
+fn a_written_baseline_counts_the_files_it_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    for clean in ["b.q", "c.q", "d.q"] {
+        fs::write(d.join(clean), "a:1\n").unwrap();
+    }
+    let (status, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "."]);
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 2 finding(s) in 1 file(s)"), "{err}");
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "b.q"]);
+    assert!(err.contains("wrote 0 finding(s) in 0 file(s)"), "{err}");
+}
+
 #[test]
 fn a_baseline_names_a_file_outside_its_directory_through_dot_dot() {
     // So it matches in another checkout, not only at today's absolute path.
@@ -106,6 +180,56 @@ fn a_missing_or_broken_baseline_is_an_error_not_silence() {
     assert!(err.contains("not a qlinter baseline"), "{err}");
 }
 
+/// A baseline a Windows editor saved starts with a BOM, as a configuration
+/// may: it is read past, not refused as no JSON on every run (#2758).
+#[test]
+fn a_baseline_saved_with_a_bom_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "a.q"]);
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    fs::write(d.join("base.json"), format!("\u{feff}{written}")).unwrap();
+    let (status, found, err) = run(d, &["--isolated", "--baseline", "base.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    assert!(
+        err.contains("2 finding(s) in the baseline not shown"),
+        "{err}"
+    );
+}
+
+/// A leading BOM is no part of the text a line-1 finding is matched on:
+/// removing it, which q needs and QE005's `--fix` does, once brought every
+/// baselined finding on line 1 back as new (#2759). A baseline written with
+/// the BOM in its text still matches.
+#[test]
+fn a_bom_is_no_part_of_a_baselined_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "\u{feff}f:{[count] count}\n").unwrap();
+    let (_, _, err) = run(d, &["--isolated", "--write-baseline", "base.json", "a.q"]);
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    let written = fs::read_to_string(d.join("base.json")).unwrap();
+    assert!(!written.contains('\u{feff}'), "{written}");
+    assert!(
+        written.contains("\"line\":\"f:{[count] count}\""),
+        "{written}"
+    );
+    let old = written.replace("\"line\":\"f:", "\"line\":\"\u{feff}f:");
+    fs::write(d.join("old.json"), &old).unwrap();
+    let (status, _, err) = run(d, &["--isolated", "--select", "QE005", "--fix", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert_eq!(
+        fs::read_to_string(d.join("a.q")).unwrap(),
+        "f:{[count] count}\n"
+    );
+    for base in ["base.json", "old.json"] {
+        let (status, found, err) = run(d, &["--isolated", "--baseline", base, "a.q"]);
+        assert_eq!((status, found), (Some(0), vec![]), "{base}: {err}");
+    }
+}
+
 const NEW_Q: &str = "d:([a:1;b:2])\ng:{(a;b):x; a+b}\nh:{[x:`j] x}\nr:-30!(::)\ns:.Q.Xf\nk:([sym:`a`b] px:1 2)\nt:([] px:1 2)\nm:use`mymod\n";
 
 /// `--write-baseline` writes a file, and a file the run reads is never it:
@@ -133,6 +257,91 @@ fn a_baseline_is_never_written_over_q_source() {
         assert!(err.contains("a baseline is JSON"), "{name}: {err}");
         assert!(!d.join(name).exists(), "{name}");
     }
+}
+
+/// Nor over the configuration the run reads, which `--write-baseline
+/// pyproject.toml` replaced with JSON, `[project]` and all, and exited 0
+/// (#2752). A `.toml` name is refused read or not, as a `.q` one is; the
+/// baseline a configuration names is the file the flag is for.
+#[test]
+fn a_baseline_is_never_written_over_a_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let project = "[project]\nname = \"x\"\n\n[tool.qlinter]\nextend = \"base.cfg\"\n";
+    fs::write(d.join("pyproject.toml"), project).unwrap();
+    fs::write(d.join("base.cfg"), "baseline = \"known.json\"\n").unwrap();
+    for (name, why) in [
+        ("pyproject.toml", "a configuration this run reads"),
+        ("base.cfg", "a configuration this run reads"),
+        ("new.toml", "a baseline is JSON, not a configuration"),
+        ("new.TOML", "a baseline is JSON, not a configuration"),
+    ] {
+        let (status, _, err) = run(d, &["--write-baseline", name, "a.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains(why), "{name}: {err}");
+    }
+    assert_eq!(
+        fs::read_to_string(d.join("pyproject.toml")).unwrap(),
+        project
+    );
+    assert!(!d.join("new.toml").exists() && !d.join("new.TOML").exists());
+    let (status, _, err) = run(
+        d,
+        &["--isolated", "--write-baseline", "qlinter.toml", "a.q"],
+    );
+    assert_eq!(status, Some(2), "{err}");
+    assert!(!d.join("qlinter.toml").exists());
+    // The baseline the configuration names is written, and again over itself.
+    for _ in 0..2 {
+        let (status, _, err) = run(d, &["--write-baseline", "known.json", "a.q"]);
+        assert_eq!(status, Some(0), "{err}");
+        assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    }
+    let (status, found, err) = run(d, &["a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+}
+
+/// `--write-baseline X --output-file X` wrote the baseline, then emptied it
+/// as the report, and said "wrote 2 finding(s)" (#2753). The one file for
+/// both is refused; and a run that prints no report makes no report file,
+/// where it made an empty one that is no JSON.
+#[test]
+fn a_written_baseline_is_not_emptied_as_the_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), OLD).unwrap();
+    let args = ["--isolated", "--write-baseline", "b.json", "a.q"];
+    let (status, _, err) = run(d, &[&args[..], &["--output-file", "./b.json"]].concat());
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("the baseline --write-baseline writes"),
+        "{err}"
+    );
+    assert!(!d.join("b.json").exists());
+    let (status, _, err) = run(d, &[&args[..], &["--output-file", "report.json"]].concat());
+    assert_eq!(status, Some(0), "{err}");
+    assert!(err.contains("wrote 2 finding(s)"), "{err}");
+    assert!(!d.join("report.json").exists());
+    let (status, found, err) = run(d, &["--isolated", "--baseline", "b.json", "a.q"]);
+    assert_eq!((status, found), (Some(0), vec![]), "{err}");
+    // `--add-noqa` prints no report either.
+    let (status, _, err) = run(
+        d,
+        &[
+            "--isolated",
+            "--add-noqa",
+            "--output-file",
+            "noqa.json",
+            "a.q",
+        ],
+    );
+    assert_eq!(status, Some(0), "{err}");
+    assert!(!d.join("noqa.json").exists());
+    // A run that reports still makes the file, with nothing to report too.
+    let (status, _, err) = run(d, &["--isolated", "--output-file", "report.json", "a.q"]);
+    assert_eq!(status, Some(0), "{err}");
+    assert_eq!(fs::read_to_string(d.join("report.json")).unwrap(), "[]\n");
 }
 
 /// A run that cannot read one of its inputs writes no baseline: one without
@@ -231,6 +440,89 @@ fn the_target_version_reports_what_does_not_run_there() {
 
 /// A QK rule that no target can see is one `--rules` lists as on and that
 /// never reports: QK004 was one, for `-30!`, which every target has (#2091).
+/// The flag takes every spelling the configuration key does: `KDB-X`,
+/// `kdb-x` and `5` were refused on the command line while
+/// `target-version = "KDB-X"` worked in a file (#2749).
+#[test]
+fn the_target_version_flag_takes_every_spelling_the_configuration_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), NEW_Q).unwrap();
+    for name in ["kdbx", "KDB-X", "kdb-x", "5"] {
+        let (status, found, err) = run(d, &["--isolated", "--target-version", name, "a.q"]);
+        assert_eq!(status, Some(1), "{name}: {err}");
+        assert_eq!(qk(&found), vec![("QK005".to_string(), 5)], "{name}");
+        fs::write(
+            d.join("qlinter.toml"),
+            format!("target-version = \"{name}\"\n"),
+        )
+        .unwrap();
+        let (_, in_file, err) = run(d, &["a.q"]);
+        assert_eq!(found, in_file, "{name}: {err}");
+        fs::remove_file(d.join("qlinter.toml")).unwrap();
+    }
+    let (status, _, err) = run(d, &["--isolated", "--target-version", "4.2", "a.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(
+        err.contains("it must be one of 3.6, 4.0, 4.1, kdbx"),
+        "{err}"
+    );
+}
+
+/// `--show-settings` lists the rules that report for the target in force,
+/// which it names: the QK rules were listed as on with no target, and QE008,
+/// which only KDB-X refuses, under 4.0, each then finding nothing (#2748).
+#[test]
+fn show_settings_lists_the_rules_the_target_version_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "d:([a:1;b:2])\nx:-y:3\n").unwrap();
+    let shown = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(d)
+            .args(["--isolated", "--show-settings"])
+            .args(args)
+            .arg("a.q")
+            .output()
+            .unwrap();
+        let text = String::from_utf8(out.stdout).unwrap();
+        let line = |key: &str| {
+            let line = text.lines().find(|l| l.starts_with(key));
+            line.unwrap_or_else(|| panic!("{text}")).to_string()
+        };
+        (line("target-version: "), line("rules ("))
+    };
+    for (target, listed, found) in [
+        (None, "rules (1): QE008", vec![("QE008".to_string(), 2)]),
+        (
+            Some("4.0"),
+            "rules (1): QK001",
+            vec![("QK001".to_string(), 1)],
+        ),
+        (
+            Some("kdbx"),
+            "rules (1): QE008",
+            vec![("QE008".to_string(), 2)],
+        ),
+    ] {
+        let args: Vec<&str> = target
+            .iter()
+            .flat_map(|t| ["--target-version", t])
+            .collect();
+        let args = [&args[..], &["--select", "QK001,QE008"]].concat();
+        let (target_line, rules) = shown(&args);
+        assert_eq!(rules, listed, "{target:?}");
+        assert!(
+            target_line.ends_with(target.unwrap_or("none - the QK rules report nothing")),
+            "{target_line}"
+        );
+        assert_eq!(
+            run(d, &[&["--isolated"], &args[..], &["a.q"]].concat()).1,
+            found
+        );
+    }
+}
+
 #[test]
 fn every_qk_rule_listed_is_reported_for_some_target() {
     let dir = tempfile::tempdir().unwrap();
