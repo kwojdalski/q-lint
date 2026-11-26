@@ -30,6 +30,11 @@ test("an answer is read, one function as strings, and two sides compared", () =>
   assert.deepStrictEqual(compareTexts(new Map([[".l.f", "{x+1 \n }"]]), new Map([[".l.f", "{x+1\n }"]])), [{ name: ".l.f", status: "same" }]);
   assert.strictEqual(sideDocument(".l.f", "rdb", undefined), "/ .l.f is not defined on rdb\n");
   assert.strictEqual(sideDocument(".l.f", "rdb", "{x}"), "{x}\n");
+  // What the name holds there, when it is not a function (#2984).
+  assert.strictEqual(sideDocument(".l.f", "rdb", undefined, "a table"), "/ .l.f is a table on rdb, not a function\n");
+  assert.deepStrictEqual([...readTexts(["other", [], [], "cfg", "a table"]).held], [["cfg", "a table"]]);
+  assert.deepStrictEqual([...readTexts(["other", [], []]).held], []);
+  assert.throws(() => readTexts(["other", [], [], ["cfg"], []]), /definitions/);
   assert.strictEqual(nameProblem(".lib.f"), undefined);
   assert.strictEqual(nameProblem("f"), undefined);
   assert.match(nameProblem("1+1"), /a q name/);

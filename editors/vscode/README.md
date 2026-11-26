@@ -2345,7 +2345,10 @@ the palette) reads a function's definition - the name under the cursor, or
 one typed - on two processes you pick and opens VS Code's side-by-side diff
 of them. **Diff Namespace Across Processes...** reads every function
 directly in a namespace on both and lists the ones that differ or are on
-one side only; the one picked opens the same diff. Each process is read
+one side only; the one picked opens the same diff. A side whose process
+holds the name as something other than a function says what - "a table",
+"a dictionary", "a view" - where one that does not hold it says it is not
+defined. Each process is read
 over a connection of its own, closed after, with a read-only lambda, so the
 active connection is left as it is. `q-lint.processes.functionDiff.enable`
 off hides both.
