@@ -58,6 +58,9 @@ pub(super) struct Client {
     /// `null` understood as no active parameter (LSP 3.18).
     no_active_parameter: bool,
     completion_markdown: bool,
+    /// A completion's edit given both ways, to insert at the cursor and to
+    /// replace the name it is in, for the editor to choose between.
+    insert_replace: bool,
 }
 
 impl Client {
@@ -80,6 +83,9 @@ impl Client {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             completion_markdown: markdown("completion/completionItem/documentationFormat"),
+            insert_replace: at("completion/completionItem/insertReplaceSupport")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 }
@@ -751,6 +757,18 @@ fn completion(params: &Value, sources: &Sources, client: Client, more: More) -> 
     let stem = typed.rfind('.').map_or("", |dot| &typed[..=dot]);
     let lines = Lines::new(cursor.text);
     let span = json!({"start": lines.json(typing.start), "end": lines.json(cursor.offset)});
+    // The rest of the name the cursor is in, which an editor set to replace
+    // takes with what is typed: accepting `fooBaz` at `fo|oBa` left
+    // `fooBazoBa` (#2678). Only for a client that reads both ranges.
+    let rest = cursor.text[cursor.offset..]
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.'))
+        .count();
+    let rest = cursor.text[cursor.offset..cursor.offset + rest]
+        .trim_end_matches('.')
+        .len();
+    let whole = json!({"start": lines.json(typing.start),
+                       "end": lines.json(cursor.offset + rest)});
     // By (group, spelling), so the first to claim a spelling keeps it.
     let mut items: BTreeMap<String, (u8, Value)> = BTreeMap::new();
     let mut offer = |group: u8, spelling: &str, kind: u8, builtin: Option<&Builtin>| {
@@ -766,7 +784,11 @@ fn completion(params: &Value, sources: &Sources, client: Client, more: More) -> 
             "kind": kind,
             "sortText": format!("{group}{spelling}"),
             "filterText": spelling,
-            "textEdit": {"range": span, "newText": spelling},
+            "textEdit": if client.insert_replace {
+                json!({"insert": span, "replace": whole, "newText": spelling})
+            } else {
+                json!({"range": span, "newText": spelling})
+            },
         });
         if let Some(builtin) = builtin {
             item["detail"] = json!(builtin.syntax);

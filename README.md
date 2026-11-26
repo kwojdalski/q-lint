@@ -910,7 +910,9 @@ process defines. What it offers, in this order: the parameters and locals of
 the lambda being written; the names the workspace defines, spelled as the
 `\d` context in force reads them; q's words; and every name by its full
 path. Nothing is offered in a string, a comment, a symbol, a number or a
-system command.
+system command. An item's edit replaces what is typed so far; a client that
+declares `completionItem.insertReplaceSupport` is given that range to insert
+over and the whole name under the cursor to replace, to choose between.
 
 With `autoLoad.enable` too, a workspace name that one other file defines,
 and that nothing the document can already see defines, comes with the `\l`
