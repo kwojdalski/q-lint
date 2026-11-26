@@ -649,12 +649,26 @@ fn form(p: &layout::Parts) -> Result<Form, String> {
             if p.lead == "update" && cols.is_empty() {
                 return Err("an update with no columns".into());
             }
+            let groups = columns(&by)?;
+            // A column named as a group is 'dup names for cols/groups in a
+            // select, where the functional form runs and gives a keyed
+            // table (#2788, as #1301 the other way). An update may.
+            if p.lead == "select"
+                && let Some((dup, _)) = cols
+                    .iter()
+                    .find(|(n, _)| groups.iter().any(|(g, _)| g == n))
+            {
+                return Err(format!(
+                    "a column `{dup}` named as a group too, which a select refuses: \
+                     'dup names for cols/groups"
+                ));
+            }
             let b = if distinct {
                 "1b".to_string()
             } else if by.is_empty() {
                 "0b".to_string()
             } else {
-                dict(&columns(&by)?)
+                dict(&groups)
             };
             let a = if cols.is_empty() {
                 "()".to_string()

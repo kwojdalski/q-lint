@@ -16,6 +16,12 @@ const TABLE: &str = "t:([]sym:`a`b`a`c`b;px:1 2 3 4 5f;size:10 20 30 40 50;flag:
 const CASES: &[(&str, &str)] = &[
     ("select from t", "?[t;();0b;()]"),
     ("select from t where px>2", "?[t;enlist (>;`px;2);0b;()]"),
+    // An update or an exec may name a column as its group (#2788).
+    (
+        "update sum size by size from t",
+        "![t;();(enlist`size)!enlist `size;(enlist`size)!enlist (sum;`size)]",
+    ),
+    ("exec size by size from t", "?[t;();`size;`size]"),
     (
         "select from t where px>2, sym=`a",
         "?[t;((>;`px;2);(=;`sym;enlist`a));0b;()]",
@@ -340,6 +346,12 @@ const REFUSED: &[(&str, &str)] = &[
     ("select #px from t", "monad"),
     // q refuses it too: `neg px` is the monad.
     ("select m:-px from t", "monad"),
+    // q refuses these too, 'dup names for cols/groups, and their functional
+    // forms run (#2788).
+    ("select sum size by 2 xbar size from t", "dup names"),
+    ("select size by size from t", "dup names"),
+    ("select v:px by v:sym from t", "dup names"),
+    ("select px, px by px1:sym from t", "dup names"),
 ];
 
 #[test]
@@ -435,6 +447,20 @@ fn a_functional_form_whose_qsql_q_refuses_is_refused() {
     let source = "r:![t;();(enlist`sym)!enlist `sym;(enlist`sym)!enlist (first;`sym)]\n";
     let got = functional_to_qsql(source, 3).unwrap().unwrap();
     assert_eq!(got.text, "update first sym by sym from t");
+}
+
+/// The queries `REFUSED` says q refuses for a column named as its group
+/// are refused by a q that is here (#2788).
+#[test]
+fn a_select_naming_a_column_as_its_group_is_one_q_refuses() {
+    for (qsql, why) in REFUSED.iter().filter(|(_, why)| *why == "dup names") {
+        if let Some(out) = run_q(&format!(
+            "{TABLE}\n-1 @[{{value x;\"ran\"}};{};{{x}}];\n\\\\\n",
+            quoted(qsql)
+        )) {
+            assert!(out.starts_with("dup names"), "{qsql}: {out} ({why})");
+        }
+    }
 }
 
 #[test]
