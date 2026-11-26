@@ -232,3 +232,22 @@ test("! passed as a value with -11 or -19 is held, and replays or compresses onc
   await heldThenWrites(send, read, "!/[-11;`:lg]", "n=6");
   await heldThenWrites(send, read, ".[!;(-19;(`:lg;`:lgz;17;2;6))]", "`lgz in key `:.");
 });
+
+test("code whose own trap catches reval's refusal and fails in its handler is asked about with q's error, held when declined, and runs once let through (#3170)", { skip }, async (t) => {
+  const q = await startQ(t, "f:{value x}\n");
+  const { read } = await setUp(t, q.port);
+  const code = '.Q.trp[f;"k3:1";::]';
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: code }), getText: () => code },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  const refusal = /^Refused by the read-only evaluation of prod: 'type, raised where \.Q\.trp called the code's handler, as it does with what reval refuses\. Run it anyway\?$/;
+  for (const [answer, defined] of [[undefined, "0b"], ["Run Anyway", "1b"]]) {
+    stub.messages = [];
+    stub.picks.push(answer);
+    await stub.commands.get("q-lint.queryCurrentLine")();
+    stub.picks = [];
+    assert.ok(stub.messages.some(([kind, text]) => kind === "warning" && refusal.test(text)), JSON.stringify(stub.messages));
+    assert.strictEqual(await read("`k3 in key `."), defined);
+  }
+});
