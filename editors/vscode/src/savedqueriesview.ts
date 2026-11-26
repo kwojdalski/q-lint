@@ -218,6 +218,7 @@ export class SavedQueries implements TreeDataProvider<SavedQuery> {
     }
     await this.context.workspaceState.update(SCHEDULES_KEY, renamedSchedules(this.schedules(), name, undefined));
     await this.context.workspaceState.update(DASHBOARDS_KEY, renamedTileQuery(this.dashboards(), name, undefined));
+    this.live.tilesChanged();
     return ` The ${scheduled} scheduled export(s) and ${tiles} dashboard tile(s) an earlier query of that name left were deleted.`;
   }
 

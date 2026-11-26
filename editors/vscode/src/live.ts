@@ -716,6 +716,11 @@ export class Live {
   /// selection, and where it came from: what inline results (#1047) draw.
   private readonly answered = new EventEmitter<Answered>();
   readonly onDidAnswer = this.answered.event;
+  private readonly tiles = new EventEmitter<void>();
+  /// Fired when dashboard tiles were removed or retargeted - their process
+  /// or saved query deleted or renamed - for an open dashboard to draw them
+  /// again (#2550).
+  readonly onDidChangeTiles = this.tiles.event;
   /// The line a Run Line or Run Selection is running from, until `run`
   /// takes it.
   private origin: { uri: string; line: number; version?: number } | undefined;
@@ -1786,6 +1791,7 @@ export class Live {
 
   private async retarget(from: string, to: string | undefined): Promise<void> {
     await this.context.workspaceState.update(DASHBOARDS_KEY, retargetedTiles(parseDashboards(this.context.workspaceState.get<unknown>(DASHBOARDS_KEY, [])), from, to));
+    this.tiles.fire();
     await this.context.workspaceState.update(SCHEDULES_KEY, retargetedSchedules(parseSchedules(this.context.workspaceState.get<unknown>(SCHEDULES_KEY, [])), from, to));
     let stored = this.context.workspaceState.get<unknown>(FILE_CONNECTIONS_KEY);
     if (typeof stored !== "object" || stored === null) {
@@ -3786,6 +3792,13 @@ export class Live {
   /// gave follow it (#1413).
   savedRenamed(from: string, to: string | undefined): void {
     this.modes.savedRenamed(from, to);
+    this.tiles.fire();
+  }
+
+  /// Dashboard tiles were changed in the workspace state: an open dashboard
+  /// draws them again (#2550).
+  tilesChanged(): void {
+    this.tiles.fire();
   }
 
   /// The result the panel shows, with the process and code it came from.
