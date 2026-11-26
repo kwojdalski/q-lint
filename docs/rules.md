@@ -58,7 +58,7 @@ it, or `ALL`.
 | <a id="qe009"></a>`QE009` | juxtaposed-derived-function | A derived function applied by juxtaposition: q 5 refuses +/x, count'x and x/y, and an iterator after a blank, x 'y; write (+/)x, +/[x] or sum x; KDB-X only: not for an older target-version | every profile |
 | <a id="qe010"></a>`QE010` | malformed-number | A number q 5 cannot parse: 1.5j, 2b, 3i 4j, 1y, 1.2.3, or an integer that overflows its type (2147483648i, 32768h) | every profile |
 | <a id="qe011"></a>`QE011` | infix-keyword-each | An infix keyword before each or peach: q 5 refuses cor each x and x within each y; write (cor) each, cor' or cor[x] each; KDB-X only: not for an older target-version | every profile |
-| <a id="qe012"></a>`QE012` | non-ascii-character | A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - which q refuses with 'char | every profile |
+| <a id="qe012"></a>`QE012` | non-ascii-character | A character past ASCII outside a string or comment - a no-break space, a curly quote, a byte-order mark mid-file - or an ASCII control character there, which q refuses with 'char | every profile |
 | <a id="qe013"></a>`QE013` | table-literal-empty-slot | An empty column slot in a table literal, ([] a:1 2; ) or ([] a:1 2;;b:3 4), which q 5 refuses at parse with '; | every profile |
 
 ## Names - parameters, locals, globals and what they shadow

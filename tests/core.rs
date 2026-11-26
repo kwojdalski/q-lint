@@ -2139,3 +2139,27 @@ fn a_global_reassigned_and_read_many_times_lints_in_linear_time() {
         "2000 reassignments took {small:?} and 16000 {large:?}"
     );
 }
+
+/// A control character where q reads code is 'char in q 5, as a character
+/// past ASCII is: a NUL from a binary merge, an ESC from pasted terminal
+/// output. A tab, a form feed and a carriage return are blank, and load
+/// (#2860).
+#[test]
+fn a_control_character_in_code_is_reported_as_q_refuses_it() {
+    for ch in [
+        '\0', '\x01', '\x07', '\x08', '\x0b', '\x0e', '\x1b', '\x1f', '\x7f',
+    ] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        let of: Vec<_> = found.iter().filter(|f| f.code == "QE012").collect();
+        assert_eq!(of.len(), 1, "{ch:?}: {found:?}");
+        assert_eq!((of[0].line, of[0].column), (1, Some(5)), "{ch:?}");
+        let named = format!("U+{:04X} ", u32::from(ch));
+        assert!(of[0].detail.starts_with(&named), "{}", of[0].detail);
+    }
+    for ch in ['\t', '\x0c', '\r'] {
+        let source = format!("a:1;{ch}b:2\n");
+        let found = lint(&source, "t.q", Profile::General);
+        assert!(found.iter().all(|f| f.code != "QE012"), "{ch:?}: {found:?}");
+    }
+}

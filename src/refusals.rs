@@ -2583,10 +2583,15 @@ fn number_colon(path: &str, source: &str, code: &str, unsym: &str, out: &mut Vec
 /// minus sign, a zero-width space, `` `é `` and `é:1`, and a byte-order mark
 /// anywhere but the start of the file, which is QE005's. In a string or a
 /// comment it is text, and loads. One finding a line, at the first.
+///
+/// So is an ASCII control character: a NUL from a binary merge, an ESC from
+/// pasted terminal output, a vertical tab, DEL. A tab, a form feed and the
+/// two that end a line are blank to q 5, and it refuses every other (#2860).
 fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
     let mut line = usize::MAX;
     for (at, ch) in code.char_indices() {
-        if ch.is_ascii() || at == 0 && ch == '\u{feff}' {
+        let blank = matches!(ch, '\t' | '\n' | '\r' | '\x0c');
+        if ch.is_ascii() && (blank || !ch.is_ascii_control()) || at == 0 && ch == '\u{feff}' {
             continue;
         }
         let start = code[..at].rfind('\n').map_or(0, |p| p + 1);
