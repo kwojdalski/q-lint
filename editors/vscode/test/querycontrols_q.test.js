@@ -305,3 +305,35 @@ test("unlimited, unwrapped and timed-out queries against a real q process", { sk
     assert.strictEqual(connection.isOpen, true);
   });
 });
+
+// A direct answer holding a string past V8's longest (0x1fffffe8
+// characters) failed: the codec makes every char vector a string, and it
+// threw before the typed reading, which keeps chars as bytes, was tried
+// (#2583). The limit is injected here - the codec refuses an answer past a
+// few thousand bytes as V8 refuses a string past its longest - so no
+// half-gigabyte string is made.
+test("a direct answer the codec cannot make, of a string past V8's longest, is shown cut, as wrapped shows it (#2583)", { skip }, async (t) => {
+  const codec = require("node-q/lib/c.js");
+  const deserialize = codec.deserialize;
+  codec.deserialize = (body, ...rest) => {
+    if (body.length > 5000) {
+      throw Object.assign(new Error("Cannot create a string longer than 0x1fffffe8 characters"), { code: "ERR_STRING_TOO_LONG" });
+    }
+    return deserialize(body, ...rest);
+  };
+  t.after(() => (codec.deserialize = deserialize));
+  const q = await startQ("");
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.close());
+  const options = { size: [25, 30], limit: 100, unlimited: false, grid: true };
+  const x = "x".repeat(27);
+  const list = await runUnwrapped(connection, ['(10000#"x";1)'], options);
+  assert.deepStrictEqual(list.text, [`"${x}..`, "1"]);
+  assert.strictEqual(list.grid.cells[0][0], `"${"x".repeat(196)}...`);
+  assert.deepStrictEqual((await runUnwrapped(connection, ['10000#"x"'], options)).text, [`"${x}..`]);
+  const table = await runUnwrapped(connection, ['([] a:(10000#"x";"b"))'], options);
+  assert.deepStrictEqual(table.grid.rank[0], [1, 0]);
+  // A wrapped call is answered as before: the codec's error.
+  await assert.rejects(connection.call("{x}", "y".repeat(6000)), /0x1fffffe8/);
+});

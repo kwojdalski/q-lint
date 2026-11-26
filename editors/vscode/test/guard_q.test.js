@@ -251,3 +251,19 @@ test("code whose own trap catches reval's refusal and fails in its handler is as
     assert.strictEqual(await read("`k3 in key `."), defined);
   }
 });
+
+test("a computed handle 0, a lambda a .Q function applies, and a lambda made of a string and applied are held, and write once let through (#2624, #2628, #2635)", { skip }, async (t) => {
+  const q = await startQ(t, "\n");
+  const { send, read } = await setUp(t, q.port);
+  // A handle computed of numbers (#2624).
+  await heldThenWrites(send, read, '(1-1)"h1:1"', "`h1 in key `.");
+  await heldThenWrites(send, read, 'abs[0]"h2:1"', "`h2 in key `.");
+  await heldThenWrites(send, read, '(0 1)[0]"h3:1"', "`h3 in key `.");
+  // A lambda .Q.trp, .Q.ts or .Q.sp applies to the data it is given (#2628).
+  await heldThenWrites(send, read, '.Q.trp[{value x};"k3:1";::]', "`k3 in key `.");
+  await heldThenWrites(send, read, '.Q.ts[{get x};enlist"k10:1"]', "`k10 in key `.");
+  await heldThenWrites(send, read, '.Q.sp[{value x};enlist"k4:1"]', "`k4 in key `.");
+  // A lambda in a string, made and applied (#2635).
+  await heldThenWrites(send, read, '(get"{.[x;();:;1]}")`z3', "`z3 in key `.");
+  await heldThenWrites(send, read, '(eval parse"{.[x;();:;1]}")`z4', "`z4 in key `.");
+});

@@ -222,9 +222,9 @@ pub(crate) fn each_set_targets(code: &str) -> Vec<(std::ops::Range<usize>, Vec<&
 /// the nearest bracket enclosing both is a control bracket or the body
 /// itself. `f[c-1; c:count x]` and `g[c] h[c:1]` both assign before they
 /// read; `if[c; c:1]` and `r:c; c:1` do not.
-fn runs_before(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, stops, read);
-    let (assign_seq, assign_path) = eval_path(text, stops, assign);
+fn runs_before(order: &Order, read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = order.path(read);
+    let (assign_seq, assign_path) = order.path(assign);
     if read_seq != assign_seq {
         return read_seq < assign_seq;
     }
@@ -246,9 +246,9 @@ fn runs_before(text: &str, stops: &[usize], read: usize, assign: usize) -> bool 
 /// slots left to right (`$[a:1;a;0]`). A read at the assignment's own level,
 /// to its right, is in its value, which is `in_value`'s case. Verified in
 /// q 5: the first four are refused at definition with 'a, `$[a:1;a;0]` is not.
-fn runs_first_after(text: &str, stops: &[usize], read: usize, assign: usize) -> bool {
-    let (read_seq, read_path) = eval_path(text, stops, read);
-    let (assign_seq, assign_path) = eval_path(text, stops, assign);
+fn runs_first_after(order: &Order, read: usize, assign: usize) -> bool {
+    let (read_seq, read_path) = order.path(read);
+    let (assign_seq, assign_path) = order.path(assign);
     if read <= assign || read_seq != assign_seq {
         return false;
     }
@@ -262,64 +262,81 @@ fn runs_first_after(text: &str, stops: &[usize], read: usize, assign: usize) -> 
     }
     assign_path.len() > read_path.len()
 }
-/// The offset of each `;` that ends a statement of a lambda body, with no
-/// bracket open around it: `eval_path` starts from the last one before the
-/// position it is asked about, not from the body's start, which made a
-/// long body quadratic in its reads (#708).
-fn statement_stops(text: &str) -> Vec<usize> {
-    let mut depth = 0usize;
-    let mut stops = vec![];
-    for (i, &c) in text.as_bytes().iter().enumerate() {
-        match c {
-            b'[' | b'(' | b'{' => depth += 1,
-            b']' | b')' | b'}' => depth = depth.saturating_sub(1),
-            b';' if depth == 0 => stops.push(i),
-            _ => {}
-        }
-    }
-    stops
+/// Where each position of a lambda body sits in the order it runs in, read
+/// once for the body. `stops` is the offset of each `;` that ends a
+/// statement, with no bracket open around it. Each bracket open around a
+/// position, with the slot it is in, is a node of a tree: `at[pos]` is the
+/// innermost one before `pos`, and its parents are the rest. Asking each
+/// read for its place by walking from its statement's start was quadratic
+/// in a statement's length, and a loop body is one statement (#708, #1010).
+struct Order {
+    stops: Vec<usize>,
+    at: Vec<usize>,
+    /// Each node's parent, its bracket's offset, the slot within it, and
+    /// whether it is a control bracket. Node 0 is the statement itself.
+    nodes: Vec<(usize, usize, usize, bool)>,
 }
-/// Where `pos` sits in the order a lambda body runs in: the statement it is
-/// in, and each bracket open around it, as the bracket's offset, the slot
-/// within it, and whether it is a control bracket. `stops` is the body's
-/// `statement_stops`.
-fn eval_path(text: &str, stops: &[usize], pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
-    let mut seq = stops.partition_point(|&stop| stop < pos);
-    let from = if seq == 0 { 0 } else { stops[seq - 1] + 1 };
-    let mut stack: Vec<(usize, usize, bool)> = vec![];
-    for (i, &c) in text.as_bytes()[..pos].iter().enumerate().skip(from) {
-        match c {
-            b'[' | b'(' | b'{' => {
-                // A bracket that follows nothing it could index is a block,
-                // which runs left to right like a control bracket. Verified
-                // in q 5: `{$[1b;[a:1;a];0]}[]` and `{(a:1;[a:2;a])}` run,
-                // while `{g [a:1;a]}` and `{x:[a:1;a]}` are 'a. So does
-                // one that opens the body: `{[p] [a:1;a+p]}[5]` is 6.
-                let before = text[..i].trim_end();
-                let keyword = ["if", "while", "do"].iter().any(|k| {
-                    before.strip_suffix(k).is_some_and(|rest| {
-                        !rest.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
-                    })
-                });
-                let control = c == b'['
-                    && (keyword || before.is_empty() || before.ends_with(['$', ';', '[', '(']));
-                stack.push((i, 0, control));
+
+impl Order {
+    fn new(text: &str) -> Order {
+        let mut stops = vec![];
+        let mut nodes = vec![(0, 0, 0, false)];
+        let mut at = Vec::with_capacity(text.len() + 1);
+        let mut here = 0;
+        for (i, &c) in text.as_bytes().iter().enumerate() {
+            at.push(here);
+            match c {
+                b'[' | b'(' | b'{' => {
+                    // A bracket that follows nothing it could index is a
+                    // block, which runs left to right like a control
+                    // bracket. Verified in q 5: `{$[1b;[a:1;a];0]}[]` and
+                    // `{(a:1;[a:2;a])}` run, while `{g [a:1;a]}` and
+                    // `{x:[a:1;a]}` are 'a. So does one that opens the
+                    // body: `{[p] [a:1;a+p]}[5]` is 6.
+                    let before = text[..i].trim_end();
+                    let keyword = ["if", "while", "do"].iter().any(|k| {
+                        before.strip_suffix(k).is_some_and(|rest| {
+                            !rest.ends_with(|c: char| c.is_ascii_alphanumeric() || "_.".contains(c))
+                        })
+                    });
+                    let control = c == b'['
+                        && (keyword || before.is_empty() || before.ends_with(['$', ';', '[', '(']));
+                    nodes.push((here, i, 0, control));
+                    here = nodes.len() - 1;
+                }
+                b']' | b')' | b'}' => here = nodes[here].0,
+                b';' if here == 0 => stops.push(i),
+                b';' => {
+                    let (parent, bracket, slot, control) = nodes[here];
+                    nodes.push((parent, bracket, slot + 1, control));
+                    here = nodes.len() - 1;
+                }
+                // No newline arm: inside a lambda an indented line continues
+                // the expression above it, so only `;` ends a statement.
+                // Verified: `{r:a\n  +a:5; r}[]` is 10, and `{r:3\n  r}[]`
+                // is 'r - `3 r`, one expression.
+                _ => {}
             }
-            b']' | b')' | b'}' => {
-                stack.pop();
-            }
-            b';' => match stack.last_mut() {
-                Some(top) => top.1 += 1,
-                None => seq += 1,
-            },
-            // No newline arm: inside a lambda an indented line continues
-            // the expression above it, so only `;` ends a statement.
-            // Verified: `{r:a\n  +a:5; r}[]` is 10, and `{r:3\n  r}[]`
-            // is 'r - `3 r`, one expression.
-            _ => {}
         }
+        at.push(here);
+        Order { stops, at, nodes }
     }
-    (seq, stack)
+
+    /// Where `pos` sits: the statement it is in, and each bracket open
+    /// around it, outermost first, as the bracket's offset, the slot within
+    /// it, and whether it is a control bracket.
+    fn path(&self, pos: usize) -> (usize, Vec<(usize, usize, bool)>) {
+        let seq = self.stops.partition_point(|&stop| stop < pos);
+        let mut stack = vec![];
+        let mut node = self.at[pos.min(self.at.len() - 1)];
+        while node != 0 {
+            let (parent, bracket, slot, control) = self.nodes[node];
+            stack.push((bracket, slot, control));
+            node = parent;
+        }
+        stack.reverse();
+        (seq, stack)
+    }
 }
 /// A lambda body as the local-scope checks read it: symbols blanked, and each
 /// qSQL query blanked over its own extent, from the keyword to the `;` or
@@ -3271,7 +3288,7 @@ pub fn check(
             continue;
         }
         let direct = with_from_clauses(&scope.direct, true);
-        let stops = statement_stops(&direct);
+        let order = Order::new(&direct);
         let mut first: HashMap<&str, usize> = HashMap::new();
         let mut every: HashMap<&str, Vec<usize>> = HashMap::new();
         for a in assignment.captures_iter(&direct) {
@@ -3334,7 +3351,8 @@ pub fn check(
                         floor = floor.min(depth);
                         if b == b';'
                             && depth <= floor
-                            && !eval_path(&direct, &stops, assigned + i)
+                            && !order
+                                .path(assigned + i)
                                 .1
                                 .last()
                                 .is_some_and(|&(_, _, control)| !control)
@@ -3357,9 +3375,9 @@ pub fn check(
                 && !in_value
                 && every[name].iter().all(|&p| {
                     if p < m.start() {
-                        runs_first_after(&direct, &stops, m.start(), p)
+                        runs_first_after(&order, m.start(), p)
                     } else {
-                        runs_before(&direct, &stops, m.start(), p)
+                        runs_before(&order, m.start(), p)
                     }
                 });
             if (m.start() >= assigned && !in_value && !later)
@@ -3368,7 +3386,7 @@ pub fn check(
                 || after.starts_with(':')
                 // A dotted name, not dot-apply: `g . p` reads `g` (#251).
                 || direct[m.end()..].starts_with('.')
-                || (!in_value && !later && !runs_before(&direct, &stops, m.start(), assigned))
+                || (!in_value && !later && !runs_before(&order, m.start(), assigned))
                 || !seen.insert(name)
             {
                 continue;

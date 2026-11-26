@@ -954,6 +954,32 @@ fn a_file_under_a_linked_directory_is_governed_excluded_and_reported_there() {
     );
 }
 
+/// A linked file is named by its own name in the directory it is in, and
+/// that directory resolved as any other: reached through a directory linked
+/// in from inside its holder, it kept the directory link's name while the
+/// real file beside it was reported under the target, as docs/output.md
+/// says (#2761).
+#[cfg(unix)]
+#[test]
+fn a_linked_file_under_a_directory_linked_from_inside_is_named_in_the_target() {
+    let repo = Repo::new();
+    repo.write("proj/lib/in.q", SOURCE);
+    std::os::unix::fs::symlink("in.q", repo.path("proj/lib/twin.q")).unwrap();
+    std::os::unix::fs::symlink("lib", repo.path("proj/alias")).unwrap();
+    for (named, reported) in [
+        ("lib/twin.q", "proj/lib/twin.q"),
+        ("alias/in.q", "proj/lib/in.q"),
+        ("alias/twin.q", "proj/lib/twin.q"),
+        ("alias/../alias/twin.q", "proj/lib/twin.q"),
+    ] {
+        assert_eq!(
+            linted_from(&repo, "proj", &["--isolated", named]),
+            [reported],
+            "{named}"
+        );
+    }
+}
+
 /// A walk lints a linked file and does not enter a linked directory, as the
 /// language server's index does not - and said nothing of it, so
 /// `qlinter .` passed with the code under the link unlinted, which naming

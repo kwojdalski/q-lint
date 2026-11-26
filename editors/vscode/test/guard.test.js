@@ -2155,3 +2155,68 @@ test("a function named by a symbol cast from a string made at run time, applied,
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a handle computed of numbers and applied to a string or a list is read as handle 0 may be (#2624)", () => {
+  // One that comes to 0 is handle 0.
+  for (const code of ['(1-1)"a:1"', '(0-0)@"a:1"', '(neg 1-1) raze("a:";"1")', '(1-1) each enlist "a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  assert.deepStrictEqual(writes("(1-1)(@;`b;0;:;9)"), ["evaluates an amend on handle 0"]);
+  // One the guard cannot work out may be.
+  for (const code of ['abs[0]"a:1"', 'first[0]"a:1"', '(0 1)[0]"a:1"', '0 1[0]"a:1"', '(abs 0)"a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on a handle the guard cannot read"], code);
+  }
+  // A string that only reads, a handle shown not to be 0, a name (the value
+  // it holds), a list, a projection and a vector are not read as handle 0.
+  for (const code of ['(1-1)"count t"', 'abs[0]"count t"', '(1+1)"a:1"', 'neg[1]"a:1"', 'h"a:1"', '(h)"a:1"', 'h[0]"a:1"', '(hopen 5000)"a:1"', 'f[x]"a:1"', 'ssr[;"a";"b"]"a:1"', 'mod[;2]"a:1"', '(2;2)"a:1"', '(-1_1_)"a:1"', '(10b)"a:1"', '(1-1) in "a:1"']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a lambda .Q.trp, .Q.trpd, .Q.ts, .Q.fu, .Q.fc or .Q.sp applies is read with the data it is given in place of its parameter (#2628)", () => {
+  const cases = {
+    '.Q.ts[{value x};enlist"k1:1"]': "evaluates a string with value",
+    '.Q.fc[{value each x};enlist"k2:1"]': "evaluates a string with value",
+    '.Q.trp[{value x};"k3:1";::]': "evaluates a string with value",
+    '.Q.trpd[{value x};enlist"k3:1";::]': "evaluates a string with value",
+    '.Q.sp[{value x};enlist"k4:1"]': "evaluates a string with value",
+    ".Q.fu[{value x}';enlist\"k5:1\"]": "evaluates a string with value",
+    '.Q.ts[{0 x};enlist"k9:1"]': "evaluates a string on handle 0",
+    '.Q.ts[{get x};enlist"k10:1"]': "evaluates a string with get",
+    ".Q.trp[{.[x;();:;1]};`a;::]": "amends `a in place",
+    // Handle 0 given to one, as to `@` or `.`.
+    '.Q.trp[0;"a:1";::]': "evaluates a string on handle 0",
+    '.Q.ts[0;enlist"a:1"]': "evaluates a string on handle 0",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  // Given data that only reads, it reads.
+  for (const code of ['.Q.trp[{value x};"count t";::]', '.Q.ts[{value x};enlist"count t"]', '.Q.sp[{value x};("count t";"count s")]', ".Q.fc[{x+1};til 10]", ".Q.ts[{x+y};1 2]", ".Q.fu[{x*2};1 2 1]", ".Q.trp[{count x};t;{-2 x;-2 .Q.sbt y;0}]"]) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
+
+test("a lambda value, get, parse or -5! makes of a string, applied, is read with its arguments in place of its parameters (#2635)", () => {
+  const cases = {
+    "(value\"{.[x;();:;1]}\")`zz": "applies what value makes of a string: amends `zz in place",
+    "(get\"{.[x;();:;1]}\")`zz": "applies what get makes of a string: amends `zz in place",
+    "(eval parse\"{.[x;();:;1]}\")`zz": "applies what eval makes of a string: amends `zz in place",
+    "(parse\"{.[x;();:;1]}\")`zz": "applies what parse makes of a string: amends `zz in place",
+    "(-5!\"{.[x;();:;1]}\")`zz": "applies what -5! makes of a string: amends `zz in place",
+    "(value\"{.[x;();:;y]}\")[`zz;1]": "applies what value makes of a string: amends `zz in place",
+    "(value\"{.[x;();:;1]}\") . enlist`zz": "applies what value makes of a string: amends `zz in place",
+    '(value"{value x}")"a:1"': "applies what value makes of a string: evaluates a string with value",
+    // Given a name, with a symbol it could hold.
+    '(value"{.[x;();:;1]}") v': "applies what value makes of a string: applies a lambda that may change the process through what it is given",
+  };
+  for (const [code, reason] of Object.entries(cases)) {
+    assert.deepStrictEqual(writes(code), [reason], code);
+  }
+  // One that writes itself is said as before.
+  assert.deepStrictEqual(writes("(value\"{x set 1}\")`zz"), ["evaluates a string with value"]);
+  // Made and not applied, or applied and only reading, reads.
+  for (const code of ['value"{.[x;();:;1]}"', '(value"{x+1}") 1', '(value"{value x}")"count t"', '(get"{x+y}")[1;2]', '(parse"{x+1}")[1]']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});

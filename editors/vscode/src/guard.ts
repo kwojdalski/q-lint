@@ -64,7 +64,9 @@
 //   and applied after too, `` (?)[`sym] `x `` (#2188);
 // - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
 //   `0(@;`b;0;:;9)`), or what a function gives, `0 raze("a:";"1")` (#2204),
-//   which the process evaluates itself as `value` would;
+//   which the process evaluates itself as `value` would - a handle computed
+//   of numbers alone too, `(1-1)"a:1"`, and one it cannot work out,
+//   `abs[0]"a:1"`, `(0 1)[0]"a:1"`, is taken for handle 0 (#2624);
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
@@ -112,6 +114,10 @@
 //   arguments in place of its parameters (`` {.[x;();:;1]}`a ``,
 //   `{value x} each enlist "a:1"`), and where an argument is a name or not
 //   written, with a symbol it could hold (`` {.[x;();:;1]} v ``, #2035);
+//   applied by `.Q.trp`, `.Q.trpd`, `.Q.ts`, `.Q.fu`, `.Q.fc` or `.Q.sp` to
+//   the data given it, `.Q.trp[{value x};"a:1";::]` (#2628); and made by
+//   `value`, `get`, `parse` or `-5!` of a string and applied,
+//   `` (get"{.[x;();:;1]}")`a `` (#2635);
 // - any of these in a string given to a TorQ gateway's `.gw.syncexec` or
 //   `.gw.asyncexec`, in brackets or applied (`.gw.syncexec . (q;`rdb)`),
 //   which runs it on the gateway's servers (#909), given to `.` or `@` or
@@ -498,6 +504,60 @@ function constant(t: Token[], from: number, to: number): number | undefined {
   return read !== undefined && read[1] === to ? read[0] : undefined;
 }
 
+/// The builtins that, given numbers, give numbers: in a handle computed of
+/// numbers alone, `abs[0]`, `first[0]` (#2624).
+const NUMERIC = new Set(["abs", "neg", "first", "last", "min", "max", "sum", "prd", "avg", "floor", "ceiling", "signum", "reverse", "distinct", "til", "count", "div", "mod", "xbar"]);
+
+/// What the noun that ends at the close `t[end]` - in parentheses, `(1-1)`,
+/// or indexed, `abs[0]`, `(0 1)[0]`, `0 1[0]` - comes to as a handle when it
+/// is computed of numbers alone (#2624): "zero" for handle 0, "unread" for
+/// one the guard cannot work out, undefined for one it shows is not 0 and
+/// for anything holding a name, a symbol, a string or a lambda, which is not
+/// read for a handle - a name alone is the value it holds.
+function numericHandle(t: Token[], end: number): "zero" | "unread" | undefined {
+  const opening = (close: number): number => {
+    let open = close;
+    for (let depth = 0; open >= 0; open--) {
+      if (t[open].kind === "close") depth++;
+      else if (t[open].kind === "open" && --depth === 0) break;
+    }
+    scanned(close - open);
+    return open;
+  };
+  let p = end;
+  while (t[p]?.kind === "close" && t[p].text === "]") {
+    const open = opening(p);
+    // A projection, `mod[;2]`, is a function, not a handle.
+    if (open < 0 || items(t, open).some(([a, b]) => a === b)) return undefined;
+    p = open - 1;
+  }
+  const indexed = p < end;
+  let start: number;
+  if (t[p]?.kind === "close" && t[p].text === ")") {
+    start = opening(p);
+    // Not indexed, it is one item, not a list, `(2;2)`, a vector, `(0 1)`,
+    // or a projection or composition, `(0;)`, `(-1_1_)`.
+    if (!indexed && start >= 0 && (items(t, start).length > 1 || t[p - 1]?.kind === "op" || (t.slice(start + 1, p).every((k) => k.kind === "num") && constant(t, start + 1, p) === undefined))) return undefined;
+  } else if (t[p]?.kind === "name" && indexed) {
+    start = p;
+  } else if (t[p]?.kind === "num" && indexed) {
+    for (start = p; t[start - 1]?.kind === "num"; start--);
+  } else {
+    return undefined;
+  }
+  if (start < 0 || end - start > 64) return undefined;
+  const inside = t.slice(start, end + 1);
+  // Whole numbers only: a boolean, `(10b)`, a float or a char is no handle.
+  if (
+    !inside.some((k) => k.kind === "num") ||
+    inside.some((k) => k.kind === "sym" || k.kind === "str" || k.text === "{" || (k.kind === "num" && !/^-?\d+[ihj]?$/.test(k.text)) || (k.kind === "name" && !NUMERIC.has(unqualified(k.text))))
+  ) {
+    return undefined;
+  }
+  const value = constant(t, start, end + 1);
+  return value === undefined ? "unread" : value === 0 ? "zero" : undefined;
+}
+
 /// Where the items of the bracket or parenthesis that opens at `t[open]`
 /// start and end, `[start, end)` each, the last ending at its close.
 function items(t: Token[], open: number): [number, number][] {
@@ -787,6 +847,23 @@ function groupApplied(t: Token[], open: number): boolean {
       ["str", "sym", "num"].includes(after.kind) ||
       (after.kind === "name" && !INFIX.has(after.text)))
   );
+}
+
+/// What a lambda that the string `t[str]` defines does applied where it is
+/// written, when what makes it - `value`, `get`, `parse` - is in the group
+/// opening at `t[open]` and that group is applied: `` (get"{.[x;();:;1]}")`a ``
+/// is read as `` ({.[x;();:;1]})`a ``, with its arguments in place of its
+/// parameters (#2635). Undefined for a string that is not a lambda.
+function lambdaStringApplied(t: Token[], str: number, open: number): string | undefined {
+  const code = qText(t[str].text).trim();
+  if (!code.startsWith("{") || !groupApplied(t, open)) {
+    return undefined;
+  }
+  const close = items(t, open).at(-1)?.[1] ?? -1;
+  if (close < 0) {
+    return undefined;
+  }
+  return rereadOf(`(${code})${joined(t, close + 1, expressionEnd(t, close))}`).find((r) => r !== TOO_MUCH);
 }
 
 /// Whether the `upsert` at `t[i]`, applied infix, is given a value on its
@@ -1391,6 +1468,18 @@ const WITNESSES = ["(`g)", "(`:g)"];
 const ITEMS = 8;
 /// The names after a lambda that apply it to each item of what follows.
 const ITERATORS = new Set(["each", "peach", "over", "scan", "prior"]);
+/// The `.Q` functions that apply the function given first to the data given
+/// second (#2628), and how: as `@` does, to it whole - `.Q.trp`, `.Q.fc` (to
+/// chunks of it), `.Q.fu` (to its distinct items) - as `.` does, to its
+/// items - `.Q.ts`, `.Q.trpd` - or to each item, `.Q.sp`.
+const APPLIERS = new Map([
+  [".Q.trp", "@"],
+  [".Q.fc", "@"],
+  [".Q.fu", "@"],
+  [".Q.ts", "."],
+  [".Q.trpd", "."],
+  [".Q.sp", "'"],
+]);
 /// How deep `writes` is called in itself, how many lambdas it has read
 /// again with their parameters given, and how many tokens it has read, in
 /// the call `writes` was given from outside: past `DEPTH`, `REREADS` or
@@ -1503,6 +1592,8 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   while (t[q]?.kind === "op" && ["'", "/", "\\", ":"].includes(t[q].text)) q++;
   if (t[q]?.kind === "name" && ITERATORS.has(t[q].text)) q++;
   const iterated = q > e + 1;
+  // Applied to each item of its argument: iterated, or given to `.Q.sp`.
+  let itemwise = iterated;
   const after = t[q];
   const before = t[s - 1];
   // Each parameter's argument as written, and the items it is applied to.
@@ -1521,12 +1612,16 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
     args = after.text === "@" ? [arg] : (listed(t, arg[0], arg[1]) ?? []);
   } else if (after !== undefined && (["str", "sym", "num", "name"].includes(after.kind) || after.kind === "open")) {
     args = left !== undefined && left[0] < left[1] ? [left, [q, argumentEnd(t, q - 1)]] : [[q, argumentEnd(t, q - 1)]];
-  } else if (before?.kind === "open" && before.text === "[" && (t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") {
-    // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them.
+  } else if (before?.kind === "open" && before.text === "[" && (((t[s - 2]?.text === "." || t[s - 2]?.text === "@") && t[s - 2].kind === "op") || (t[s - 2]?.kind === "name" && APPLIERS.has(t[s - 2].text)))) {
+    // Applied by `.[f;(x;y)]` or `@[f;x]`, a trap among them, or by a `.Q`
+    // function that applies it so, `.Q.trp[f;x;h]`, `.Q.ts[f;(x;y)]`, or to
+    // each item, `.Q.sp[f;x]` (#2628).
+    const how = t[s - 2].kind === "op" ? t[s - 2].text : (APPLIERS.get(t[s - 2].text) ?? "@");
     const all = items(t, s - 1);
     const arg = all[1];
     if (arg !== undefined && arg[0] < arg[1]) {
-      args = t[s - 2].text === "@" ? [arg] : (listed(t, arg[0], arg[1]) ?? []);
+      args = how === "." ? (listed(t, arg[0], arg[1]) ?? []) : [arg];
+      itemwise ||= how === "'";
     }
   } else if (before?.text === ":" && t[s - 2]?.kind === "name" && !iterated && (after === undefined || after.text === ";" || after.kind === "close")) {
     // Assigned to a local of the lambda around it, and applied there later:
@@ -1629,7 +1724,7 @@ function throughParameters(t: Token[], all: Token[], statement: string, closes: 
   if (written.some((w) => w !== undefined)) {
     readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, written[n]]]))), false]);
     // Item by item, the first few.
-    const each = iterated ? params.map((_, n) => (args[n] === undefined ? [] : itemsOf(t, args[n][0], args[n][1]))) : [];
+    const each = itemwise ? params.map((_, n) => (args[n] === undefined ? [] : itemsOf(t, args[n][0], args[n][1]))) : [];
     for (let m = 0; m < Math.min(ITEMS, Math.max(0, ...each.map((i) => i.length))); m++) {
       readings.push([new Map(params.flatMap((p, n): [string, string][] => (written[n] === undefined ? [] : [[p, each[n][m] === undefined ? written[n] : `(${each[n][m]})`]]))), false]);
     }
@@ -2112,6 +2207,24 @@ function readStatement(statement: string, found: Set<string>): void {
         locals.pop();
         held.pop();
       }
+      // A handle computed of numbers, `(1-1)"a:1"`, `abs[0]"a:1"`,
+      // `(0 1)[0]"a:1"`, applied to a string or a list as handle 0 is: one
+      // that comes to 0 is the process itself, and one the guard cannot
+      // work out may be (#2624).
+      const applied =
+        next !== undefined &&
+        (next.kind === "str" ||
+          (next.kind === "open" && next.text === "(") ||
+          (next.kind === "op" && ["@", "."].includes(next.text)) ||
+          (next.kind === "name" && (!INFIX.has(next.text) || next.text === "each" || next.text === "peach")));
+      const handle = applied && k.text !== "}" ? numericHandle(t, i) : undefined;
+      if (handle !== undefined) {
+        const what = evaluates(t, i, true);
+        // (Said once: a 0 picked from a list, `(0;::)[0]"a:1"`, is read as handle 0 already.)
+        if (what !== undefined && !found.has(`evaluates ${what.reason} on handle 0`)) {
+          found.add(`evaluates ${what.reason} on ${handle === "zero" ? "handle 0" : "a handle the guard cannot read"}`);
+        }
+      }
       continue;
     }
     if (k.kind === "name") {
@@ -2176,9 +2289,15 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(what);
           continue;
         }
-        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634).
+        // Of a lambda, applied, it runs the lambda: `(parse"{a::1}")[]` (#2634),
+        // with what it is given, `` (parse"{.[x;();:;1]}")`a `` (#2635).
         if (t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" && groupApplied(t, i - 1) && writes([valued(qText(t[i + 1].text))]).length > 0) {
           found.add(`applies what ${k.text} makes of a string that changes the process`);
+          continue;
+        }
+        const lambda = t[i - 1]?.text === "(" && t[i + 1]?.kind === "str" && t[i + 2]?.text === ")" ? lambdaStringApplied(t, i + 1, i - 1) : undefined;
+        if (lambda !== undefined) {
+          found.add(`applies what ${k.text} makes of a string: ${lambda}`);
           continue;
         }
       }
@@ -2357,6 +2476,16 @@ function readStatement(statement: string, found: Set<string>): void {
           found.add(`evaluates ${what.reason} with ${k.text}`);
           i = what.at;
           continue;
+        }
+        // A lambda it makes of a string, applied, runs with what it is
+        // given: `` (value"{.[x;();:;1]}")`a ``, `` (eval parse"{..}")`a `` (#2635).
+        const made = ["value", "get", ".h.val"].includes(unqualified(k.text)) ? 1 : t[i + 1]?.text === "parse" ? 2 : 0;
+        if (made > 0 && t[i - 1]?.text === "(" && t[i + made]?.kind === "str" && t[i + made + 1]?.text === ")") {
+          const lambda = lambdaStringApplied(t, i + made, i - 1);
+          if (lambda !== undefined) {
+            found.add(`applies what ${k.text} makes of a string: ${lambda}`);
+            continue;
+          }
         }
       }
       // A TorQ gateway runs the strings it is given on its servers (#909):
@@ -2676,7 +2805,13 @@ function readStatement(statement: string, found: Set<string>): void {
       // Given to apply or a trap, `@[0;"a:1"]`, `.[0;enlist"a:1";h]`, it is
       // applied to the argument after it (#2625); applied by `each` or
       // `peach`, `0 each x`, `(0 each) x`, to each item of it (#2626).
-      const trapped = !wrapped && t[i - 1]?.text === "[" && t[i - 1].kind === "open" && t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text) && next?.text === ";";
+      // So it is by a `.Q` function that applies what it is given, `.Q.trp[0;"a:1";h]` (#2628).
+      const trapped =
+        !wrapped &&
+        t[i - 1]?.text === "[" &&
+        t[i - 1].kind === "open" &&
+        ((t[i - 2]?.kind === "op" && ["@", "."].includes(t[i - 2].text)) || (t[i - 2]?.kind === "name" && APPLIERS.has(t[i - 2].text))) &&
+        next?.text === ";";
       const iterated = wrapped ? t[i + 2] : next;
       const each = iterated?.kind === "name" && (iterated.text === "each" || iterated.text === "peach");
       if (trapped || each) {
@@ -2732,6 +2867,12 @@ function readStatement(statement: string, found: Set<string>): void {
       }
       if (t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" && writes([valued(qText(t[bang + 1].text))]).length > 0) {
         found.add("applies what -5! makes of a string that changes the process");
+        continue;
+      }
+      // With what it is given, `` (-5!"{.[x;();:;1]}")`a `` (#2635).
+      const what = t[bang + 1]?.kind === "str" && t[bang + 2]?.text === ")" ? lambdaStringApplied(t, bang + 1, i - 1) : undefined;
+      if (what !== undefined) {
+        found.add(`applies what -5! makes of a string: ${what}`);
         continue;
       }
     }

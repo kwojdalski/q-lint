@@ -523,3 +523,30 @@ test("a held result is paged only by the client and the token it was held for (#
   assert.strictEqual((await one.query(statements("count .qlint.held"), SIZE)).text.join(""), "1");
   assert.throws(() => gridLambda(false, 'x";system"echo'), /not a hold token/);
 });
+
+// What a client held was dropped only when another client held a result:
+// one that closed left its table on the process for good (#2531). The
+// handle's close drops it, and a .z.pc the process had still runs.
+test("a held result is dropped when its client's connection closes, and the process's own .z.pc still runs (#2531)", { skip }, async (t) => {
+  const { gridLambda } = require("../out/grid.js");
+  const q = await startQ(() => "trade:([] sym:20#`A`B; px:til 20)\nclosed:0#0i\n.z.pc:{closed::closed,x}\n");
+  t.after(() => q.stop());
+  const one = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => one.abort());
+  const held = async () => (await one.query(statements("count .qlint.held"), SIZE)).text.join("");
+  const closed = async () => Number((await one.query(statements("count closed"), SIZE)).text.join(""));
+  const before = await closed();
+  for (let round = 0; round < 2; round++) {
+    const two = await QConnection.open({ host: "127.0.0.1", port: q.port });
+    await two.call(gridLambda(false, "e".repeat(32)), statements("trade"), SIZE, 5);
+    assert.strictEqual(await held(), "1");
+    two.abort();
+    await new Promise((r) => setTimeout(r, 200));
+    assert.strictEqual(await held(), "0", `round ${round}`);
+  }
+  // The process's own handler ran for each close, once.
+  assert.strictEqual(await closed(), before + 2);
+  // This client's own result stays held while it is open.
+  await one.call(gridLambda(false, "f".repeat(32)), statements("trade"), SIZE, 5);
+  assert.strictEqual(await held(), "1");
+});
