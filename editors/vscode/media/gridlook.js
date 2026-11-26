@@ -25,13 +25,15 @@
 
   /// The format a column's name asks for, or null: {base, suffix, kind,
   /// digits, label}. `base` is the name without its suffix, which the
-  /// header shows. The suffix is matched in any case after the last `_`.
+  /// header shows. The suffix is matched after the last `_`, in upper case
+  /// only: q's names are lower snake case, and `order_num`, `zip_code` and
+  /// `item_pct` are plain columns (#3087).
   function columnFormat(name) {
-    const m = /^(.*[^_])_([A-Za-z]+?)(\d)?$/.exec(String(name));
+    const m = /^(.*[^_])_([A-Z]+?)(\d)?$/.exec(String(name));
     if (!m) {
       return null;
     }
-    const known = SUFFIXES[m[2].toUpperCase()];
+    const known = SUFFIXES[m[2]];
     if (!known || (m[3] !== undefined && known.digits === undefined)) {
       return null;
     }

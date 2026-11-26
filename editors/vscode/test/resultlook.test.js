@@ -23,10 +23,10 @@ function grid(columns) {
   };
 }
 
-test("a column's suffix names its format, in any case, with decimals, and the base name is what the header shows (#1012)", () => {
+test("a column's suffix names its format, with decimals, and the base name is what the header shows (#1012)", () => {
   assert.deepStrictEqual(L.columnFormat("ret_PCT"), { base: "ret", suffix: "PCT", kind: "pct", digits: 2, label: L.SUFFIXES.PCT.label });
-  assert.strictEqual(L.columnFormat("ret_pct1").digits, 1);
-  assert.strictEqual(L.columnFormat("spread_bps").kind, "bps");
+  assert.strictEqual(L.columnFormat("ret_PCT1").digits, 1);
+  assert.strictEqual(L.columnFormat("spread_BPS").kind, "bps");
   assert.strictEqual(L.columnFormat("a_b_CCY").base, "a_b");
   assert.strictEqual(L.columnFormat("px_BG").kind, "bg");
   assert.strictEqual(L.columnFormat("px_BG2"), null, "a colour takes no decimals");
@@ -423,6 +423,20 @@ test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of the
   const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
   const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<"));
   assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
+});
+
+test("a suffix names a format in upper case only: order_num, zip_code and item_pct are plain names (#3087)", () => {
+  for (const name of ["order_num", "seq_num", "zip_code", "crow_bar", "item_pct", "px_bg", "px_fg", "pnl_ccy", "spread_bps", "ret_pct1", "ret_Pct", "ret_pCT"]) {
+    assert.strictEqual(L.columnFormat(name), null, name);
+  }
+  // Nothing of them is reformatted, and their headers are whole.
+  const g = grid([["order_num", 7, ["1234567"]], ["year_num", 7, ["2024"]], ["item_pct", 9, ["50"]], ["zip_code", 11, ["a1"]], ["ret_PCT", 9, ["0.5"]]]);
+  const formats = L.columnFormats(g);
+  assert.deepStrictEqual(formats.slice(0, 4), [null, null, null, null]);
+  assert.deepStrictEqual(g.cells.map((c, i) => L.formatNumber(formats[i], g.values[i] && g.values[i][0], c[0])), ["1234567", "2024", "50", "a1", "50.00%"]);
+  assert.strictEqual(formats[4].base, "ret");
+  const md = require("../out/resultexport.js").toMarkdown({ count: 1, keys: 0, names: ["trade_num", "year_num", "item_pct"], types: [7, 7, 9], cells: [["20240001"], ["2024"], ["50"]], raw: [[20240001], [2024], [50]], rank: [[0], [0], [0]] }, 7, undefined, true);
+  assert.match(md, /\| 20240001 \| 2024 \| 50(\.0+)? \|/);
 });
 
 test("a rule on a long past 2^53 compares the integers q wrote, not the doubles they round to (#3085)", () => {
