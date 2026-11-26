@@ -4,6 +4,19 @@ f:{[a;b;c;d;e;f;g;h;i] a}
 === clean | exactly eight is legal
 f:{[a;b;c;d;e;f;g;h] a+b+c+d+e+f+g+h}
 
+=== clean | a parameter in brackets is one parameter, so two arguments fill the two (KDB-X: {[a;[k]] (a;k)}[1;2] is 1 2, #2946)
+r:{[a;[k]] (a;k)}[1;2]
+g:{[a;[k]] (a;k)}
+s:g[1;2]
+
+=== QA002 QA012 | and a third is one too many (KDB-X: 'rank, #2946)
+r:{[a;[k]] (a;k)}[1;2;3]
+g:{[a;[k]] (a;k)}
+s:g[1;2;3]
+
+=== QA001 | and it counts towards the eight (KDB-X: 'params, #2946)
+r:{[a;b;c;d;e;f;g;h;[k]] a,b,c,d,e,f,g,h,k}
+
 === QA002 | more arguments than the literal lambda takes
 {[a;b]a+b}[1;2;3]
 
