@@ -421,3 +421,26 @@ test("like on a symbol or enumerated column runs on the value it starts from (#3
     assert.deepStrictEqual(cells(answer, "v"), ["1"], code);
   }
 });
+
+test("the schema diagram reads the tables of a namespace in a namespace, and their foreign keys (#3052)", { skip }, async (t) => {
+  const q = await startQ(() => [
+    "trade:([] sym:`a`b; px:1 2f)",
+    '.ref.inst:([sym:`a`b] nm:("A";"B"))',
+    ".feed.book.l2:([] sym:`.ref.inst$`a`b; lvl:1 2)",
+    ".feed.book.deep.l3:([] lvl:1 2)",
+    // A dictionary of symbols is no namespace, and an excluded root is not walked.
+    ".feed.cfg:`a`b!(1;([] x:1 2))",
+    ".skip.in.t:([] a:1 2)",
+    "",
+  ].join("\n"));
+  t.after(() => q.stop());
+  const connection = await QConnection.open({ host: "127.0.0.1", port: q.port });
+  t.after(() => connection.abort());
+  const { tables, failed } = s.readSchema(await connection.call(s.SCHEMA, "q Q h j o s skip", s.SCHEMA_TABLES, s.SCHEMA_COLUMNS));
+  assert.deepStrictEqual(failed, []);
+  const mine = tables.filter((x) => /^(trade|\.ref\.|\.feed\.|\.skip\.)/.test(x.name));
+  assert.deepStrictEqual(mine.map((x) => x.name).sort(), [".feed.book.deep.l3", ".feed.book.l2", ".ref.inst", "trade"]);
+  assert.deepStrictEqual(s.schemaLinks(mine).map((l) => `${l.from}.${l.column}->${l.to} ${l.kind}`), [".feed.book.l2.sym->.ref.inst foreign key"]);
+  assert.match(s.schemaMermaid(mine), / {2}_ref_inst \|\|--o\{ _feed_book_l2 : "sym"/);
+  assert.strictEqual((s.schemaSvg(mine).match(/<path class="edge/g) ?? []).length, 1);
+});

@@ -40,15 +40,21 @@ export function readSchemaTools(get: <T>(key: string, fallback: T) => T): { temp
 }
 
 /// Every table's details: the root namespace's and those of the root
-/// namespaces not in `ex` (space separated, as the explorer's setting),
-/// at most `lim` tables of `nc` columns each. A table that cannot be
-/// read answers its error as a string.
+/// namespaces not in `ex` (space separated, as the explorer's setting) and
+/// of the namespaces in them, however deep (#3052), at most `lim` tables
+/// of `nc` columns each. A table that cannot be read answers its error as
+/// a string.
 export const SCHEMA = [
   "{[ex;lim;nc]",
   ` f:${TABLE_INFO.replace(/\n/g, "\n  ")};`,
   " n:(),tables`.;",
   " ns:` sv'`,'(key`)except(`$\" \" vs ex),`;",
-  " n,:raze{@[{$[99h=type get x;` sv'x,'tables x;`$()]};x;{`$()}]}each ns;",
+  // A child namespace is a dictionary whose first key is the null symbol,
+  // as DOCUMENT walks them (#2413).
+  " todo:ns where{$[99h=type d:@[get;x;0];11h=type key d;0b]}each ns;ns:`$();",
+  " while[count todo;s:first todo;todo:1_todo;ns,:s;d:get s;k:(key d)except`;",
+  "  todo,:` sv's,'k where{$[99h=type x;$[11h=type key x;(::)~first x;0b];0b]}each d k];",
+  " n,:raze{@[{` sv'x,'tables x};x;{`$()}]}each ns;",
   " n:(\"j\"$lim)sublist n;",
   " (string n;{[f;c;x]@[f[;c];string x;{x}]}[f;nc]each n)}",
 ].join("\n");
