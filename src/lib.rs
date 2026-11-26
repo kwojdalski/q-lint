@@ -8631,6 +8631,47 @@ fn lint_rules(
             )
         })
     };
+    // An iterator's derived function takes what the lambda takes: q 5
+    // `f'[1 2;3 4;5 6]`, `f/[1;2 3;4]` and `f\[1;2 3;4]` are 'rank for
+    // `f:{[a;b] a+b}` (#2940). Over and scan take two of a unary lambda as
+    // well - `{x}/[1;2 3]` runs it once and is 2 3 - and each-right,
+    // each-left and each-prior two of any and no more: `{x+y+z}/:[1;2;3]` is
+    // 'rank and `{x}/:[1;2 3]` too. A slot left empty is a projection of the
+    // derived function, `f'[1;2;]`, judged in `comments`, where a string is
+    // still text.
+    for m in re!(r"[}A-Za-z0-9_.](/:|\\:|':|['/\\])\[").captures_iter(code) {
+        let (glyph, open) = (m.get(1).unwrap(), m.get(0).unwrap().end() - 1);
+        let Some((rank, id)) = applied(glyph.start(), &code[..glyph.start()], glyph.start()) else {
+            continue;
+        };
+        let Some(close) = matching(code, open, b'[', b']') else {
+            continue;
+        };
+        let parts = slots(&code[open + 1..close - 1]);
+        let mut from = open + 1;
+        let elided = parts.iter().any(|part| {
+            let empty = v.comments[from..from + part.len()].trim().is_empty();
+            from += part.len() + 1;
+            empty
+        });
+        let most = match glyph.as_str() {
+            "'" => rank,
+            "/" | "\\" => rank.max(2),
+            _ => rank.min(2),
+        };
+        if rank > 0 && !elided && parts.len() > most {
+            add(
+                glyph.start(),
+                id,
+                format!(
+                    "{} arguments applied through `{}` to a function of rank {rank}, which \
+                     takes {most} that way: 'rank at runtime",
+                    parts.len(),
+                    glyph.as_str()
+                ),
+            );
+        }
+    }
     // The blanks around the dot are optional after a lambda and before a
     // parenthesis: q 5 parses `{x}.(1;2)`, `{x}. 1` and `f .(1;2)` as the
     // same dot apply (#441). A digit straight after it is a float: `f .1`.

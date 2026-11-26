@@ -616,6 +616,33 @@ f:{x+y}
 a:f . 1 2
 b:f . enlist 1
 
+=== QA012 | too many through an iterator, whose derived function takes what the lambda does (KDB-X: 'rank for each, #2940)
+f:{[a;b] a+b}
+a:f'[1 2;3 4;5 6]
+b:f/[1;2 3;4]
+c:f\[1;2 3;4]
+d:f/:[1;2 3;4]
+e:f\:[1 2;3;4]
+g:f':[1;2 3;4]
+
+=== QA002 | and to a lambda written out (KDB-X: 'rank for each, and for {x}/:[1;2 3], #2940)
+a:{[a;b] a+b}'[1 2;3 4;5 6]
+b:{x}/[1;2 3;4]
+c:{x}/:[1;2 3]
+
+=== clean | within the rank, an over that takes two of a unary lambda, and a projection of the derived function (KDB-X: {x}/[1;2 3] is 2 3 and f'[1;2;] is 104h)
+f:{[a;b] a+b}
+a:f'[1 2;3 4]
+b:f/[1;2 3]
+c:{x}/[1;2 3]
+d:{x}\[1;2 3]
+e:f'[1;2;]
+g:f/:[1;2 3]
+h:f':[1;2 3]
+i:{x+y+z}/[1;2 3;4 5]
+j:f'["a";"b"]
+k:{[f;a] f'[a;a;a]}
+
 === QA012 | too many under a handler too, which is then all that runs (KDB-X: .[f;(1;2;3);{x}] is "rank", #2939)
 f:{[a;b] a+b}
 a:.[f;(1;2;3);{x}]
