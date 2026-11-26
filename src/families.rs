@@ -39,6 +39,86 @@ fn argument(code: &str, comments: &str, source: &str, after: usize) -> Option<(u
     Some((start, argument_end(code, comments, source, start)?))
 }
 
+/// Whether `start..end` builds a query: joins a string that names a qSQL
+/// statement with something that is not a string literal.
+fn builds_query(code: &str, comments: &str, mut start: usize, mut end: usize) -> bool {
+    // Parentheses around the whole argument only group it: `value
+    // ("select ...",x)` runs the same query (#502).
+    loop {
+        let s = start + (code[start..end].len() - code[start..end].trim_start().len());
+        let e = start + code[start..end].trim_end().len();
+        if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
+            break;
+        }
+        (start, end) = (s + 1, e - 1);
+    }
+    let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#);
+    // A template filled by `ssr` takes its third argument into the query,
+    // and `raze` or `sv` joins the items of a list as `,` does two (#2735).
+    let whole = |open: usize, o: u8, c: u8| {
+        let last = start + code[start..end].trim_end().len();
+        (code.as_bytes().get(open) == Some(&o) && matching(code, open, o, c) == Some(last))
+            .then_some((open + 1, last - 1))
+    };
+    if let Some(m) = re!(r"^\s*ssr\s*\[").find(&code[start..end]) {
+        let Some((from, to)) = whole(start + m.end() - 1, b'[', b']') else {
+            return false;
+        };
+        let parts = slots(&code[from..to]);
+        return parts.len() == 3
+            && query.is_match(&comments[from..from + parts[0].len()])
+            && parts[2].bytes().any(|b| b.is_ascii_alphabetic());
+    }
+    let mut separator = b',';
+    if let Some(m) = re!(r#"^\s*(?:raze\b|"[^"]*"\s*sv\b)\s*\("#).find(&comments[start..end])
+        && let Some(list) = whole(start + m.end() - 1, b'(', b')')
+    {
+        (start, end) = list;
+        separator = b';';
+    }
+    let (text, masked) = (&comments[start..end], &code[start..end]);
+    // Joined at the top level of the argument, with a name in the join:
+    // the masked view has the strings blanked, so any name left in it is
+    // a value flowing into the query.
+    let mut depth = 0i32;
+    let joined = masked.bytes().any(|b| {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            _ => {}
+        }
+        b == separator && depth == 0
+    });
+    // A name outside any `$[...]`, or in one of its branches: a
+    // conditional that only chooses between string constants - KX's tick
+    // clog.q builds handler source that way - splices in no data,
+    // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
+    let mut unconditional = masked.as_bytes().to_vec();
+    let mut chosen = false;
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            unconditional[at..close].fill(b' ');
+            let parts = slots(&masked[at + 2..close - 1]);
+            let last = parts.len() - 1;
+            chosen |= parts.iter().enumerate().any(|(i, part)| {
+                (i % 2 == 1 || i == last && last > 0)
+                    && part.bytes().any(|b| b.is_ascii_alphabetic())
+            });
+        }
+    }
+    let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
+    // The query text itself has to be one of the joined pieces, not a
+    // branch of a conditional: there it is one of several constants.
+    let mut top = text.as_bytes().to_vec();
+    for (at, _) in masked.match_indices("$[") {
+        if let Some(close) = matching(masked, at + 1, b'[', b']') {
+            top[at..close].fill(b' ');
+        }
+    }
+    let top = String::from_utf8_lossy(&top);
+    query.is_match(&top) && joined && spliced
+}
+
 /// QX001. `value "select from t where sym=`",s` is how q gets injected: q has
 /// no parameterised query, so a query is built by joining strings and run by
 /// `value`, and whatever the joined value says is run with it. Verified: a
@@ -94,61 +174,45 @@ fn query_injection(path: &str, source: &str, code: &str, comments: &str, out: &m
         if !boundary(code, m.start()) || code[line..].starts_with('\\') {
             continue;
         }
-        let Some((mut start, mut end)) = argument(code, comments, source, m.end()) else {
+        let Some((start, end)) = argument(code, comments, source, m.end()) else {
             continue;
         };
-        // Parentheses around the whole argument only group it: `value
-        // ("select ...",x)` runs the same query (#502).
-        loop {
-            let s = start + (code[start..end].len() - code[start..end].trim_start().len());
-            let e = start + code[start..end].trim_end().len();
-            if code.as_bytes().get(s) != Some(&b'(') || matching(code, s, b'(', b')') != Some(e) {
-                break;
-            }
-            (start, end) = (s + 1, e - 1);
-        }
-        let (text, masked) = (&comments[start..end], &code[start..end]);
-        // Joined at the top level of the argument, with a name in the join:
-        // the masked view has the strings blanked, so any name left in it is
-        // a value flowing into the query.
-        let mut depth = 0i32;
-        let joined = masked.bytes().any(|b| {
-            match b {
-                b'(' | b'[' | b'{' => depth += 1,
-                b')' | b']' | b'}' => depth -= 1,
-                _ => {}
-            }
-            b == b',' && depth == 0
-        });
-        // A name outside any `$[...]`, or in one of its branches: a
-        // conditional that only chooses between string constants - KX's tick
-        // clog.q builds handler source that way - splices in no data,
-        // whatever its condition reads, but `$[x;y;"a"]` splices `y` (#653).
-        let mut unconditional = masked.as_bytes().to_vec();
-        let mut chosen = false;
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                unconditional[at..close].fill(b' ');
-                let parts = slots(&masked[at + 2..close - 1]);
-                let last = parts.len() - 1;
-                chosen |= parts.iter().enumerate().any(|(i, part)| {
-                    (i % 2 == 1 || i == last && last > 0)
-                        && part.bytes().any(|b| b.is_ascii_alphabetic())
-                });
-            }
-        }
-        let spliced = chosen || unconditional.iter().any(u8::is_ascii_alphabetic);
-        // The query text itself has to be one of the joined pieces, not a
-        // branch of a conditional: there it is one of several constants.
-        let mut top = text.as_bytes().to_vec();
-        for (at, _) in masked.match_indices("$[") {
-            if let Some(close) = matching(masked, at + 1, b'[', b']') {
-                top[at..close].fill(b' ');
-            }
-        }
-        let top = String::from_utf8_lossy(&top);
-        let query = re!(r#""[^"]*\b(?:select|exec|update|delete)\b[^"]*""#).is_match(&top);
-        if query && joined && spliced {
+        // Built where it is run, or into a local this lambda runs on a later
+        // statement - `q:"select ...",s; value q`, the commoner way to write
+        // it (#2735). Any assignment of the local before the call counts.
+        let built = builds_query(code, comments, start, end) || {
+            let name = code[start..end].trim();
+            re!(r"^[A-Za-z][A-Za-z0-9_]*$").is_match(name)
+                && crate::enclosing_brace(code, m.start()).is_some_and(|brace| {
+                    code[brace..m.start()].match_indices(name).any(|(i, _)| {
+                        let at = brace + i;
+                        let value = code[at + name.len()..].trim_start_matches([' ', '\t']);
+                        let from = code.len() - value.len() + 1;
+                        if !boundary(code, at)
+                            || !value.starts_with(':')
+                            || value.starts_with("::")
+                            || crate::enclosing_brace(code, at) != Some(brace)
+                        {
+                            return false;
+                        }
+                        // The assigned value runs to the statement's end.
+                        let mut depth = 0i32;
+                        let stop = code[from..m.start()]
+                            .bytes()
+                            .position(|b| {
+                                match b {
+                                    b'(' | b'[' | b'{' => depth += 1,
+                                    b')' | b']' | b'}' => depth -= 1,
+                                    _ => {}
+                                }
+                                depth < 0 || b == b';' && depth == 0
+                            })
+                            .map_or(m.start(), |p| from + p);
+                        builds_query(code, comments, from, stop)
+                    })
+                })
+        };
+        if built {
             out.push(Finding::at(
                 path,
                 source,

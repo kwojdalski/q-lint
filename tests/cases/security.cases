@@ -137,5 +137,23 @@ password:"abc"
 === QX001 | the joined query in parentheses is the same query (#502)
 f:{value ("select from t where s=`",x)}
 
+=== QX001 | a query built into a local and run on a later statement, on one path or every one (#2735)
+f:{[s] q:"select from t where sym=`",s; value q}
+g:{[s] q:"select from t"; if[count s; q:"select from t where sym=`",s]; get q}
+
+=== QX001 | raze or sv of a list joins its items, and ssr fills a template (#2735)
+f:{[s] value raze ("select from t where sym=`";s)}
+g:{[s] value " " sv ("select from t where sym=";s)}
+h:{[s] value ssr["select from t where sym=X";"X";s]}
+k:{[s] q:raze ("select from t where sym=`";s); value q}
+
+=== clean | a local that holds a constant, another lambda's local of the name, a global, and constants razed or filled in (#2735)
+f:{[s] q:"select from t"; (s;value q)}
+g:{[s] q:"select from t where sym=`",s; (q;{[q] value q}"1+1")}
+h:{[s] q::"select from t where sym=`",s; value s}
+k:{value raze ("select from t";" where a=1")}
+l:{value ssr["select from t where sym=X";"X";"`a"]}
+m:{[s] msg:"select a file ",s; show msg; value s}
+
 === clean | a parenthesised constant query (#502)
 f:{value ("select from t")}
