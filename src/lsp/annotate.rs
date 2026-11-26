@@ -10,6 +10,7 @@
 //! on the path goes.
 use super::navigate::{Sources, range};
 use super::{Lines, file_key, path_of};
+use q_lint_rs::graph::Placement;
 use q_lint_rs::{Mention, argument_slots, load_paths, mentions, typed_locals};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -287,7 +288,8 @@ fn declared(
 /// A function a statement at column 0 defines, as a lens or a test runs
 /// it: the name as written at `at` for `len` bytes, the name q gives it
 /// once defined, the code that defines it (the statement, wrapped in
-/// `\d .ns` and `\d .` when it is written under `\d .ns`) and, for a test,
+/// `\d .ns` and `\d .` when it is written under `\d .ns`, or before the
+/// first `\d` of a file that runs in `.ns` alone) and, for a test,
 /// the call that runs it once defined and the code that defines the qUnit
 /// fixtures that call runs around it (#1590).
 pub(super) struct Runnable {
@@ -327,8 +329,9 @@ const FIXTURES_AFTER: [&str; 2] = ["tearDown", "afterNamespace"];
 /// or more memory, than its namespace's `qunitConfig` allows (#2103).
 const OVER_CONFIG: &str = "exceeded max config time/mem";
 
-/// Each function a statement at column 0 of `text` defines, in order.
-pub(super) fn runnables(text: &str) -> Vec<Runnable> {
+/// Each function a statement at column 0 of `text` defines, in order, in
+/// a file its loaders put at `placement`.
+pub(super) fn runnables(text: &str, placement: &Placement) -> Vec<Runnable> {
     let mut out: Vec<Runnable> = vec![];
     let mut seen = HashSet::new();
     // A file that uses qUnit runs every `test*` of a namespace, as
@@ -337,6 +340,15 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
     // Read once: asked for each definition, the whole file was read again
     // for each (#1216).
     let contexts = q_lint_rs::contexts(text);
+    // Where a bare name written before the file's first `\d` lands when
+    // the file runs in one context and not at the root - loaded under
+    // `\d .lib`, or a KDB-X module, which runs in `.m.<name>`: defined at
+    // the root, it is a copy nothing else reads, of a body whose own bare
+    // names are not there (#2671).
+    let loaded = placement
+        .contexts
+        .first()
+        .filter(|_| !placement.root && placement.contexts.len() == 1);
     // A namespace's `qunitConfig`, where and as it is defined (#2103): not a
     // function, so no runnable, but sent with the tests it configures.
     let mut configs: Vec<(usize, String, String)> = vec![];
@@ -356,7 +368,8 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
                     .wrapping_sub(1),
             )
             .map(|(_, ns)| ns.clone())
-            .filter(|ns| !ns.is_empty() && ns != ".");
+            .filter(|ns| !ns.is_empty() && ns != ".")
+            .or_else(|| loaded.filter(|_| m.implicit).cloned());
         let code = match &context {
             Some(ns) => format!("\\d {ns}\n{statement}\n\\d ."),
             None => statement.to_string(),
@@ -364,7 +377,12 @@ pub(super) fn runnables(text: &str) -> Vec<Runnable> {
         // Called by the name it has once defined: a bare one before the
         // file's first `\d` is wherever the process puts it, the root for a
         // query.
-        let name = if m.implicit { spelled } else { &m.name };
+        let placed = loaded.map(|ns| format!("{ns}.{spelled}"));
+        let name = match &placed {
+            Some(placed) if m.implicit => placed,
+            _ if m.implicit => spelled,
+            _ => &m.name,
+        };
         if !definition.function {
             if qunit
                 && namespace_of(name).is_some_and(|(_, leaf)| leaf == "qunitConfig")
@@ -498,7 +516,8 @@ fn code_lenses(params: &Value, sources: &Sources) -> Value {
     };
     let lines = Lines::new(text);
     let mut lenses = vec![];
-    for run in runnables(text) {
+    let placement = sources.placement(&file_key(&path_of(uri)));
+    for run in runnables(text, &placement) {
         let at = range(&lines, run.at, run.len);
         let lens = |title: &str, code: String| {
             json!({"range": at, "command": {"title": title, "command": RUN_COMMAND,

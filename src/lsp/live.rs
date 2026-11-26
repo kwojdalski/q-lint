@@ -126,7 +126,7 @@ fn tests(params: &Value, sources: &Sources) -> Value {
             continue;
         };
         let lines = Lines::new(&text);
-        let tests: Vec<Value> = runnables(&text)
+        let tests: Vec<Value> = runnables(&text, &sources.placement(&key))
             .into_iter()
             .filter_map(|run| {
                 let call = run.test?;

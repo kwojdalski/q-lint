@@ -824,7 +824,9 @@ lens on the name of each function a statement at column 0 defines, and a
 as qUnit's do. Each runs the command
 `q-lint.runDefinition` with two arguments: the code to send and the
 document's URI. Run's code is the statement, wrapped in `\d .ns` and `\d .`
-when it is written under `\d .ns`; Run test's is that, then a call of the
+when it is written under `\d .ns` - or before the first `\d` of a file that
+runs in `.ns` alone, one loaded only under `\d .ns` or a KDB-X module
+(`.m.<name>`); Run test's is that, then a call of the
 function by its full name with no argument (`.ns.test_x[]`). It is off by
 default because only a client that registers that command - the VS Code
 extension, which sends the code to the connected q process - can run it.

@@ -851,6 +851,46 @@ fn the_workspace_tests_are_listed_with_the_code_that_runs_them() {
     assert_eq!(span(&tests[0]["range"]), (2, 0, 8));
 }
 
+/// A file loaded only under `\d .lib`, and a KDB-X module, define their
+/// bare names in that context, and their bodies read them there: Run and
+/// Run test define and call them where the index has them, not as root
+/// copies nothing reads (#2671).
+#[test]
+fn a_function_of_a_file_placed_in_a_context_is_run_there() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+    std::fs::create_dir_all(dir.path().join("mymod")).unwrap();
+    let files = [
+        ("main.q", "\\d .lib\n\\l lib/u.q\n\\d .\nm:use`mymod\n"),
+        ("lib/u.q", "test_f:{1b}\n"),
+        ("mymod/init.q", "helper:{x+1}\nf:{helper x}\nexport:([f])\n"),
+    ];
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "lib/u.q", files[1].1);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            lens(0, "Run", "\\d .lib\ntest_f:{1b}\n\\d ."),
+            lens(0, "Run test", "\\d .lib\ntest_f:{1b}\n\\d .\n.lib.test_f[]"),
+        ]
+    );
+    let reply = server.request("q-lint/tests", json!({"textDocument": {"uri": uri}}));
+    let test = &reply["result"][0]["tests"][0];
+    assert_eq!(test["call"], ".lib.test_f[]", "{reply}");
+    assert_eq!(test["qualified"], ".lib.test_f", "{reply}");
+    let uri = server.open(dir.path(), "mymod/init.q", files[2].1);
+    let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+    assert_eq!(
+        lenses(&reply, &uri),
+        [
+            lens(0, "Run", "\\d .m.mymod\nhelper:{x+1}\n\\d ."),
+            lens(1, "Run", "\\d .m.mymod\nf:{helper x}\n\\d ."),
+        ]
+    );
+}
+
 /// A file that uses qUnit has every `test*` of a namespace run, as
 /// `.qunit.runNsTests` does (#1591).
 #[test]

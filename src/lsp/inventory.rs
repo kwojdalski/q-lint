@@ -186,7 +186,7 @@ fn dead_code(params: &Value, sources: &Sources) -> Value {
             }
         }
         spelled(&text, &mut words);
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 tests.insert(text[run.at..run.at + run.len].to_string());
             }
@@ -300,7 +300,7 @@ fn tests_reaching(params: &Value, sources: &Sources) -> Value {
                 }
             }
         }
-        for run in runnables(&text) {
+        for run in runnables(&text, &placement) {
             if run.test.is_some() {
                 let spelled = text[run.at..run.at + run.len].to_string();
                 let resolved = all.iter().find(|m| m.at == run.at).map_or_else(
