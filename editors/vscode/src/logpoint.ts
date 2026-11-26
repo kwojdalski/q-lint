@@ -10,7 +10,8 @@
 // kept in `.qlint.log.orig`. The keeping is trapped: where q refuses a
 // global write - under `reval`, in a secondary thread of `peach` - the call
 // is not kept and the function still answers (#1894). Removing it puts that back, unless `f` was
-// redefined meanwhile, which is left as it is; when the last logpoint goes,
+// redefined meanwhile, which is left as it is - and which is listed as having
+// no logpoint, and takes a new one (#2558); when the last logpoint goes,
 // `.qlint.log` goes too. `.qlint` itself stays, empty when nothing else of
 // q-lint's is in it: q has no call that removes a context, and
 // `delete qlint from`.` deletes the user's root variable of that name
@@ -31,7 +32,10 @@ export const LOG_ADD = [
   "{[nm]",
   " nm:`$(),nm;f:@[get;nm;{::}];",
   " if[not 100h=type f;'\"not a lambda on the process\"];",
-  " if[nm in key@[get;`.qlint.log.orig;{(`$())!()}];'\"it has a logpoint already\"];",
+  // A name redefined since its logpoint has none any more: the stale entry
+  // goes, and the new definition is wrapped (#2558).
+  " o:@[get;`.qlint.log.orig;{(`$())!()}];",
+  " if[nm in key o;$[.qlint.log.wrap[nm]~f;'\"it has a logpoint already\";[.qlint.log.orig:(enlist nm)_o;.qlint.log.wrap:(enlist nm)_.qlint.log.wrap]]];",
   " p:(value f)1;if[p~enlist`;p:`$()];",
   " s:\";\"sv string p;a:$[0=count p;\"enlist(::)\";1=count p;\"enlist \",s;\"(\",s,\")\"];n:\"`\",string nm;",
   " w:value\"{[\",s,\"] 0N!(\",n,\";\",a,\");@[{.qlint.log.hits:-1000 sublist .qlint.log.hits,enlist x};(.z.p;\",n,\";300 sublist -3!\",a,\");{}];.qlint.log.orig[\",n,\"] . \",a,\"}\";",
@@ -54,11 +58,13 @@ export const LOG_REMOVE = [
 ].join("\n");
 
 /// An expression that reads, and changes nothing: the names with a
-/// logpoint, and the calls kept, oldest first, as (time; name; arguments).
+/// logpoint - those still holding their wrapper, not one redefined since
+/// (#2558) - and the calls kept, oldest first, as (time; name; arguments).
 export const LOG_LIST = [
   "{[]",
   " if[not`log in key`.qlint;:`names`hits!(();())];",
-  " `names`hits!(string key .qlint.log.orig;{(string x 0;string x 1;x 2)}each .qlint.log.hits)}[]",
+  " n:{x where{.qlint.log.wrap[x]~@[get;x;{::}]}each x}key .qlint.log.orig;",
+  " `names`hits!(string n;{(string x 0;string x 1;x 2)}each .qlint.log.hits)}[]",
 ].join("\n");
 
 export interface Hit {
