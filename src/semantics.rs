@@ -565,6 +565,12 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
     let mut statements = vec![];
     let (mut start, mut at, mut depth) = (0, 0, 0);
     for line in code.split_inclusive('\n') {
+        // A bracket left open ends where the next statement begins, as the
+        // lambdas of `scopes` do: every statement after one being typed was
+        // part of it, and none of them had a lens (#2960).
+        if depth != 0 && begins_statement(line, &raw[at..at + line.len()]) {
+            depth = 0;
+        }
         if depth == 0 && !raw[at..].starts_with([' ', '\t']) {
             statements.push((start, &code[start..at]));
             start = at;
@@ -869,6 +875,20 @@ pub(crate) fn opens_later(code_line: &str, raw_line: &str) -> Vec<(usize, String
 pub(crate) fn contexts(code: &str, raw: &str) -> Vec<(usize, String)> {
     scopes(code, raw).1
 }
+/// Whether `line` of the code view, `raw` in the source, starts a statement
+/// whatever is open above it: one at column 0 does, as `crate::begins` has
+/// it for the structural check. A comment line is blank in the view and
+/// does not count; a `q)` prompt is a `;` there and does; and a line opening
+/// a string, or one in k, is blank there though it starts a statement, so
+/// the source is asked.
+///
+/// Not a line that starts with a closer, though q 5 refuses that one too
+/// (`f:{[y]` + `  y+1` + `}` is '{, as QE001 says): it is how a lambda was
+/// closed where an older q read the file, and nothing is being typed there.
+fn begins_statement(line: &str, raw: &str) -> bool {
+    let column_0 = |c: char| !c.is_ascii_whitespace() && !")]}".contains(c);
+    line.starts_with(column_0) || raw.starts_with('"') || raw.starts_with("k)")
+}
 /// Every lambda in the file, with what it binds, and the namespace in force
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
@@ -885,6 +905,22 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let mut namespaces = vec![];
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
+        // A line at column 0 begins a statement, so a lambda still open
+        // there is never closed: q 5 refuses `new:{` and reads the next
+        // line as its own. Read to the end of the file instead, a lambda
+        // being typed took every definition below it for its body, and the
+        // outline, the lenses and other files' Go to Definition lost them
+        // (#2960). `problems` reports the brace, and ends it here too.
+        if !stack.is_empty() && begins_statement(line, &raw[offset..offset + line.len()]) {
+            // At the newline before the line, where a `}` would be: an end
+            // is the byte of its closer, and what reads past it starts at
+            // `end + 1`, which at `offset` itself fell inside a character
+            // of more than one byte opening the line (`é`).
+            for s in stack.drain(..) {
+                scopes[s].end = offset - 1;
+            }
+            beyond = 0;
+        }
         if stack.is_empty()
             && let Some(ns) = opens(line, &raw[offset..offset + line.len()])
         {
@@ -2427,7 +2463,8 @@ fn load_sites(code: &str, raw: &str, view: &str) -> Vec<(usize, Range<usize>, bo
 }
 
 /// The bytes of each path `references` counts as a load, which a
-/// navigation request on one follows to the file it names.
+/// navigation request on one follows to the file it names - and one after
+/// a `\cd` that `directory_at` settles, which it follows from there.
 pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     let view = commands_blanked(code, raw);
     let (scopes, _) = scopes(code, raw);
@@ -2436,10 +2473,68 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
     sites
         .into_iter()
         .filter(|(at, path, symbol)| {
-            *symbol || !displaced(&scopes, &changes, *at) || raw[path.clone()].starts_with('/')
+            *symbol
+                || !displaced(&scopes, &changes, *at)
+                || raw[path.clone()].starts_with('/')
+                || moved_to(raw, &scopes, &changes, *at).is_some()
         })
         .map(|(_, path, _)| path)
         .collect()
+}
+
+/// The directory a relative load at `at` is read from, when the script
+/// has changed directory by then and the text says to where: each `\cd
+/// dir` and `system "cd dir"` before it, joined in order from where q
+/// started - `lib`, `lib/sub`, or an absolute path. q 5 loads lib/x.q for
+/// `\cd lib` then `\l x.q` (#763), so a link, a definition, a rename and
+/// completion follow `\l x.q` there (#2961). Nothing where no change of
+/// directory has run, or one has whose directory reading cannot know: a
+/// path joined at run time, `system "cd ",d`, or the load of what may be a
+/// directory.
+pub fn directory_at(code: &str, raw: &str, at: usize) -> Option<String> {
+    let view = commands_blanked(code, raw);
+    let (scopes, _) = scopes(code, raw);
+    // Not the load at `at` itself, which may be of a directory but has not
+    // run by the time its own path is read - nor one still being typed.
+    let mut sites = load_sites(code, raw, &view);
+    sites.retain(|(_, path, _)| path.end < at);
+    let changes = changes_directory(code, raw, &view, &sites);
+    moved_to(raw, &scopes, &changes, at)
+}
+
+/// `directory_at`, over the changes of directory `changes_directory`
+/// found.
+fn moved_to(raw: &str, scopes: &[Scope], changes: &[usize], at: usize) -> Option<String> {
+    let mut ran: Vec<usize> = changes
+        .iter()
+        .copied()
+        .filter(|&change| displaced(scopes, &[change], at))
+        .collect();
+    ran.sort_unstable();
+    ran.dedup();
+    let mut dir: Option<String> = None;
+    for change in ran {
+        let rest = &raw[change..];
+        let to = re!(r"^\\cd[ \t]+(\S+)[ \t]*\r?(?:\n|$)")
+            .captures(rest)
+            .or_else(|| {
+                re!(r#"^system\s*(?:\[\s*|@\s*|\(\s*)?"cd\s+([^"\s]+)\s*"\s*(?:[\])]|;|\r?\n|$)"#)
+                    .captures(rest)
+            })?
+            .get(1)?
+            .as_str()
+            .trim_end_matches(['/', '\\']);
+        if to.is_empty() {
+            return None;
+        }
+        dir = Some(match dir {
+            Some(dir) if !std::path::Path::new(to).is_absolute() && !to.starts_with('/') => {
+                format!("{dir}/{to}")
+            }
+            _ => to.to_string(),
+        });
+    }
+    dir
 }
 
 /// Each literal handle 0 given something to run, with where what it is
@@ -6706,6 +6801,37 @@ enum Assigned<'a> {
     Other,
 }
 
+/// Whether what follows `after` is an argument the code view does not show
+/// on the line: a string, which is blank there, or anything on an indented
+/// line below, which goes on with the statement. KDB-X 5 reads `a:upper "s"`
+/// as a character, and `a:count` and then `  1 2 3` as a long - over a blank
+/// line or a comment's between them too, and at a line end in a lambda -
+/// where each was read as another name for the function (#2965). A closer
+/// or a `;` that leads the line below ends the statement instead.
+pub(crate) fn argument_follows(code: &str, raw: &str, after: usize) -> bool {
+    let string = |raw: &str| raw.trim_start_matches([' ', '\t']).starts_with('"');
+    let mut at = after;
+    for (n, line) in code[after..].split_inclusive('\n').enumerate() {
+        let said = &raw[at..at + line.len()];
+        let indented = n == 0 || said.starts_with([' ', '\t']);
+        at += line.len();
+        // A string here, and not a comment, where the line goes on with
+        // the statement: blank in the code view, whatever follows it.
+        if indented && string(said) {
+            return true;
+        }
+        let shown = line.trim();
+        if !shown.is_empty() {
+            return n > 0 && indented && !shown.starts_with([';', ')', ']', '}']);
+        }
+        // A line that begins the next statement ends the search.
+        if n > 0 && !indented && !said.trim().is_empty() && !said.starts_with('/') {
+            return false;
+        }
+    }
+    false
+}
+
 /// `Assigned` of the value at `at`.
 fn assigned_value<'a>(code: &'a str, raw: &str, at: usize) -> Assigned<'a> {
     if let Some(rank) = assigned_rank(code, raw, at) {
@@ -6713,7 +6839,10 @@ fn assigned_value<'a>(code: &'a str, raw: &str, at: usize) -> Assigned<'a> {
     }
     let ends = |from: usize| {
         let after = code[from..].trim_start_matches([' ', '\t']);
-        after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}'])
+        // `a:upper "s"`, and `a:count` with `  1 2 3` on the line below,
+        // assign what the function returns (#2965).
+        !argument_follows(code, raw, from)
+            && (after.is_empty() || after.starts_with([';', '\n', '\r', ')', ']', '}']))
     };
     let at = chained_value(code, at);
     let start = code.len() - code[at..].trim_start_matches([' ', '\t']).len();

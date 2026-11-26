@@ -235,6 +235,42 @@ fn a_call_to_a_workspace_function_shows_its_parameter_names() {
     assert_eq!(hints(&reply), [hint(5, 10, "qty:")]);
 }
 
+// #2952: a call was hinted only when its name was in the range asked for,
+// so one written over several lines lost every hint once its first line
+// scrolled out of view.
+#[test]
+fn an_argument_in_the_range_is_hinted_though_its_call_began_above_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "f:{[alpha;beta;gamma] alpha}\nr:f[\n  1;\n  2;\n  3]\ns:f[4;5;6]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let mut over = |from: u64, to: u64| {
+        let range = json!({"range": {"start": {"line": from, "character": 0},
+                                     "end": {"line": to, "character": 0}}});
+        hints(&server.whole("textDocument/inlayHint", &uri, range))
+    };
+    let (alpha, beta, gamma) = (
+        hint(2, 2, "alpha:"),
+        hint(3, 2, "beta:"),
+        hint(4, 2, "gamma:"),
+    );
+    assert_eq!(over(0, 5), [alpha.clone(), beta.clone(), gamma.clone()]);
+    // The call's name is on line 1, above each of these ranges.
+    assert_eq!(over(3, 5), [beta.clone(), gamma.clone()]);
+    assert_eq!(over(2, 3), [alpha]);
+    assert_eq!(over(4, 5), [gamma]);
+    // And an argument outside the range is not drawn for its call's sake.
+    assert_eq!(over(1, 2), []);
+    assert_eq!(
+        over(5, 6),
+        [
+            hint(5, 4, "alpha:"),
+            hint(5, 6, "beta:"),
+            hint(5, 8, "gamma:")
+        ]
+    );
+}
+
 #[test]
 fn a_string_argument_is_hinted_where_it_starts() {
     // #2025: the arguments were found in the code view, where a string is
@@ -265,6 +301,45 @@ fn a_string_argument_is_hinted_where_it_starts() {
             // A comment is no part of the argument after it.
             hint(5, 5, "sym:"),
             hint(6, 2, "px:"),
+        ],
+        "{reply}"
+    );
+}
+
+// #2950: a call to a function defined on a `k)` line had no hints, its
+// signature never read.
+#[test]
+fn a_call_to_a_function_defined_on_a_k_line_shows_its_parameter_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "k)kf:{[aa;bb] aa}\nk)kg:{x+y}\nr:kf[1;2]\ns:kg[1;2]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    // `kg` declares no signature, as on a q line.
+    assert_eq!(
+        hints(&reply),
+        [hint(2, 5, "aa:"), hint(2, 7, "bb:")],
+        "{reply}"
+    );
+}
+
+// #2966: a call whose brackets are on the next, indented line - which
+// KDB-X 5 runs as the call - drew no hints.
+#[test]
+fn a_call_whose_brackets_are_on_a_continuation_line_is_hinted() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let main = "cc:{[sym;px] px}\nr:cc\n  [1;2]\ns:cc / the call\r\n\t[3;\r\n\t 4]\nt:cc\n[5;6]\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(2, 3, "sym:"),
+            hint(2, 5, "px:"),
+            hint(4, 2, "sym:"),
+            hint(5, 2, "px:"),
+            // A bracket at column 0 starts a statement, and calls nothing.
         ],
         "{reply}"
     );
@@ -352,6 +427,36 @@ fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
         ],
         "{reply}"
     );
+}
+
+/// A lambda, a list or a call left open above them took every statement
+/// below for its own, and none of them had a lens (#2960).
+#[test]
+fn the_functions_after_a_statement_left_open_keep_their_lenses() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    for (name, open) in [
+        ("brace.q", "new:{"),
+        ("paren.q", "k:(1;"),
+        ("call.q", "k:f[1;"),
+    ] {
+        let text = format!("{open}\nf:{{[a;b] a+b}}\ng:{{[c] f[c;1]}}\n");
+        let uri = server.open(dir.path(), name, &text);
+        let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+        let after: Vec<_> = lenses(&reply, &uri)
+            .into_iter()
+            .filter(|(line, _, _)| *line > 0)
+            .collect();
+        assert_eq!(
+            after,
+            [
+                lens(1, "Run", "f:{[a;b] a+b}"),
+                lens(2, "Run", "g:{[c] f[c;1]}")
+            ],
+            "{open}: {reply}"
+        );
+    }
 }
 
 /// Hints and lenses over a file of N definitions, each calling the one
@@ -501,6 +606,61 @@ fn each_load_path_links_to_the_file_it_loads() {
     );
     let reply = &reply["result"][0];
     assert_eq!(reply["tooltip"], "Open lib/util.q", "{reply}");
+}
+
+/// After `\cd dir`, q 5 loads dir/x.q for `\l x.q`: the graph knew it by
+/// the names x.q defines, but the load had no link, Go to Definition on its
+/// path nothing, a rename of dir/x.q left it naming the old file, and
+/// completion offered the workspace root's files (#2961).
+#[test]
+fn a_load_after_a_change_of_directory_is_read_from_there() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("dir/sub")).unwrap();
+    let text = "\\cd dir\n\\l x.q\n\\cd sub\n\\l s.q\n\\l \n";
+    let files = [
+        ("x.q", "top:1\n"),
+        ("dir/x.q", "g:{[a;b] a}\n"),
+        ("dir/sub/s.q", "s:1\n"),
+        ("other.q", "\\l dir/x.q\n"),
+        ("main.q", text),
+        ("computed.q", "system \"cd \",d\n\\l x.q\n"),
+    ];
+    let options = json!({"renameLoads": {"enable": true}, "loadPathCompletion": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &files, client(), options);
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.whole("textDocument/documentLink", &uri, json!({}));
+    assert_eq!(
+        links(&reply, dir.path()),
+        [
+            (1, 3, 6, "dir/x.q".to_string()),
+            (3, 3, 6, "dir/sub/s.q".into())
+        ],
+        "{reply}"
+    );
+    let at =
+        |line: u64, character: u64| json!({"position": {"line": line, "character": character}});
+    let reply = server.whole("textDocument/definition", &uri, at(1, 4));
+    let target = reply["result"][0]["uri"].as_str().unwrap_or_default();
+    assert!(target.ends_with("/dir/x.q"), "{reply}");
+    let reply = server.whole("textDocument/completion", &uri, at(4, 3));
+    assert_eq!(labels(&reply), ["s.q"], "{reply}");
+    // Where the directory is computed, reading cannot say where the load
+    // goes, and it is linked nowhere rather than to the root's x.q.
+    let computed = server.open(dir.path(), "computed.q", "system \"cd \",d\n\\l x.q\n");
+    let reply = server.whole("textDocument/documentLink", &computed, json!({}));
+    assert_eq!(links(&reply, dir.path()), [], "{reply}");
+    let reply = server.request(
+        "workspace/willRenameFiles",
+        rename_params(dir.path(), &[("dir/x.q", "dir/y.q")]),
+    );
+    assert_eq!(
+        renamed(&reply, dir.path()),
+        [
+            ("main.q".to_string(), 1, 3, 6, "y.q".to_string()),
+            ("other.q".into(), 0, 3, 10, "dir/y.q".into()),
+        ],
+        "{reply}"
+    );
 }
 
 /// A load after a language prefix is a load: KDB-X 5 runs b.q for
@@ -1222,6 +1382,43 @@ fn the_global_at_a_position_is_named_as_q_resolves_it() {
     assert_eq!(at(&mut server, 3, 3), Value::Null);
 }
 
+// #2958: a column was named as the global of its name, and the live value
+// hover then showed the process's `c` over the `c` of `select c from t`.
+#[test]
+fn a_name_in_a_query_phrase_is_no_global_to_ask_a_process_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "c:1\nt:([]c:1 2;s:`a`b)\n\
+                select c from t\n\
+                exec c by s from t\n\
+                select from t where c>1\n\
+                select from t where (c>1),s in `a\n\
+                select from t where c>.cfg.limit\n\
+                r:c+count t\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let mut names = |line: u64, character: u64| {
+        server.whole(
+            "q-lint/globalAt",
+            &uri,
+            json!({"position": {"line": line, "character": character}}),
+        )["result"]["names"]
+            .clone()
+    };
+    // In `select`, `by` and `where`, in parentheses too.
+    assert_eq!(names(2, 7), Value::Null);
+    assert_eq!(names(3, 5), Value::Null);
+    assert_eq!(names(3, 10), Value::Null);
+    assert_eq!(names(4, 20), Value::Null);
+    assert_eq!(names(5, 21), Value::Null);
+    // The table is a global, as is a name no column can have.
+    assert_eq!(names(2, 14), json!(["t"]));
+    assert_eq!(names(3, 17), json!(["t"]));
+    assert_eq!(names(6, 24), json!([".cfg.limit"]));
+    // And outside a query `c` is the global.
+    assert_eq!(names(7, 2), json!(["c"]));
+    assert_eq!(names(7, 10), json!(["t"]));
+}
+
 #[test]
 fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
     let dir = tempfile::tempdir().unwrap();
@@ -1729,6 +1926,73 @@ fn the_workspace_definitions_and_its_unused_functions_are_listed() {
     assert!(reply["result"]["dynamic"].as_u64().unwrap() >= 1, "{reply}");
 }
 
+/// The names `q-lint/deadCode` lists for a workspace of `files`, sorted.
+fn dead(files: &[(&str, &str)]) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut server, _) = Server::over(dir.path(), files, client(), Value::Null);
+    let reply = server.request("q-lint/deadCode", json!({}));
+    let mut dead: Vec<String> = reply["result"]["functions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{reply}"))
+        .iter()
+        .map(|d| d["name"].as_str().unwrap().to_string())
+        .collect();
+    dead.sort();
+    dead
+}
+
+// #2956: the symbols and strings that may reach a function by name were
+// read from the source with its comments in it.
+#[test]
+fn a_function_a_comment_names_is_dead_all_the_same() {
+    // A comment naming a function in backticks - as its documentation
+    // does - is no read of it.
+    let documented = "/ Calls `helper on each row, and \"other\" too\nhelper:{x}\nother:{x}\n";
+    assert_eq!(dead(&[("a.q", documented)]), ["helper", "other"]);
+    // Nor does a quote in one open a string: this one ran to the quote of
+    // the next comment, and hid every function between.
+    let quoted = "/ don't use \"quotes\nhelper:{x}\nother:{x}\n/ end\" here\nmain:{1}\n";
+    assert_eq!(dead(&[("a.q", quoted)]), ["helper", "main", "other"]);
+    // A comment after code, and a block of them.
+    let trailing = "helper:{x} / see `helper\n/\n`other\n\\\nother:{x}\n";
+    assert_eq!(dead(&[("a.q", trailing)]), ["helper", "other"]);
+    // What q does read still counts: a symbol, a string, and a `/` that is
+    // an iterator and not a comment.
+    let read =
+        "helper:{x}\nother:{x}\nplus:{x+y}\nd:`a`helper!1 2\ns:\"other[1]\"\nr:(`plus)/[1 2]\n";
+    assert!(dead(&[("a.q", read)]).is_empty());
+}
+
+// #2957: tests were exempt and the fixtures qUnit runs around them were
+// not, so a suite's `setUp` was listed for deletion.
+#[test]
+fn a_fixture_qunit_calls_by_its_name_is_not_dead() {
+    let suite = ".utl.require\"qunit\"\n\
+                 .mytests.beforeNamespace:{[] .mytests.h:hopen 0}\n\
+                 .mytests.setUp:{[] .mytests.x:1}\n\
+                 .mytests.tearDownAll:{[] .mytests.x:0}\n\
+                 .mytests.afterNamespace:{[] hclose .mytests.h}\n\
+                 .mytests.parametersA:{[] 1 2 3}\n\
+                 .mytests.beforeParameters:{[] 1}\n\
+                 .mytests.afterParameters:{[] 1}\n\
+                 .mytests.testAddition:{[] .qunit.assertEquals[1+1;2;\"adds\"]}\n\
+                 .mytests.leftover:{[] 1}\n\
+                 setUp:{[] 1}\n\
+                 .qunit.runTests `.mytests\n";
+    // What qUnit does not call is dead there too: a function of the
+    // namespace that is no fixture, and a `setUp` in no namespace.
+    assert_eq!(dead(&[("suite.q", suite)]), [".mytests.leftover", "setUp"]);
+    // In a file that does not use qUnit a `setUp` is the file's own, and
+    // dead when nothing reads it.
+    let plain = ".app.setUp:{[] 1}\n.app.tearDown:{[] 0}\n.app.tearDown[]\n";
+    assert_eq!(dead(&[("plain.q", plain)]), [".app.setUp"]);
+    // And only the fixtures of the file that uses it are qUnit's.
+    assert_eq!(
+        dead(&[("suite.q", suite), ("plain.q", plain)]),
+        [".app.setUp", ".mytests.leftover", "setUp"]
+    );
+}
+
 #[test]
 fn the_tests_reaching_the_functions_a_save_changed_are_listed() {
     let dir = tempfile::tempdir().unwrap();
@@ -1927,6 +2191,31 @@ fn a_function_assigned_inside_another_ends_no_statement() {
     assert_eq!(changed, json!(["f"]));
 }
 
+// #2954: only the first name of `a:b:{x}` had the statement, so a change
+// to the lambda changed `a` alone and a test calling `b` was not reached.
+#[test]
+fn a_change_to_a_lambda_two_names_hold_changes_both() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = "a:b:{x}\nc:1+d:{x}\n";
+    let tests = "test_a:{a 1}\ntest_b:{b 1}\ntest_d:{d 1}\n";
+    let files = [("lib.q", lib), ("test_lib.q", tests)];
+    let (mut server, _) = Server::over(dir.path(), &files, client(), Value::Null);
+    let now = "a:b:{x+1}\nc:1+d:{x}\n";
+    let (changed, tests) = reaching(&mut server, dir.path(), "lib.q", lib, now);
+    assert_eq!(
+        (changed, tests),
+        (json!(["a", "b"]), vec!["test_a".into(), "test_b".into()])
+    );
+    let (changed, tests) = reaching(
+        &mut server,
+        dir.path(),
+        "lib.q",
+        now,
+        "a:b:{x+1}\nc:1+d:{x+1}\n",
+    );
+    assert_eq!((changed, tests), (json!(["d"]), vec!["test_d".into()]));
+}
+
 /// A name that holds a function without being a lambda calls it all the
 /// same: `al:f`, `h:f each` and both names of `a:b:f` run the changed `f`,
 /// so the tests calling them are reached beside the ones calling a
@@ -2058,6 +2347,49 @@ fn renaming_a_folder_rewrites_the_loads_under_it_and_moving_a_loader_its_own() {
     assert!(
         edits.contains(&("main.q".to_string(), 1, 3, 14, "lib/y.q".to_string())),
         "{reply}"
+    );
+}
+
+#[test]
+fn a_file_is_named_under_its_folder_where_the_workspace_has_several() {
+    // #2963. Folders A and B each hold a lib.q that defines `ff`. A hover
+    // and a link's tooltip named both `lib.q`, so nothing said which
+    // project a signature came from; with more than one folder each is
+    // named under its own, as an editor names it.
+    let dir = tempfile::tempdir().unwrap();
+    for (folder, lib) in [
+        ("A", "/ adds\nff:{[a;b] a}\n"),
+        ("B", "/ ident\nff:{[c] c}\n"),
+    ] {
+        std::fs::create_dir_all(dir.path().join(folder)).unwrap();
+        std::fs::write(dir.path().join(folder).join("lib.q"), lib).unwrap();
+    }
+    let text = "\\l lib.q\nff[1]\n";
+    std::fs::write(dir.path().join("B").join("main.q"), text).unwrap();
+    let (mut server, _) = Server::over(&dir.path().join("A"), &[], client(), Value::Null);
+    let main = server.open(&dir.path().join("B"), "main.q", text);
+    let tooltips = |server: &mut Server| -> Vec<String> {
+        let reply = server.whole("textDocument/documentLink", &main, json!({}));
+        let links = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"));
+        links
+            .iter()
+            .map(|l| l["tooltip"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // One folder: no folder's name leads.
+    assert_eq!(tooltips(&mut server), ["Open lib.q"]);
+    let b = file_uri(&dir.path().join("B"));
+    server.send(
+        json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+        "params":{"event":{"added":[{"uri":b,"name":"B"}],"removed":[]}}}),
+    );
+    assert_eq!(tooltips(&mut server), ["Open B/lib.q"]);
+    let words = hover_text(&mut server, &main, 1, 0);
+    assert!(
+        words.contains("B/lib.q") && words.contains("A/lib.q"),
+        "{words}"
     );
 }
 

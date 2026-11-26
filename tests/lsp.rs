@@ -3059,6 +3059,47 @@ fn a_workspace_folder_added_later_is_indexed_and_a_removed_one_forgotten() {
 }
 
 #[test]
+fn a_workspace_folder_removed_under_another_spelling_of_its_uri_is_forgotten() {
+    // The roots were compared as the text the client sent, so a folder
+    // removed as `B/` or `./B` - a client need not spell it as it did when it
+    // added it - stayed a root, and what only it defines stayed defined
+    // (#2962). Each spelling names the folder `file_key` names.
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = (dir.path().join("A"), dir.path().join("B"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(b.join("lib.q"), "helper:{[a] a+1}\n").unwrap();
+    let plain = file_uri(&b);
+    let slash = format!("{plain}/");
+    let dotted = format!("{}/./B", plain.strip_suffix("/B").unwrap());
+    for (added, removed) in [(&plain, &slash), (&plain, &dotted), (&slash, &plain)] {
+        let (mut server, _) = start_with_options(
+            dir.path(),
+            &["--lsp", "--profile", "uqf"],
+            json!({}),
+            Some(&a),
+        );
+        let app = file_uri(&a.join("b.q"));
+        server.open(&app, "f:{[a] r:helper; r}\n");
+        assert!(codes_of(&server.diagnostics_for(&app)).contains(&"QF018".to_string()));
+        let change = |added: Value, removed: Value| {
+            json!({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders",
+            "params":{"event":{"added":added,"removed":removed}}})
+        };
+        server.send(change(json!([{"uri": added, "name": "B"}]), json!([])));
+        let found = codes_of(&server.diagnostics_for(&app));
+        assert!(!found.contains(&"QF018".to_string()), "{added}: {found:?}");
+        server.send(change(json!([]), json!([{"uri": removed, "name": "B"}])));
+        let found = codes_of(&server.diagnostics_for(&app));
+        assert!(
+            found.contains(&"QF018".to_string()),
+            "{added} {removed}: {found:?}"
+        );
+        assert_eq!(server.shutdown_and_exit(), 0);
+    }
+}
+
+#[test]
 fn a_flag_the_server_never_reads_is_refused() {
     // Each was accepted and silently ignored: `--stdin-filename` with stdin
     // the protocol stream, `--force-exclude` and `--unsafe-fixes` with no

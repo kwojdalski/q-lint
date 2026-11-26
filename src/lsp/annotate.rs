@@ -152,8 +152,8 @@ fn type_hints(params: &Value, sources: &Sources) -> Vec<Value> {
         .collect()
 }
 
-/// `textDocument/inlayHint`: at each argument of a bracketed call to a
-/// workspace function in the range, the name of the parameter it is passed
+/// `textDocument/inlayHint`: at each argument in the range of a bracketed
+/// call to a workspace function, the name of the parameter it is passed
 /// as - `f[a:1;b:2]` drawn over `f[1;2]`.
 ///
 /// Only for a function whose every definition declares its parameters in a
@@ -188,7 +188,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
     // The slots with their strings in them: in the code view a string is
     // blank, and an argument that is one would start after it (#2025).
     for call in argument_slots(text) {
-        if call.at < from || call.at > to {
+        // A hint is asked for by where it is drawn, as a type's is: an
+        // editor asks for the lines it shows, and a call that began above
+        // them still has arguments on them (#2952).
+        let drawn = |&(start, _): &(usize, usize)| from <= start && start <= to;
+        if !call.arguments.iter().any(drawn) {
             continue;
         }
         // A local's or q's own name is no mention; an indexed assignment,
@@ -216,7 +220,11 @@ fn inlay_hints(params: &Value, sources: &Sources) -> Value {
             // an assignment (#2778). An empty slot, the second of
             // `{[a;] a}`, names nothing (#2779).
             let param = q_lint_rs::slot_pattern(param);
-            if len == 0 || param.is_empty() || text[start..start + len] == *param {
+            if len == 0
+                || param.is_empty()
+                || text[start..start + len] == *param
+                || !drawn(&(start, len))
+            {
                 continue;
             }
             hints.push(json!({
@@ -329,6 +337,28 @@ fn namespace_of(name: &str) -> Option<(&str, &str)> {
 const FIXTURES_BEFORE: [&str; 2] = ["beforeNamespace", "setUp"];
 const FIXTURES_AFTER: [&str; 2] = ["tearDown", "afterNamespace"];
 
+/// And those `.qunit.runNsTests` runs around all of a namespace's tests,
+/// once for each value its first `parameters*` gives (#2104).
+const FIXTURES_PARAMETERS: [&str; 3] = ["parameters", "beforeParameters", "afterParameters"];
+
+/// Whether a file uses qUnit: only there is a `setUp*` a fixture, and a
+/// `test*` of a namespace a test (#1591, #1743).
+pub(super) fn uses_qunit(text: &str) -> bool {
+    text.contains(".qunit.")
+}
+
+/// Whether `name`, as q has it, is a fixture qUnit calls for what it is
+/// named, in a file that uses qUnit: nothing reads it, and it is not dead.
+pub(super) fn is_fixture(name: &str) -> bool {
+    namespace_of(name).is_some_and(|(_, leaf)| {
+        FIXTURES_BEFORE
+            .iter()
+            .chain(&FIXTURES_AFTER)
+            .chain(&FIXTURES_PARAMETERS)
+            .any(|kind| leaf.starts_with(kind))
+    })
+}
+
 /// What qUnit's `.qunit.runTest` does with a test whose run takes longer,
 /// or more memory, than its namespace's `qunitConfig` allows (#2103).
 const OVER_CONFIG: &str = "exceeded max config time/mem";
@@ -340,7 +370,7 @@ pub(super) fn runnables(text: &str, placement: &Placement) -> Vec<Runnable> {
     let mut seen = HashSet::new();
     // A file that uses qUnit runs every `test*` of a namespace, as
     // `.qunit.runNsTests` does (#1591).
-    let qunit = text.contains(".qunit.");
+    let qunit = uses_qunit(text);
     // Read once: asked for each definition, the whole file was read again
     // for each (#1216).
     let contexts = q_lint_rs::contexts(text);
@@ -694,10 +724,8 @@ fn document_links(params: &Value, sources: &Sources) -> Value {
     load_paths(text)
         .into_iter()
         .filter_map(|(at, len)| {
-            let [file] = sources
-                .loaded(&key, &text[at..at + len], true)
-                .try_into()
-                .ok()?;
+            let load = super::navigate::as_run(text, at, &text[at..at + len]);
+            let [file] = sources.loaded(&key, &load, true).try_into().ok()?;
             Some(json!({
                 "range": range(&lines, at, len),
                 "target": sources.uri(&file),

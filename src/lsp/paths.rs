@@ -10,7 +10,7 @@
 //! workspace folder - then the loading file's directory and each above it.
 use super::navigate::{Cursor, Sources};
 use super::{Lines, file_key};
-use q_lint_rs::{load_paths, use_paths};
+use q_lint_rs::{load_directory, load_paths, use_paths};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -165,7 +165,10 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
     let mut unnamed: Vec<String> = vec![];
     for key in sources.keys() {
         let file = &sources.idx.files[key];
-        if file.loads.is_empty() && file.read.uses.is_empty() {
+        // A load after a `\cd` is no edge of the graph, and is still one
+        // to rewrite (#2961).
+        let after_cd = file.read.dynamic.iter().any(|d| d.kind == "load");
+        if file.loads.is_empty() && file.read.uses.is_empty() && !after_cd {
             continue;
         }
         let Some((uri, text)) = sources.text(key) else {
@@ -179,7 +182,25 @@ pub(super) fn will_rename(params: &Value, sources: &Sources) -> (Value, Option<S
         let lines = Lines::new(&text);
         for (at, len) in load_paths(&text) {
             let load = &text[at..at + len];
-            let Some(edit) = rewritten(load, root.as_deref(), dir, new_dir, &renames) else {
+            // After `\cd sub`, a relative load is read from sub, and is
+            // written from there still (#2961).
+            let cd_dir = (text.contains("cd") && !Path::new(load).is_absolute())
+                .then(|| load_directory(&text, at))
+                .flatten();
+            let edit = match &cd_dir {
+                Some(cd) => {
+                    let root = root.as_deref().map(|root| root.join(cd));
+                    rewritten(
+                        load,
+                        root.as_deref(),
+                        &dir.join(cd),
+                        &new_dir.join(cd),
+                        &renames,
+                    )
+                }
+                None => rewritten(load, root.as_deref(), dir, new_dir, &renames),
+            };
+            let Some(edit) = edit else {
                 continue;
             };
             if !reads_back(&text, at, len, &edit) {
@@ -418,6 +439,14 @@ pub(super) fn completion(cursor: &Cursor, sources: &Sources) -> Option<Value> {
     } else {
         bases.extend(from.parent().map(Path::to_path_buf));
         bases.extend(root(sources, &cursor.key));
+        // After `\cd sub`, a relative path is read from sub (#2961).
+        if cursor.text.contains("cd")
+            && let Some(cd) = load_directory(cursor.text, cursor.offset)
+        {
+            for base in &mut bases {
+                *base = base.join(&cd);
+            }
+        }
     }
     let lines = Lines::new(cursor.text);
     let span = json!({"start": lines.json(start), "end": lines.json(cursor.offset)});

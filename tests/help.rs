@@ -379,7 +379,8 @@ fn a_function_takes_what_its_signature_names_or_what_its_body_reads() {
         [
             takes("add", &["a", "b"]),
             takes("none", &[]),
-            takes("constant", &[]),
+            // KDB-X 5: `(value {1})1` is `,`x` (#2949).
+            takes("constant", &["x"]),
             takes("one", &["x"]),
             // q counts up to the last one read: `{x+z}` takes three.
             takes("third", &["x", "y", "z"]),
@@ -405,9 +406,39 @@ fn a_column_named_y_or_z_is_not_an_implicit_parameter() {
             takes("key", &["x"]),
             // A column's value is read: `{([]a:y)}` takes two.
             takes("val", &["x", "y"]),
-            takes("whr", &[]),
+            takes("whr", &["x"]),
         ]
     );
+}
+
+// #2950: a lambda on a `k)` line took nothing, whatever it named or read.
+// KDB-X 5: `k)kf:{[a;b] a}` and `k)kg:{x+y}` take two arguments, `k)kh:{1}`
+// takes `x`, and `(value kf)1` is `` `a`b ``.
+#[test]
+fn a_lambda_on_a_k_line_takes_what_one_on_a_q_line_does() {
+    let source = "k)kf:{[a;b] a}\nk)kg:{x+y}\nk)kh:{1}\nk)kn:{[] 1}\nk)kz:{x+{z}y}\nk)kp:{[a;b;c] b}[1;;3]\nk)kc:{([]z:1);y}\nk)kv:1\n";
+    assert_eq!(
+        parameters(source),
+        [
+            takes("kf", &["a", "b"]),
+            takes("kg", &["x", "y"]),
+            takes("kh", &["x"]),
+            takes("kn", &[]),
+            // The inner lambda's z is its own.
+            takes("kz", &["x", "y"]),
+            takes("kp", &["b"]),
+            // A column's name is no read of z.
+            takes("kc", &["x", "y"]),
+        ]
+    );
+    let details: Vec<(String, String)> = mentions(source)
+        .into_iter()
+        .filter_map(|m| Some((m.name, m.definition?.detail)))
+        .collect();
+    let detail = |name: &str| &details.iter().find(|(n, _)| n == name).unwrap().1;
+    assert_eq!(detail("kf"), "[a;b]");
+    assert_eq!(detail("kg"), "");
+    assert_eq!(detail("kn"), "[]");
 }
 
 #[test]
@@ -502,6 +533,25 @@ fn nothing_is_called_outside_brackets_or_by_what_is_not_a_name() {
     assert_eq!(call(""), None);
 }
 
+// #2951: the scan back from the bracket took a `_` for part of the name,
+// so a call whose result is dropped from was `2_f` or `_f`, no name at all.
+// KDB-X 5, for `d:{[aa;bb] aa}` and `n:1`: `2_d[til 5;0]` is `2 3 4`,
+// `n _d[til 5;0]` is `1 2 3 4` and `-1_d[til 5;0]` is `0 1 2 3`.
+#[test]
+fn a_call_after_drop_is_a_call_to_the_name_after_it() {
+    assert_eq!(call("r:2_f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:n _f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:-1_f[1;"), Some(("f", 1)));
+    assert_eq!(call("r:(1;2)_f["), Some(("f", 0)));
+    assert_eq!(call("r:0x01_.ns.f[1;2;"), Some((".ns.f", 2)));
+    // After a name's own letters it is part of the name, and the segment
+    // of a dotted one may begin with it.
+    assert_eq!(call("r:n_f[1;"), Some(("n_f", 1)));
+    assert_eq!(call("r:.a._f[1;"), Some((".a._f", 1)));
+    // And a number written against a name still calls nothing.
+    assert_eq!(call("r:1f[1;"), None);
+}
+
 #[test]
 fn a_space_before_the_bracket_still_calls_the_name() {
     // q 5 reads `f [1;2;3]` as `f[1;2;3]`, after a tab too, at the top
@@ -514,6 +564,23 @@ fn a_space_before_the_bracket_still_calls_the_name() {
     assert_eq!(call("x:`sym ["), None);
     assert_eq!(call("x:1 2 ["), None);
     assert_eq!(call("x:(a) [1;"), None);
+}
+
+// #2966: only a space or a tab was skipped back from the bracket. KDB-X 5
+// runs `r:pp` and then `  [1;2]` as `r:pp[1;2]`: over a comment, a blank
+// line or a comment line between them, with a tab or CRLF, and at a line
+// end inside a lambda.
+#[test]
+fn a_bracket_on_an_indented_line_calls_the_name_the_line_above_ends_in() {
+    assert_eq!(call("r:f\n  [1;"), Some(("f", 1)));
+    assert_eq!(call("r:.ns.f / note\n\t["), Some((".ns.f", 0)));
+    assert_eq!(call("r:f\r\n  [1;2;"), Some(("f", 2)));
+    assert_eq!(call("r:f\n\n/ why\n  [1;"), Some(("f", 1)));
+    assert_eq!(call("g:{a:f\n  [1;"), Some(("f", 1)));
+    // A line at column 0 starts a statement of its own.
+    assert_eq!(call("r:f\n[1;"), None);
+    // And the line above has to end in a name.
+    assert_eq!(call("r:f;\n  [1;"), None);
 }
 
 #[test]
@@ -563,6 +630,71 @@ fn an_assignment_of_a_name_or_a_projection_says_what_it_applies() {
     ] {
         assert_eq!(assigns(source, name), None, "{source}");
     }
+}
+
+#[test]
+fn a_name_applied_to_a_string_or_to_the_line_below_is_no_alias() {
+    // KDB-X 5: `a:upper "s"` is -10h, and `c:count` with `  1 2 3` on the
+    // line below -7h, over a comment's line and a blank one too. The string
+    // is blank in the code view and the line below was not looked at, so
+    // each was read as another name for the function (#2965).
+    for (source, name) in [
+        ("a:upper \"s\"\n", "a"),
+        ("a:upper\"s\"\n", "a"),
+        ("b:value \"1+1\";\n", "b"),
+        ("c:count\n  1 2 3\n", "c"),
+        ("c:count\r\n\t1 2 3\r\n", "c"),
+        ("d:count\n  \"abc\"\n", "d"),
+        ("h:count\n/ note\n\n  1 2\n", "h"),
+        ("f:{k:count\n  x}\n", "k"),
+        ("p:add[;2]\n  3\n", "p"),
+    ] {
+        assert_eq!(assigns(source, name), None, "{source}");
+    }
+    // What ends the statement leaves it one: a comment, a statement at
+    // column 0 - a string's too - and a closer or a `;` leading the line
+    // below, which is all `g:{c:count` and `  ;c}` has there.
+    for (source, name) in [
+        ("e:count / \"not an argument\"\n", "e"),
+        ("i:count\nj:1\n", "i"),
+        ("i:count\n\"abc\"\n", "i"),
+        ("i:count\n/ note\n\nj:1\n", "i"),
+        ("g:{c:count\n  ;c}\n", "c"),
+        ("g:{c:count\n  }\n", "c"),
+    ] {
+        assert_eq!(assigns(source, name), Some(("count", None)), "{source}");
+    }
+}
+
+#[test]
+fn signature_help_is_not_that_of_a_function_a_name_was_applied_to_a_string() {
+    // `a` holds a string, and `a[` offered `upper`'s `a[x]` (#2965).
+    let dir = tempfile::tempdir().unwrap();
+    for text in ["a:upper \"s\"\nr:a[", "a:count\n  1 2 3\nr:a["] {
+        let (mut server, _) = Server::over(dir.path(), &[], plain(), Value::Null);
+        let uri = server.open(dir.path(), "main.q", text);
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            "r:a[",
+            4,
+            Value::Null,
+        );
+        assert_eq!(reply["result"], Value::Null, "{text}");
+    }
+    let text = "a:upper\nr:a[";
+    let (mut server, _) = Server::over(dir.path(), &[], plain(), Value::Null);
+    let uri = server.open(dir.path(), "main.q", text);
+    let reply = server.ask(
+        "textDocument/signatureHelp",
+        &uri,
+        text,
+        "r:a[",
+        4,
+        Value::Null,
+    );
+    assert_eq!(reply["result"]["signatures"][0]["label"], "a[x]", "{reply}");
 }
 
 /// The glyph at `skip` bytes into `context` in `source`.
@@ -1610,6 +1742,15 @@ fn signature_help_reads_a_call_with_a_space_before_its_bracket() {
 }
 
 #[test]
+fn signature_help_reads_a_call_whose_result_is_dropped_from() {
+    // #2951.
+    let help = zz_help(plain(), "r:2_.zz.add[1;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
+    let help = zz_help(plain(), "r:n _.zz.add[1;2;");
+    assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(2)));
+}
+
+#[test]
 fn signature_help_goes_on_inside_a_string_left_open() {
     let help = zz_help(plain(), "r:.zz.add[1;\"a;b[");
     assert_eq!(labelled(&help), (".zz.add[a;b;c]".to_string(), json!(1)));
@@ -1646,6 +1787,82 @@ fn signature_help_past_the_last_parameter_says_there_are_too_many() {
     );
     let help = zz_help(plain(), "if[a;b;c;d;");
     assert_eq!(help["activeParameter"], 2);
+}
+
+// #2949: a lambda that names no parameter was shown as `f[]` and its only
+// argument called one too many. KDB-X 5 runs `f[]` and `f[7]` for both
+// `f:{1}` and `f:{[] 1}`, and refuses `f[1;2]` with 'rank.
+#[test]
+fn signature_help_for_a_lambda_naming_no_parameter_takes_one_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "bare:{1}\nnone:{[] 1}\nctx:{.z.x}\nr:bare[\ns:none[\nt:none[1;\nu:bare[1;\nv:ctx";
+    let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
+    let uri = server.open(dir.path(), "a.q", text);
+    let mut help = |context: &str| {
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            context,
+            context.len(),
+            Value::Null,
+        );
+        let help = &reply["result"];
+        let said = help["signatures"][0]["documentation"].as_str();
+        (labelled(help), said.unwrap_or_default().to_string())
+    };
+    assert_eq!(
+        help("r:bare["),
+        (("bare[x]".to_string(), json!(0)), String::new())
+    );
+    assert_eq!(
+        help("s:none["),
+        (("none[]".to_string(), json!(0)), String::new())
+    );
+    // A second argument is one too many for either.
+    assert_eq!(
+        help("t:none[1;"),
+        (
+            ("none[]".to_string(), json!(0)),
+            "Too many arguments: none takes 1 argument.".to_string()
+        )
+    );
+    assert_eq!(
+        help("u:bare[1;"),
+        (
+            ("bare[x]".to_string(), json!(1)),
+            "Too many arguments: bare takes 1 argument.".to_string()
+        )
+    );
+    // And a hover names the `x` q gives a lambda that reads none.
+    let reply = server.ask("textDocument/hover", &uri, text, "v:ctx", 3, Value::Null);
+    let shown = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(shown.contains("ctx[x]"), "{shown}");
+}
+
+// #2950: a function defined on a `k)` line was `f[]`, "takes 0 arguments".
+#[test]
+fn signature_help_and_hover_read_a_lambda_on_a_k_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "k)kf:{[aa;bb] aa}\nk)kg:{x+y}\nr:kf[1;\ns:kg[1;\nt:kg";
+    let (mut server, _) = Server::over(dir.path(), &[("a.q", text)], plain(), Value::Null);
+    let uri = server.open(dir.path(), "a.q", text);
+    for (context, label) in [("r:kf[1;", "kf[aa;bb]"), ("s:kg[1;", "kg[x;y]")] {
+        let reply = server.ask(
+            "textDocument/signatureHelp",
+            &uri,
+            text,
+            context,
+            context.len(),
+            Value::Null,
+        );
+        let help = &reply["result"];
+        assert_eq!(labelled(help), (label.to_string(), json!(1)), "{reply}");
+        assert_eq!(help["signatures"][0]["documentation"], Value::Null);
+    }
+    let reply = server.ask("textDocument/hover", &uri, text, "t:kg", 3, Value::Null);
+    let shown = reply["result"]["contents"]["value"].as_str().unwrap();
+    assert!(shown.contains("kg[x;y]"), "{shown}");
 }
 
 #[test]

@@ -147,7 +147,12 @@ fn tests(params: &Value, sources: &Sources) -> Value {
 }
 
 /// `q-lint/globalAt`: the global at `position` - `{names, range}`, each name
-/// q may resolve it to - or null on a local, a word of q's, or nothing.
+/// q may resolve it to - or null on a local, a word of q's, or nothing. And
+/// null on a name in a qSQL phrase, as `unresolved` leaves one out: `c` of
+/// `select c from t` is the table's column wherever it has one, which only
+/// the table says, and a client that read the process's global `c` showed
+/// it as the value there (#2958). The table after `from` is a global, and
+/// so is a name written from the root, `.cfg.limit`, which is no column.
 fn global_at(params: &Value, sources: &Sources) -> Value {
     let Some(cursor) = sources.cursor(params) else {
         return Value::Null;
@@ -155,6 +160,10 @@ fn global_at(params: &Value, sources: &Sources) -> Value {
     let Some(Name::Global { at, len, .. }) = name_at(cursor.text, cursor.offset) else {
         return Value::Null;
     };
+    let clause = q_lint_rs::query_clauses(cursor.text, &[at])[0];
+    if clause.is_some_and(|c| c != "from") && !cursor.text[at..].starts_with('.') {
+        return Value::Null;
+    }
     let mut names: Vec<String> = sources.targets(&cursor, at).into_iter().collect();
     names.sort();
     if names.is_empty() {

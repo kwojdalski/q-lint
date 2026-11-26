@@ -374,6 +374,12 @@ const FOUND: &[(&str, &str)] = &[
         "tests/cases/names.cases:128 #63",
         "k:{[a:`$;b] (a;b)}\nr:k[\"xy\";2]\ns:{[a:`$;b] (a;b)}[\"xy\";2]\nt:{[a:x+1};b] (a;b)}[1;2]\nu:{[a:neg;b] (a;b)}[1;2]\nv:{[a:`int$;b] (a;b)}[1;2]\nw:{[a:-7h;b] a}\nm:{[a:1] a}\n\n",
     ),
+    // A lambda left open ended at the first byte of the line after it, so
+    // what reads on to `end + 1` cut the `é` opening that line in two (#2960).
+    (
+        "tests/cases/correctness.cases:717 #9",
+        "f:{'\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\nééééééééééééééé\"}\n\n",
+    ),
 ];
 
 #[test]

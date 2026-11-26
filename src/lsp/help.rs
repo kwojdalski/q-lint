@@ -212,16 +212,24 @@ fn defined(sources: &Sources, names: &HashSet<String>, from: &str) -> Vec<Define
 }
 
 /// A file as a hover names it: under the workspace folder that holds it,
-/// or by its name alone.
+/// or by its name alone. With more than one folder the folder's own name
+/// leads, as an editor's does in a multi-root workspace: `A/lib.q` and
+/// `B/lib.q` were both `lib.q`, and nothing said which project a signature
+/// came from (#2963).
 pub(super) fn shown(sources: &Sources, key: &str) -> String {
     let path = std::path::Path::new(key);
-    sources
-        .idx
-        .roots
-        .iter()
-        .find_map(|root| path.strip_prefix(file_key(root)).ok())
-        .or_else(|| path.file_name().map(std::path::Path::new))
-        .unwrap_or(path)
+    let roots = &sources.idx.roots;
+    let under = roots.iter().find_map(|root| {
+        let root = std::path::PathBuf::from(file_key(root));
+        let rest = path.strip_prefix(&root).ok()?;
+        Some(match root.file_name() {
+            Some(folder) if roots.len() > 1 => std::path::Path::new(folder).join(rest),
+            _ => rest.to_path_buf(),
+        })
+    });
+    under
+        .or_else(|| path.file_name().map(std::path::PathBuf::from))
+        .unwrap_or_else(|| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/")
 }
@@ -508,6 +516,15 @@ struct Signature {
     open: bool,
 }
 
+impl Signature {
+    /// How many arguments a call may write. One where no parameter is
+    /// named: KDB-X 5 runs `f[]` and `f[1]` for `f:{[] 1}`, and refuses
+    /// `f[1;2]` with 'rank (#2949).
+    fn rank(&self) -> usize {
+        self.params.len().max(1)
+    }
+}
+
 /// The signatures of the name called at `at..at + len` of the cursor's
 /// document: the workspace's functions of that name, one for each list of
 /// parameters, or q's own.
@@ -662,9 +679,9 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
     // has several definitions.
     let active = found
         .iter()
-        .position(|s| s.open || call.argument < s.params.len())
+        .position(|s| s.open || call.argument < s.rank())
         .unwrap_or(0);
-    let over = |s: &Signature| !s.open && call.argument >= s.params.len();
+    let over = |s: &Signature| !s.open && call.argument >= s.rank();
     let parameter = |s: &Signature| {
         if s.open {
             json!(call.argument.min(s.params.len() - 1))
@@ -700,7 +717,7 @@ fn signature_help(params: &Value, sources: &Sources, client: Client) -> Value {
                 "activeParameter": parameter(s),
             });
             let said = if over(s) {
-                let takes = match s.params.len() {
+                let takes = match s.rank() {
                     1 => "1 argument".to_string(),
                     n => format!("{n} arguments"),
                 };

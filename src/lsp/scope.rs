@@ -75,7 +75,9 @@ impl Closed {
         let mut keys: Vec<&String> = idx
             .files
             .keys()
-            .filter(|key| !open.contains(*key))
+            // Nor one read on a load's account from outside every folder,
+            // which is no file of the workspace's to report on (#2964).
+            .filter(|key| !open.contains(*key) && !idx.followed.contains(*key))
             .collect();
         keys.sort_unstable();
         keys.truncate(MAX_LINTED);
