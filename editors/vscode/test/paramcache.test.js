@@ -269,3 +269,16 @@ test("a statement inserted unqualified under \\d before #2407 is still removed (
   assert.strictEqual(old.slice(0, t.start) + old.slice(t.end), source);
   assert.strictEqual(cacheStatement("p000001", ["a"], ".ns"), "@[`.qlint.cache.p000001 set;a;::];@[`.ns.a set;a;::];");
 });
+
+test("a / and a no-break space or a form feed is a line comment: the lambdas below it are still code (#2905)", () => {
+  // KDB-X runs `g` under either line; JavaScript's \s read both as the
+  // opening of a block comment, and every line below was masked.
+  for (const comment of ["/ note", "/\u00a0", "/\f"]) {
+    const text = `a:1\n${comment}\ng:{x*2}\n`;
+    assert.strictEqual(toggleAt(text, text.indexOf("x*2"), fixed).kind, "insert", JSON.stringify(comment));
+    assert.strictEqual(codeMask(text)[text.indexOf("g")], true);
+  }
+  // And a `\` and one is a system command, not the end of the script.
+  const text = "a:1\n\\\u00a0\ng:{x*2}\n";
+  assert.deepStrictEqual(lambdas(text).map((l) => text.slice(l.open, l.close + 1)), ["{x*2}"]);
+});
