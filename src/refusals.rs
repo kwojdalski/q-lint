@@ -2599,15 +2599,17 @@ fn non_ascii(path: &str, source: &str, code: &str, out: &mut Vec<Finding>) {
             continue;
         }
         line = start;
+        // A byte that was not UTF-8 is named as the byte the file holds.
+        let named = match crate::carried_byte(ch) {
+            Some(byte) => format!("Byte 0x{byte:02X} (not UTF-8)"),
+            None => format!("U+{:04X}", u32::from(ch)),
+        };
         let mut finding = Finding::at(
             path,
             source,
             at,
             "QE012",
-            format!(
-                "U+{:04X} is no q outside a string or comment: q 5 refuses the line with 'char",
-                u32::from(ch)
-            ),
+            format!("{named} is no q outside a string or comment: q 5 refuses the line with 'char"),
         );
         finding.end_column = finding.column.map(|col| col + ch.len_utf16());
         out.push(finding);

@@ -1543,3 +1543,61 @@ fn a_removed_current_directory_is_named_and_an_absolute_path_is_still_linted() {
         "{stderr}"
     );
 }
+
+/// q reads bytes, so a Latin-1 `"é"` is one of them: a char atom, where the
+/// replacement character it was read as is three bytes, and QB015 called
+/// `c="é"` a three-character string, QA011 `$["é";...]` 'type, and QB004 a
+/// hundred-byte message three hundred (q 5 runs all three, #2862).
+#[test]
+fn a_byte_that_is_not_utf8_is_one_byte_of_a_string() {
+    let repo = Repo::new();
+    let mut source =
+        b"t:([] c:\"ab\xe9\")\nr:select from t where c=\"\xe9\"\nf:{$[\"\xe9\";1;2]}\ng:{[x] '\""
+            .to_vec();
+    source.extend([0xe9; 100]);
+    source.extend(b"\"}\n");
+    fs::write(repo.path("a.q"), &source).unwrap();
+    assert!(repo.codes("", &["--select", "Q", "a.q"]).is_empty());
+    // And two of them are two, as they were not one: a string, not an atom.
+    fs::write(repo.path("b.q"), b"f:{$[\"\xe9\xe9\";1;2]}\n").unwrap();
+    let out = run(&repo.path(""), &["--select", "Q", "b.q"]).stdout;
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("QA011"), "{out}");
+    // Shown as the replacement character, which is all a report can show.
+    assert!(out.contains("`$[\\\"\u{fffd}\u{fffd}\\\";...]`"), "{out}");
+}
+
+/// QE012 names the byte the file holds, not a U+FFFD it does not; and a
+/// file saved as UTF-16 is QE005's, which says so, where it was one QE012
+/// at 1:1 that named U+FFFD (q 5: 'char for each, #2861).
+#[test]
+fn an_invalid_byte_is_named_and_a_utf16_file_is_reported_as_one() {
+    let repo = Repo::new();
+    fs::write(repo.path("a.q"), b"f:{[x;y] x\xe9+y}\n").unwrap();
+    let out = run(&repo.path(""), &["--select", "Q", "a.q"]).stdout;
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("Byte 0xE9 (not UTF-8) is no q"), "{out}");
+    assert!(!out.contains("U+FFFD"), "{out}");
+    let utf16 = |order: [u8; 2], low: usize| {
+        let mut bytes = order.to_vec();
+        for b in b"f:{[x;y] x==y}\n" {
+            let mut unit = [0, 0];
+            unit[low] = *b;
+            bytes.extend(unit);
+        }
+        bytes
+    };
+    for (bytes, order) in [
+        (utf16([0xff, 0xfe], 0), "little-endian"),
+        (utf16([0xfe, 0xff], 1), "big-endian"),
+    ] {
+        fs::write(repo.path("u.q"), bytes).unwrap();
+        assert_eq!(repo.codes("", &["--select", "Q", "u.q"]), ["QE005"]);
+        let out = run(&repo.path(""), &["--select", "Q", "u.q"]).stdout;
+        let out = String::from_utf8_lossy(&out);
+        assert!(
+            out.contains(&format!("UTF-16 byte-order mark ({order})")),
+            "{out}"
+        );
+    }
+}

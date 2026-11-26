@@ -4170,14 +4170,47 @@ fn vector_items(arg: &str, literal: &str) -> Option<usize> {
         None
     }
 }
+/// A byte that is not UTF-8 - 0x80 or more, since an ASCII one always is -
+/// as the character a file read by its bytes carries it in: U+EF80 to
+/// U+EFFF, of the private use area. q reads bytes, and KX's own e/c.q is
+/// Latin-1, so a Latin-1 `"é"` is one byte to q; read as the replacement
+/// character U+FFFD it was three, and a string three times as long as q has
+/// it (#2862), in a file QE012 said held a U+FFFD it does not (#2861). One
+/// UTF-16 unit and three UTF-8 bytes, as U+FFFD is, so every column stays
+/// where it was.
+pub fn carried(byte: u8) -> char {
+    char::from_u32(0xEF00 + u32::from(byte)).unwrap_or('\u{FFFD}')
+}
+/// The byte `ch` carries, if it is one of `carried`'s.
+pub(crate) fn carried_byte(ch: char) -> Option<u8> {
+    ('\u{EF80}'..='\u{EFFF}')
+        .contains(&ch)
+        .then(|| (u32::from(ch) - 0xEF00) as u8)
+}
+/// `text` as a report shows it: each carried byte as the replacement
+/// character, which is what a terminal or an editor makes of it.
+pub fn shown(text: &str) -> Cow<'_, str> {
+    match text.contains(|ch| carried_byte(ch).is_some()) {
+        true => Cow::Owned(
+            text.chars()
+                .map(|ch| carried_byte(ch).map_or(ch, |_| '\u{FFFD}'))
+                .collect(),
+        ),
+        false => Cow::Borrowed(text),
+    }
+}
 /// The bytes q makes of a string literal's body, the text between its
 /// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
-/// one byte it stands for: `\n`, `\"`, `\012` (#226).
+/// one byte it stands for: `\n`, `\"`, `\012` (#226). A byte that was not
+/// UTF-8 is the one byte it is (#2862).
 pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
     let mut out = vec![];
     for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
         match m.as_str().strip_prefix('\\') {
-            None => out.extend_from_slice(m.as_str().as_bytes()),
+            None => match m.as_str().chars().next().and_then(carried_byte) {
+                Some(byte) => out.push(byte),
+                None => out.extend_from_slice(m.as_str().as_bytes()),
+            },
             Some(octal) if octal.len() == 3 && octal.bytes().all(|b| b.is_ascii_digit()) => {
                 out.push(u32::from_str_radix(octal, 8).unwrap_or(0) as u8)
             }
@@ -6571,7 +6604,10 @@ pub fn lint_selecting(
     ws: &Workspace,
     structure_selected: bool,
 ) -> Vec<Finding> {
-    lint_rules(source, path, profile, ws, structure_selected, false)
+    as_shown(
+        lint_rules(source, path, profile, ws, structure_selected, false),
+        source,
+    )
 }
 
 /// Every rule this binary has, the `opt-in` ones too: what a configuration
@@ -6584,7 +6620,48 @@ pub fn lint_every_rule(
     ws: &Workspace,
     structure_selected: bool,
 ) -> Vec<Finding> {
-    lint_rules(source, path, Profile::Uqf, ws, structure_selected, true)
+    as_shown(
+        lint_rules(source, path, Profile::Uqf, ws, structure_selected, true),
+        source,
+    )
+}
+
+/// `found` with the source text its messages quote as a report shows it:
+/// see `shown`.
+fn as_shown(mut found: Vec<Finding>, source: &str) -> Vec<Finding> {
+    if let Cow::Owned(_) = shown(source) {
+        for f in &mut found {
+            if let Cow::Owned(detail) = shown(&f.detail) {
+                f.detail = detail;
+            }
+        }
+    }
+    found
+}
+
+/// QE005 for a file saved as UTF-16, which starts FF FE or FE FF: an
+/// editor's "Unicode". q reads bytes and is 'char on the first line, and no
+/// other rule can say anything of text that is every other byte NUL (#2861).
+fn utf16(path: &str, source: &str) -> Option<Finding> {
+    let (ff, fe) = (carried(0xFF), carried(0xFE));
+    let mut start = source.chars();
+    let order = match (start.next()?, start.next()?) {
+        (a, b) if (a, b) == (ff, fe) => "little",
+        (a, b) if (a, b) == (fe, ff) => "big",
+        _ => return None,
+    };
+    let mut finding = Finding::at(
+        path,
+        source,
+        0,
+        "QE005",
+        format!(
+            "UTF-16 byte-order mark ({order}-endian): q reads bytes, reports 'char on the first \
+             line and will not load the file; save it as UTF-8 with no mark"
+        ),
+    );
+    finding.end_column = Some(3); // The mark's two bytes, a character each.
+    Some(finding)
 }
 
 fn lint_rules(
@@ -6597,6 +6674,9 @@ fn lint_rules(
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let _lines = LineScope::install(source);
+    if let Some(finding) = utf16(path, source) {
+        return vec![finding];
+    }
     let mut v = views(source);
     // The lines QE001 reports on, before a `noqa` takes any: QL003 asks.
     let mut structure_lines = vec![];

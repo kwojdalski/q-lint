@@ -43,14 +43,18 @@ impl<'a> SourceLines<'a> {
         SourceLines(source.lines().collect())
     }
 
-    /// The text a finding is matched on: its line, blanks trimmed.
+    /// The text a finding is matched on: its line, blanks trimmed, and a
+    /// byte that was not UTF-8 as a report shows it, which is how a baseline
+    /// written before #2862 holds it.
     pub(crate) fn text(&self, line: usize) -> String {
-        self.0
-            .get(line.saturating_sub(1))
-            .copied()
-            .unwrap_or("")
-            .trim()
-            .to_string()
+        q_lint_rs::shown(
+            self.0
+                .get(line.saturating_sub(1))
+                .copied()
+                .unwrap_or("")
+                .trim(),
+        )
+        .into_owned()
     }
 }
 

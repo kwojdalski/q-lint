@@ -1143,15 +1143,17 @@ fn printable(path: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
-/// `bytes` as text, each byte that is not UTF-8 read as one replacement
-/// character, so every column after it stays where it was.
+/// `bytes` as text, each byte that is not UTF-8 read as one character, so
+/// every column after it stays where it was: the one that carries the byte,
+/// which the rules count as the one byte q reads and a report shows as the
+/// replacement character (#2861, #2862).
 /// `String::from_utf8_lossy` replaces a whole truncated sequence - `E2 82` -
 /// with one, which moves the rest of the line one column early.
 fn lossy_text(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len());
     for chunk in bytes.utf8_chunks() {
         text.push_str(chunk.valid());
-        text.extend(std::iter::repeat_n('\u{FFFD}', chunk.invalid().len()));
+        text.extend(chunk.invalid().iter().map(|&b| q_lint_rs::carried(b)));
     }
     text
 }
