@@ -492,8 +492,9 @@ const TOKEN =
   /-?0[NWw][pmdznuvt]|-?\d{4}\.\d{2}\.\d{2}(?:[DT][0-9:.]*)?|-?\d{4}\.\d{2}m|-?\d+D[0-9:.]*|-?\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?|-?\d+(?:\.\d+)?j?/g;
 
 /// Whether `index` of `line` is inside a string or after a comment's `/`.
-export function inStringOrComment(line: string, index: number): boolean {
-  let quoted = false;
+/// `quoted` when the line starts inside a string the lines above it left
+/// open (`lineContext` of statements.ts tells).
+export function inStringOrComment(line: string, index: number, quoted = false): boolean {
   for (let i = 0; i < index && i < line.length; i++) {
     const c = line[i];
     if (quoted) {

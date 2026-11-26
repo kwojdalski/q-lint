@@ -84,6 +84,41 @@ export function stringOpen(open: boolean, line: string): boolean {
   return open;
 }
 
+/// How q reads the last of `lines`, a file's lines from its first, before
+/// any of its own text: what a reader of one line - a hover, a command at
+/// the cursor - needs of the lines above it. `commented`: the whole line is
+/// no code, inside a block comment, a `/` or `\` alone that opens or closes
+/// one, or at or after a `\` alone that ends the script. `quoted`: it starts
+/// inside a string its statement's lines above left open, as the second
+/// line of `s:"select` / `  from t"` does.
+export function lineContext(lines: string[]): { commented: boolean; quoted: boolean } {
+  let depth = 0;
+  let quoted = false;
+  for (const [i, raw] of lines.entries()) {
+    const line = trimBlanks(raw);
+    const last = i === lines.length - 1;
+    if (depth === 0 && line === "\\") {
+      return { commented: true, quoted: false };
+    }
+    const after = blockDepth(depth, line);
+    if (depth > 0 || after > 0) {
+      if (last) {
+        return { commented: true, quoted: false };
+      }
+    } else if (continues(line)) {
+      if (last) {
+        return { commented: false, quoted };
+      }
+      quoted = stringOpen(quoted, line);
+    } else if (line !== "" && !line.startsWith("/")) {
+      // It starts a statement, and no string of the one above reaches it.
+      quoted = stringOpen(false, line);
+    }
+    depth = after;
+  }
+  return { commented: false, quoted: false };
+}
+
 /// How q reads each line of a script: inside a comment (a block comment,
 /// the shebang, after the script's end, or an indented line before the
 /// first statement), a comment line, blank, a continuation line, or code

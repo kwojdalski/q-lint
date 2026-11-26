@@ -3,7 +3,7 @@
 // holds the cutter against a real q's `\l`; these hold the rules it found.
 const test = require("node:test");
 const assert = require("node:assert");
-const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, isBlankLine, contextAfter, contextSwitch, inContext } = require("../out/statements.js");
+const { statements, statementSpans, scriptCode, selectionCode, blockAt, lineKinds, lineContext, isBlankLine, contextAfter, contextSwitch, inContext } = require("../out/statements.js");
 const { statementSpans: timedSpans } = require("../out/linetimings.js");
 const { cells, shownCode } = require("../out/cells.js");
 const { isComplete } = require("../out/repl.js");
@@ -133,4 +133,17 @@ test("a \\d with a trailing comment, or after q), switches the context as q does
   assert.strictEqual(contextAfter("q)\\d .a\nf:1"), ".a");
   // A slash with no blank before it is no comment: not a name.
   assert.strictEqual(contextSwitch("\\d .a/b"), undefined);
+});
+
+test("the lines above tell whether a line is commented out, or starts inside a string (#2910)", () => {
+  const each = (lines) => lines.map((_, i) => lineContext(lines.slice(0, i + 1)));
+  const code = { commented: false, quoted: false };
+  const comment = { commented: true, quoted: false };
+  const string = { commented: false, quoted: true };
+  assert.deepStrictEqual(each(["a:1", "/", "x", "\\", "b:2", "\\", "c:3"]), [code, comment, comment, comment, code, comment, comment]);
+  // A string runs on over the indented lines under it, blank lines too,
+  // and no further than the statement.
+  assert.deepStrictEqual(each(['s:"a', "", '  b', '  c";t:"d', '  e"', "  f", 'u:"g', "v:1"]), [code, code, string, string, string, code, code, code]);
+  // A `/` and a no-break space is a line comment, which opens nothing.
+  assert.deepStrictEqual(each(["/\u00a0", "a:1", "\\\f", "b:2"]), [code, code, code, code]);
 });
