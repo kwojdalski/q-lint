@@ -190,7 +190,9 @@ export class QueryAcross {
       return;
     }
     const saved = this.live.processes();
-    const discovered = this.live.discovery.discovered();
+    // The shared list's processes as well, named `.qlint/label` as Connect
+    // names them (#2359).
+    const discovered = [...this.live.discovery.discovered(), ...this.live.sharedList()];
     let tag = typeof arg === "string" ? arg : arg?.kind === "tag" ? arg.tag : undefined;
     if (tag === undefined) {
       const tags = allTags(saved, discovered);
