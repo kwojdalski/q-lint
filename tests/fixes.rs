@@ -683,6 +683,19 @@ const FIX_CASES: &[(&str, &str, &str, bool)] = &[
         false,
     ),
     ("QP002", "r:2026.01.01T12:00", "r:2026.01.01D12:00", false),
+    // The `z` goes with the `T`, or the literal is a datetime still (#2743).
+    (
+        "QP002",
+        "r:2024.01.01T12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
+    (
+        "QP002",
+        "r:2024.01.01D12:00:00.000z",
+        "r:2024.01.01D12:00:00.000",
+        false,
+    ),
     // The null in lower case is the same null (#2719).
     ("QP002", "r:0nz", "r:0np", false),
     ("QP002", "r:-0wz", "r:-0wp", false),

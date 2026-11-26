@@ -451,6 +451,9 @@ c:20240101z
 d:20240101.5z
 e:1.2345678z
 
+=== QP002 profile: uqf | a timestamp's spelling with a z after it is a datetime (q 5: type 2024.01.01D12:00:00.000z is -15h) (#2743)
+a:2024.01.01D12:00:00.000z
+
 === clean profile: uqf | the same digits with no z, in a symbol, in a name or in a string are no datetime (#2719)
 a:12345678
 b:1234567.5

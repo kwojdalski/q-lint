@@ -2545,12 +2545,15 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                             || symbols.as_bytes()[m.start()] == code.as_bytes()[m.start()])
                 }
             };
-            let swaps: [(&regex::Regex, &str); 5] = [
+            let swaps: [(&regex::Regex, &str); 6] = [
                 (re!(r"`datetime(\s*\$)"), "`timestamp$1"),
                 (re!(r#""z"(\s*\$)"#), "\"p\"$1"),
                 (re!(r"\b15h(\s*\$)"), "12h$1"),
                 (re!(r"(^|[^\w.])(-?0[NnWw])z\b"), "$1${2}p"),
-                (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d)"), "${1}D$2"),
+                // The `z` goes with the `T`: left behind it keeps the
+                // literal a datetime, `2024.01.01D12:00z` (q 5: -15h, #2743).
+                (re!(r"\b(\d{4}\.\d{2}\.\d{2})T(\d[\d:.]*)z?"), "${1}D$2"),
+                (re!(r"\b(\d{4}\.\d{2}\.\d{2}D\d[\d:.]*)z\b"), "$1"),
             ];
             let (m, regex, to) = swaps
                 .iter()
@@ -10744,7 +10747,10 @@ fn lint_rules(
                         // In either case: q 5 reads `0nz` and `0wz` as `0Nz`
                         // and `0Wz` (#2719).
                         re!(r"(?:^|[^\w.])-?0[NnWw]z\b"),
-                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b)"),
+                        // A timestamp's spelling with a `z` after it is a
+                        // datetime still: q 5 `type 2024.01.01D12:00:00.000z`
+                        // is -15h (#2743).
+                        re!(r"\b\d{4}\.\d{2}\.\d{2}(?:T|z\b|D[\d:.]*z\b)"),
                         // `.z.z` and `.z.Z` are the clock as a datetime (-15h),
                         // and `.my.z.z` is one dotted name of the file's (#510).
                         re!(r"(?:^|[^\w.])\.z\.[zZ]\b"),
