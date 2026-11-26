@@ -1061,3 +1061,42 @@ test("Abort's reconnect gives up, saying why, on a host that takes no connection
   assert.deepStrictEqual(stub.messages, [["error", `q-lint: could not connect to a (127.0.0.1:${a.port}): 127.0.0.1:${a.port} could not be reached in 10 s`]]);
   assert.strictEqual(live.api().statusText(), "$(debug-disconnect) q: not connected");
 });
+
+// Abort's reconnect gave its login up after 10 s and made another, for as
+// long as the process was busy: once free, the process answered every one
+// in turn - the password checked and `.z.po` run for each, a one-time
+// credential spent on a connection long closed.
+test("Abort's reconnect leaves one login with a busy process, and is connected by it once the process is free (#3024)", async (t) => {
+  let busy = 0;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? undefined : 1), () => busy);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port, { user: "me" })]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => a.sent.some((sent) => JSON.stringify(sent).includes("slow")));
+  // The process is 25 s from the end of its query, by a clock the test turns.
+  busy = 25_000;
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  const turn = async () => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  for (let i = 0; i < 20 && a.logins.length < 2; i++) {
+    await turn();
+  }
+  for (const seconds of [10, 10, 4]) {
+    t.mock.timers.tick(seconds * 1000);
+    await turn();
+  }
+  assert.deepStrictEqual([a.logins, live.activeLabel()], [["me:", "me:"], undefined]);
+  t.mock.timers.tick(1000);
+  for (let i = 0; i < 20 && live.activeLabel() === undefined; i++) {
+    await turn();
+  }
+  t.mock.timers.reset();
+  assert.deepStrictEqual([a.logins, live.activeLabel()], [["me:", "me:"], "a"]);
+});

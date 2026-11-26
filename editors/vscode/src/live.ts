@@ -72,7 +72,7 @@ import {
 } from "./processes";
 import { clickedEditor, unsavedIn } from "./clicked";
 import { COMMANDS, CONNECTED, QUERY_RUNNING, VIEWS, readLive, readProcessSettings, readTerminal, type QueryMode } from "./liveconfig";
-import { ClosedBeforeHandshake, DirectRefused, NoHandshakeAnswer, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
+import { ClosedBeforeHandshake, DirectRefused, QConnection, QError, directRefusal, type DirectMode, type Target } from "./qclient";
 import { SshTunnel, TUNNEL_COMMANDS, TunnelConnectError, TunnelHandshakeError, readTunnel } from "./tunnel";
 import { GATEWAY_COMMANDS, fileServerTypes, gatewayJoined, gatewayParts, gatewayStatements, isGatewayCall, isGatewayOwn, readGateway, serverTypesProblem, withServerTypes } from "./gateway";
 import { isLocalHost } from "./launcher";
@@ -887,8 +887,9 @@ export class Live {
           clearInterval(this.ticker);
           clearInterval(this.heartbeat);
           this.reconnectRun++;
-          // A reconnect after an abort stops trying.
+          // A reconnect after an abort stops trying, and waiting.
           this.reconnectStopped = true;
+          this.stopConnect?.abort();
           void this.connection?.close();
           this.closeTunnels();
           globalThis.process.off("exit", this.closeTunnels);
@@ -2412,7 +2413,7 @@ export class Live {
   /// Connect to `process`, closing the connection there was. Whether it
   /// connected. `untilFree`, after an abort: a process that does not answer
   /// the handshake is still running the query it was left with, and is
-  /// tried again until it does, or until the user disconnects or connects
+  /// waited for until it does, or until the user disconnects or connects
   /// elsewhere.
   /// `outcome.refused` is set when the process closed before the handshake:
   /// how it refuses a user or password.
@@ -2459,17 +2460,13 @@ export class Live {
           { location: { viewId: VIEWS.processes }, title: `Connecting to ${process.label}` },
           async () => {
             const target = await this.targetFor(process, cut.signal);
-            for (;;) {
-              try {
-                return await this.dial(process, target, cut.signal);
-              } catch (error) {
-                // Not a host that took no connection: it is gone, not busy (#3032).
-                const busy = error instanceof NoHandshakeAnswer;
-                if (!untilFree || !busy || this.reconnectStopped || cut.signal.aborted) {
-                  throw error;
-                }
-              }
-            }
+            // After an abort the process answers the handshake once the
+            // query it was left with ends. The one login is left with it
+            // until then: given up and made again every 10 s, each was
+            // answered in turn once it was free, the password checked and
+            // `.z.po` run for connections long closed (#3024). A host that
+            // takes no connection is gone, not busy, and fails (#3032).
+            return this.dial(process, target, cut.signal, untilFree);
           },
         );
         // Opened after deactivate (a reconnect after an abort), when nothing
@@ -2554,8 +2551,9 @@ export class Live {
   /// Open a connection to `process` at `target`, through the SSH tunnel it
   /// names, if it names one (#908): the tunnel closes with the connection,
   /// and the connection with the tunnel. `signal` stops the connect.
-  private async dial(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
-    const connection = await this.dialed(process, target, signal);
+  /// `untilFree`: its handshake is waited for without limit (#3024).
+  private async dial(process: Process, target: Target, signal?: AbortSignal, untilFree = false): Promise<QConnection> {
+    const connection = await this.dialed(process, target, signal, untilFree);
     // Asked at each send, so a changed setting or process holds at once (#2470).
     connection.direct = () => this.directOf(connection === this.connection && this.active !== undefined ? this.active : process);
     return connection;
@@ -2572,9 +2570,11 @@ export class Live {
     return this.active === undefined ? undefined : this.directOf(this.active);
   }
 
-  private async dialed(process: Process, target: Target, signal?: AbortSignal): Promise<QConnection> {
+  private async dialed(process: Process, target: Target, signal?: AbortSignal, untilFree = false): Promise<QConnection> {
+    // The handshake of a process waited for until it is free has no limit.
+    const handshakeMs = untilFree ? Infinity : undefined;
     if (process.ssh === undefined) {
-      return QConnection.open(target, undefined, signal);
+      return QConnection.open(target, undefined, signal, handshakeMs);
     }
     if (!this.setting(readTunnel).enabled) {
       throw new Error(
@@ -2594,6 +2594,7 @@ export class Live {
         },
         undefined,
         signal,
+        handshakeMs,
       );
       connection.whenClosed(() => tunnel.close());
       tunnel.whenClosed(() => connection.abort());

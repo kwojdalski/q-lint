@@ -190,7 +190,10 @@ export class QConnection {
   /// Open a connection, or reject with why not within `timeoutMs` (with no
   /// limit when it is infinite), or once `signal` aborts. A connect given up
   /// is closed, so nothing is left open behind it.
-  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal): Promise<QConnection> {
+  /// `handshakeMs`: how long the process, once connected to, may take to
+  /// answer the handshake, when that is not what is left of `timeoutMs`:
+  /// infinite for one known to be busy, which a login is left with (#3024).
+  static open(target: Target, timeoutMs: number = CONNECT_TIMEOUT_MS, signal?: AbortSignal, handshakeMs?: number): Promise<QConnection> {
     return new Promise((resolve, reject) => {
       const options = target.path !== undefined ? { path: target.path } : { host: dialHost(target.host), port: target.port };
       const at = target.path ?? `${target.host}:${target.port}`;
@@ -219,11 +222,18 @@ export class QConnection {
       };
       // Connected to, it is the handshake that was not answered (#3032).
       let connected = false;
-      socket.once("connect", () => (connected = true));
-      const late = (): void =>
-        fail(connected ? new NoHandshakeAnswer(`no answer from ${at} in ${timeoutMs / 1000} s`) : new Error(`${at} could not be reached in ${timeoutMs / 1000} s`));
+      const late = (ms: number): void =>
+        fail(connected ? new NoHandshakeAnswer(`no answer from ${at} in ${ms / 1000} s`) : new Error(`${at} could not be reached in ${ms / 1000} s`));
       // A timer cannot wait for ever: an infinite delay fires at once.
-      const timer = Number.isFinite(timeoutMs) ? setTimeout(late, timeoutMs) : undefined;
+      const until = (ms: number): NodeJS.Timeout | undefined => (Number.isFinite(ms) ? setTimeout(() => late(ms), ms) : undefined);
+      let timer = until(timeoutMs);
+      socket.once("connect", () => {
+        connected = true;
+        if (handshakeMs !== undefined && !settled) {
+          clearTimeout(timer);
+          timer = until(handshakeMs);
+        }
+      });
       if (signal?.aborted) {
         cancelled();
         return;
