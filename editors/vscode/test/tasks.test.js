@@ -84,7 +84,10 @@ test("detected tasks: run current file, and one test task per runner script; def
     { label: "test b/runtests.q", definition: { type: "q", script: "b/runtests.q" }, test: true },
     { label: "test tests/run_tests.q", definition: { type: "q", script: "tests/run_tests.q" }, test: true },
   ]);
-  assert.deepStrictEqual(T.readTaskDefinition({ type: "q", script: " t.q ", args: ["-p", 5, "1"] }), { type: "q", script: "t.q", args: ["-p", "1"] });
+  // A number is its text, not dropped, and one string is split (#2521).
+  assert.deepStrictEqual(T.readTaskDefinition({ type: "q", script: " t.q ", args: ["-p", 5, "1"] }), { type: "q", script: "t.q", args: ["-p", "5", "1"] });
+  assert.deepStrictEqual(T.readTaskDefinition({ type: "q", script: "s.q", args: "-p 54161" }), { type: "q", script: "s.q", args: ["-p", "54161"] });
+  assert.deepStrictEqual(T.readTaskDefinition({ type: "q", script: "s.q", args: ["-p", null, {}] }), { type: "q", script: "s.q", args: ["-p"] });
   assert.strictEqual(T.readTaskDefinition({ type: "shell", script: "t.q" }), undefined);
   assert.strictEqual(T.readTaskDefinition({ type: "q" }), undefined);
   assert.strictEqual(T.terminalText("a\nb\r\nc"), "a\r\nb\r\nc");
