@@ -623,3 +623,15 @@ test("a datetime far from 2000 is cut to the millisecond as KDB-X cuts it, not a
     ["2225.01.24T21:36:00.000", "1880.02.01T16:47:59.999", "1720.11.01T21:35:59.999", "2200.03.14T22:19:12.000"],
   );
 });
+
+test("a line -3! writes is cut a character short of the width, as q cuts it; a table's or dictionary's at it (#2571)", () => {
+  const til = (n) => ({ kind: "vector", t: 7, attr: 0, v: Array.from({ length: n }, (_, i) => BigInt(i)) });
+  const width = (q) => consoleLines(q, [25, 80]).map((l) => l.length);
+  // KDB-X: count each .Q.S[25 80;0j] of each.
+  assert.deepStrictEqual(width(til(100)), [79]);
+  assert.ok(consoleLines(til(100), [25, 80])[0].endsWith("28 .."));
+  assert.deepStrictEqual(width({ kind: "chars", attr: 0, v: Buffer.alloc(200, "x") }), [79]);
+  assert.deepStrictEqual(width({ kind: "list", attr: 0, v: [til(100), { kind: "atom", t: -11, v: "a" }] }), [79, 2]);
+  assert.deepStrictEqual(width({ kind: "list", attr: 0, v: [til(50), til(50)] }), [80, 80]);
+  assert.deepStrictEqual(width({ kind: "dict", sorted: false, k: { kind: "vector", t: 11, attr: 0, v: ["a", "b"] }, v: { kind: "list", attr: 0, v: [til(100), til(100)] } }), [80, 80]);
+});

@@ -665,16 +665,23 @@ function nested(q: QValue, precision = 7): string[] {
       if (items.length === 0) {
         return [];
       }
-      const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
-      const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
-      const counts = new Set(items.map(countOf));
-      const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
-      if (atomic || counts.size > 1 || same) {
+      if (oneLineItems(items)) {
         return items.map((x) => oneLine(x, precision));
       }
       return tabulate(items.map((x) => nested(x, precision))).map((line) => line.trimEnd());
     }
   }
+}
+
+/// Whether `.Q.s2` writes a general list's items with `-3!`, one a line,
+/// rather than as rows lined up: when one is an atom, a dictionary or a
+/// table, their counts differ, or all are of a type it writes whole.
+function oneLineItems(items: QValue[]): boolean {
+  const types = new Set(items.map((x) => (x.kind === "vector" ? x.t : x.kind === "chars" ? 10 : x.kind === "list" ? 0 : -1)));
+  const atomic = items.some((x) => x.kind === "atom" || x.kind === "func" || x.kind === "dict" || x.kind === "table");
+  const counts = new Set(items.map(countOf));
+  const same = types.size === 1 && [1, 4, 10].includes([...types][0]);
+  return atomic || counts.size > 1 || same;
 }
 
 /// The lines q's console would show for a value decoded with its types
@@ -721,7 +728,11 @@ export function consoleLines(q: QValue, size: [number, number], value?: unknown,
     }
   }
   const lines = formatQ(shown, value, type, precision);
-  return cutLines(more ? [...lines, ".."] : lines, [Infinity, width]);
+  // A line `-3!` writes - an atom, a simple list, a general list's item -
+  // q cuts a character short of the width; a table's or a dictionary's
+  // rows at it (#2571).
+  const short = q.kind === "atom" || q.kind === "vector" || q.kind === "chars" || (q.kind === "list" && q.v.length > 0 && oneLineItems(q.v));
+  return cutLines(more ? [...lines, ".."] : lines, [Infinity, short ? width - 1 : width]);
 }
 
 /// `lines` cut to a console of `size` (height, width) as `.Q.S` cuts: a
