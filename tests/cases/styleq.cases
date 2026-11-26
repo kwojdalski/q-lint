@@ -166,6 +166,33 @@ h:{y:x+1; y}
 === QS009 profile: styleq | an assignment after another statement still comes before any read
 h:{a:x; z:a*2; z}
 
+=== QS009 QS009 profile: styleq | a pattern assigns every name it binds (#2726; q 5: {(y;z):x; y+z} takes x, y and z)
+f:{(y;z):x; y+z}
+
+=== QS009 profile: styleq | and a slot of a conditional is a statement of the lambda (#2726; q 5: {$[x;y:1;y:2]; y} takes two)
+i:{$[x;y:1;y:2]; y}
+
+=== QS009 QS009 QS009 profile: styleq | of if, while and do too, nested or inside a list (#2726)
+f:{if[x;z:1]; x}
+g:{while[x<3;x+:1;$[x;y:x;0]]; x}
+h:{a:(1;do[2;y:x]); a}
+
+=== clean profile: styleq | a slot that reads the name first, a column a query in one names, and a name with a keyword's ending (#2726)
+f:{$[y;y:1;0]}
+t:([]a:1 2)
+g:{$[x;select y:1 from t;0]}
+h:{.my.if[x;y]}
+
+=== QS009 QF022 profile: styleq | `::` amends the argument q made of the name, and sets no global (#2727; q 5: after setY:{y::42; x} and setY[1;0] there is no y)
+setY:{y::42; x}
+
+=== QS009 QF022 profile: styleq | in a pattern too (#2727; q 5: (value {(a;y)::x; a}) 1 is `x`y)
+g:{(a;y)::x; a}
+
+=== clean profile: styleq | with a parameter list `::` sets the global it names, and any other name does without one (#2727)
+f:{[a] y::a; a}
+g:{w::42; x}
+
 === clean profile: styleq | rebinding `x` keeps the rank (q 5: {x:x+1; x} 1 is 2)
 k:{x:x+1; x}
 
