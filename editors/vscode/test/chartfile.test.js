@@ -9,14 +9,14 @@ const { gridFromCsv, gridFromJson, gridFromFile, chartFromGrid } = require("../o
 const { main } = require("../out/chartcli.js");
 
 /// Run the chart command line on `content` saved as `name`: its exit code and what it said.
-async function cli(name, content) {
+async function cli(name, content, options = []) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-chartfile-"));
   try {
     const file = path.join(dir, name);
     fs.writeFileSync(file, content);
     const said = [];
     const io = { out: (s) => said.push(s), err: (s) => said.push(s), stdin: () => "" };
-    const code = await main([file, "-o", path.join(dir, "out.svg")], io);
+    const code = await main([file, "-o", path.join(dir, "out.svg"), ...options], io);
     return { code, said: said.join("") };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -97,6 +97,24 @@ test("a column of hex, binary or octal ids is text, not the numbers JavaScript r
   for (const word of ["Infinity", "1e", "e5", ".", "1.2.3", "--1", "1 2"]) {
     assert.strictEqual(gridFromCsv(`a\n1\n${word}\n`).columns[0].numeric, false, word);
   }
+});
+
+test("a candlestick draws the four columns --y names as its open, high, low and close, and refuses another count (#3126)", async () => {
+  const csv = "t,volume,vwap,o1,h1,l1,c1\n09:00,100,10,10,12,9,11\n09:01,200,11,11,13,10,12\n09:02,300,12,12,13,11,11\n";
+  const texts = (svg) => [...svg.matchAll(/<text[^>]*>([^<]*)</g)].map((m) => m[1]);
+  const drawn = texts(chartFromGrid(gridFromCsv(csv), { kind: "candlestick", y: ["o1", "h1", "l1", "c1"] }));
+  const axis = drawn.slice(0, drawn.indexOf("09:00")).map(Number);
+  assert.ok(Math.min(...axis) >= 8 && Math.max(...axis) <= 14, "the y axis spans the prices, not the volume: " + axis.join(" "));
+  // In the order given: the close first is a candle of another colour.
+  const fills = (y) => [...chartFromGrid(gridFromCsv(csv), { kind: "candlestick", y }).matchAll(/<rect x[^>]*fill="([^"]*)"/g)].map((m) => m[1]);
+  assert.notDeepStrictEqual(fills(["o1", "h1", "l1", "c1"]), fills(["c1", "h1", "l1", "o1"]));
+  assert.throws(() => chartFromGrid(gridFromCsv(csv), { kind: "candlestick", y: ["o1", "h1", "l1"] }), /a candlestick takes four columns, its open, high, low and close in that order: 3 given/);
+  assert.throws(() => chartFromGrid(gridFromCsv(csv), { kind: "candlestick", y: ["o1", "h1", "l1", "cc"] }), /no column cc/);
+  const said = await cli("k.csv", csv, ["--kind", "candlestick", "--y", "o1,h1"]);
+  assert.strictEqual(said.code, 1);
+  assert.match(said.said, /chart: a candlestick takes four columns/);
+  // With no --y, found by itself as before.
+  assert.doesNotThrow(() => chartFromGrid(gridFromCsv(csv), { kind: "candlestick" }));
 });
 
 test("a query's chart of more rows than it draws says how many it left out, on the chart and on stderr (#2456)", { skip: require("./qserver.js").skip }, async (t) => {

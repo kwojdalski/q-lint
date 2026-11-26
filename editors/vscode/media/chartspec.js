@@ -236,9 +236,10 @@
   /// {type, labels?, datasets: [{label, data}], note?}. `columns` are the
   /// y columns, as chartable() gives them; `bins` is for a histogram. With
   /// no row, or no value in any, a note says so: axes around nothing read
-  /// as a chart that failed to draw (#3149).
-  function chartData(grid, rows, kind, columns, bins) {
-    const data = seriesData(grid, rows, kind, columns, bins);
+  /// as a chart that failed to draw (#3149). `ohlc`: a candle chart's four
+  /// columns where the caller names them, in place of those found (#3126).
+  function chartData(grid, rows, kind, columns, bins, ohlc) {
+    const data = seriesData(grid, rows, kind, columns, bins, ohlc);
     if (data.note) {
       return data;
     }
@@ -251,7 +252,7 @@
     return drawn ? data : { type: "bar", datasets: [], note: kind === "candlestick" ? "No row has all four of open, high, low and close." : "Every value is null." };
   }
 
-  function seriesData(grid, rows, kind, columns, bins) {
+  function seriesData(grid, rows, kind, columns, bins, given) {
     if (columns.length === 0 && kind !== "candlestick") {
       return { type: "bar", datasets: [], note: "No numeric column to chart" + (kind === "histogram" ? "." : " against the first.") };
     }
@@ -270,7 +271,7 @@
       };
     }
     if (kind === "candlestick") {
-      const candles = candleColumns(grid);
+      const candles = given ? { columns: given } : candleColumns(grid);
       if (!candles.columns) {
         return { type: "bar", datasets: [], note: candles.note };
       }
