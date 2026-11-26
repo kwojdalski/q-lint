@@ -345,6 +345,46 @@ fn a_typed_local_is_judged_as_its_literal_would_be() {
     );
 }
 
+/// What each finding of a run over `text` says, for the type lints, whose
+/// message quotes the source and names the error.
+fn type_lint_details(text: &str) -> Vec<String> {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("a.q"), text).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(dir.path())
+        .args(["--isolated", "--select", "QT033,QT034,QT035", "a.q"])
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    findings
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|f| f["detail"].as_str().unwrap().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The operand QT035 quotes is the whole of it, past the `;`, `)` or `]`
+/// of a bracket it opens itself, and never part of one (#2879).
+#[test]
+fn a_type_lint_quotes_the_whole_right_operand() {
+    let quoted = |text: &str| -> Vec<String> {
+        type_lint_details(text)
+            .iter()
+            .map(|d| d.split('`').nth(1).unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(quoted("f:{[g] s:`a; s+g[1;2]}\n"), ["s+g[1;2]"]);
+    assert_eq!(quoted("f:{s:`a; s*count(1;2)}\n"), ["s*count(1;2)"]);
+    assert_eq!(quoted("f:{s:`a; (s+{x;1};2)}\n"), ["s+{x;1}"]);
+    assert_eq!(quoted("f:{s:`a; (s+1;2)}\n"), ["s+1"]);
+    // One that runs on over the next line is quoted up to its operator.
+    assert_eq!(quoted("f:{s:`a; s+(1;\n  2)}\n"), ["s+"]);
+}
+
 #[test]
 fn the_type_lints_are_what_q_does() {
     // Each line the rules report, run: every one is 'type (or, for the join,

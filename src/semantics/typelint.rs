@@ -201,9 +201,7 @@ fn right_side<'a>(
         return None;
     }
     let start = from + (comments[from..].len() - operand.len());
-    let stop = code[start..]
-        .find([';', ')', ']', '}', '\n'])
-        .map_or(code.len(), |n| start + n);
+    let stop = operand_end(code, start);
     let text = comments[start..stop].trim_end();
     let kind = literal(text).or_else(|| {
         let name_end = start + text.len();
@@ -214,7 +212,31 @@ fn right_side<'a>(
             .flatten()
             .filter(|_| name_end <= stop)
     });
-    Some((op, kind, start + text.len()))
+    // What is quoted stays on one line: of an operand that runs on over
+    // the next, only up to the operator.
+    let shown = if text.contains('\n') {
+        from
+    } else {
+        start + text.len()
+    };
+    Some((op, kind, shown))
+}
+
+/// Where the operand starting at `start` ends: the `;`, the line break or
+/// the closing bracket that ends its expression, past any bracket it opens
+/// itself - `g[1;2]` and `count(1;2)` are each one operand.
+fn operand_end(code: &str, start: usize) -> usize {
+    let mut depth = 0usize;
+    for (i, b) in code[start..].bytes().enumerate() {
+        match b {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return start + i,
+            b')' | b']' | b'}' => depth -= 1,
+            b';' | b'\n' if depth == 0 => return start + i,
+            _ => {}
+        }
+    }
+    code.len()
 }
 
 /// The dyad written before a name starting at `at`, the type of its left

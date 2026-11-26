@@ -1501,6 +1501,10 @@ f:{s:`a; "a\"b"=s}
 f:{n:1 2; "",n}
 g:{c:"a"; "b"=c}
 
+=== QT035 | an operand holding a bracket is one operand (#2879; q 5: 'type, with g:{x+y})
+f:{[g] s:`a; s+g[1;2]}
+h:{s:`a; s*count(1;2)}
+
 === clean | an underscore straight after the first backtick is drop, and the local no symbol (#2889; q 5: f[] is 'a, where a is undefined, not 'type)
 f:{n:`_a; n+1}
 
