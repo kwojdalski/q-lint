@@ -302,11 +302,21 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
 /// says so - read as the builtin. An older q has no such word, so for it
 /// the name is the file's own: one the file assigns, `use:5`, or binds as
 /// a parameter, `{[use] use+1}`, is no use of KDB-X's (KDB-X refuses both,
-/// 'assign and 'nyi, which QF004 and QF001 report for it).
+/// 'assign and 'nyi, which QF004 and QF001 report for it). The name is the
+/// file's own where q would read it so: everywhere for a global - assigned
+/// outside every lambda, or with `::` in one - and in the one lambda that
+/// takes it or assigns it for a local (#2731). A column is neither: one a
+/// table literal names, `([] use:1 2)`, or a query's phrase reads,
+/// `select use from t where use>0`, which an older q runs (#2732).
 fn kdbx_builtins(path: &str, code: &str, source: &str, out: &mut Vec<Finding>) {
     for builtin in crate::BUILTINS.iter().filter(|b| newer_builtin(&b.name)) {
         let word = builtin.name.as_str();
-        let found: Vec<usize> = code
+        // Whether the word at `at` is assigned, and with `::`.
+        let assigned = |at: usize| {
+            let rest = code[at + word.len()..].trim_start_matches([' ', '\t']);
+            rest.starts_with(':').then(|| rest.starts_with("::"))
+        };
+        let mut found: Vec<usize> = code
             .match_indices(word)
             .map(|(at, _)| at)
             .filter(|&at| {
@@ -316,16 +326,50 @@ fn kdbx_builtins(path: &str, code: &str, source: &str, out: &mut Vec<Finding>) {
                         .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
             })
             .collect();
-        let bound = found.iter().any(|&at| {
-            code[at + word.len()..]
-                .trim_start_matches([' ', '\t'])
-                .starts_with(':')
-                || in_signature(code, at)
+        let columns = found
+            .iter()
+            .any(|&at| assigned(at).is_some())
+            .then(|| crate::table_columns_blanked(code));
+        found.retain(|&at| {
+            !columns.as_ref().is_some_and(|c| !c[at..].starts_with(word))
+                && !crate::in_qsql_phrase(code, at)
         });
-        if bound {
+        // The lambda each one stands directly in, by its brace.
+        let mut owners = Vec::with_capacity(found.len());
+        let mut braces = vec![];
+        for (i, c) in code.bytes().enumerate() {
+            if owners.len() == found.len() {
+                break;
+            }
+            if i == found[owners.len()] {
+                owners.push(braces.last().copied());
+            }
+            match c {
+                b'{' => braces.push(i),
+                b'}' => {
+                    braces.pop();
+                }
+                _ => {}
+            }
+        }
+        let binds = |at: usize| assigned(at).is_some() || in_signature(code, at);
+        let global = found
+            .iter()
+            .zip(&owners)
+            .any(|(&at, owner)| assigned(at).is_some_and(|double| double || owner.is_none()));
+        if global {
             continue;
         }
-        for at in found {
+        let locals: std::collections::HashSet<usize> = found
+            .iter()
+            .zip(&owners)
+            .filter(|&(&at, _)| binds(at))
+            .filter_map(|(_, owner)| *owner)
+            .collect();
+        for (at, owner) in found.iter().copied().zip(&owners) {
+            if owner.is_some_and(|brace| locals.contains(&brace)) {
+                continue;
+            }
             out.push(Finding::at(
                 path,
                 source,

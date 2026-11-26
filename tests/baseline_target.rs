@@ -617,3 +617,41 @@ fn a_removed_function_reached_by_indexing_its_namespace_is_reported() {
     let (_, found, err) = run(d, &["--isolated", "--target-version", "4.0", "a.q"]);
     assert_eq!(qk(&found), vec![], "{err}");
 }
+
+/// For an older q `use` is the file's own name only where q reads it so
+/// (#2731): a parameter or a local is one lambda's, and a column that a
+/// table literal or a query names binds nothing, so the load on a later
+/// line is still KDB-X's - while a global, set with `::` in a lambda, is
+/// the file's everywhere. A column a query reads is no builtin either: an
+/// older q runs `select use from t`, which KDB-X refuses with 'rank (#2732).
+#[test]
+fn a_builtin_only_kdbx_has_is_the_files_own_name_where_q_reads_it_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let lines = [
+        "t:([] use:1 2)",
+        "r:select use:1 from t",
+        "f:{[use] use+1}",
+        "g:{use:x; use}",
+        "h:{[a;use] {use+1}}",
+        "m:use`mymod",
+        "k:{use[`x]}",
+        "s:exec use from t where use>0",
+        "u:select use from t",
+    ];
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    fs::write(d.join("local.q"), text).unwrap();
+    fs::write(d.join("global.q"), "f:{use::x}\nm:use`mymod\n").unwrap();
+    let pair = |c: &str, l: usize| (c.to_string(), l);
+    for target in ["3.6", "4.0", "4.1"] {
+        let args = ["--isolated", "--select", "QK", "--target-version", target];
+        let (_, found, err) = run(d, &[&args[..], &["local.q"]].concat());
+        assert_eq!(
+            qk(&found),
+            vec![pair("QK006", 5), pair("QK006", 6), pair("QK006", 7)],
+            "{target}: {err}"
+        );
+        let (_, found, err) = run(d, &[&args[..], &["global.q"]].concat());
+        assert_eq!(qk(&found), vec![], "{target}: {err}");
+    }
+}
