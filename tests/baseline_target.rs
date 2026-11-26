@@ -539,3 +539,38 @@ fn every_pattern_kdbx_reads_is_one_for_an_older_target() {
         "{err}"
     );
 }
+
+/// What a QK003 finding says the parameter list does is what its first
+/// such slot does (#2734): a pattern is neither typed nor filtered. Each
+/// runs on KDB-X (q 5): `{[(a;b)] a+b}[1 2]` is 3, `{[k!v] k}` gives the
+/// keys, `{[x:neg] x}[1]` is -1 and `{[1;b] b}[3;2]` is 'match.
+#[test]
+fn a_parameter_list_of_4_1_is_named_for_what_its_slot_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let text = "f:{[(a;b)] a+b}\ng:{[k!v] k}\nh:{[x:`j] x}\ni:{[x:neg] x}\nj:{[1;b] b}\n";
+    fs::write(d.join("a.q"), text).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(d)
+        .args(["--isolated", "--select", "QK", "--target-version", "4.0"])
+        .args(["--format", "json", "a.q"])
+        .output()
+        .unwrap();
+    let findings: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let said: Vec<&str> = findings
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["detail"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "`{[(a;b)]` takes a pattern for a parameter, which q runs from 4.1 on",
+            "`{[k!v]` takes a pattern for a parameter, which q runs from 4.1 on",
+            "`{[x:`j]` types a parameter, which q runs from 4.1 on",
+            "`{[x:neg]` filters a parameter, which q runs from 4.1 on",
+            "`{[1;b]` takes a pattern for a parameter, which q runs from 4.1 on",
+        ]
+    );
+}

@@ -198,12 +198,20 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
     // which is QF002's (KDB-X refuses every call of `{[_] 1}` with 'match).
     for &(brace, open, body) in &signatures {
         let sig = crate::signature(code, source, brace);
-        if sig.slots.iter().any(|slot| {
+        if let Some(slot) = sig.slots.iter().find(|slot| {
             !slot.is_empty()
-                && *slot != "_"
+                && **slot != "_"
                 && !crate::is_param_name(slot)
                 && !crate::application(slot)
         }) {
+            // What the first such slot is, by its colon outside every
+            // bracket: `x:`j` is typed, `x:neg` filtered, and with none -
+            // `(a;b)`, `k!v`, `1` - the slot is a pattern (#2734).
+            let does = match crate::typed_at(slot) {
+                Some(at) if slot[at + 1..].trim_start().starts_with('`') => "types a parameter",
+                Some(_) => "filters a parameter",
+                None => "takes a pattern for a parameter",
+            };
             let close = code[..body].rfind(']').unwrap_or(open);
             out.push(Finding::at(
                 path,
@@ -211,7 +219,7 @@ pub(crate) fn check(path: &str, code: &str, source: &str) -> Vec<Finding> {
                 brace,
                 "QK003",
                 format!(
-                    "`{}` types or filters a parameter, which q runs from 4.1 on",
+                    "`{}` {does}, which q runs from 4.1 on",
                     first_line(&source[brace..=close])
                 ),
             ));
