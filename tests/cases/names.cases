@@ -1466,6 +1466,30 @@ g:{[px] select from ([]px:px) where px>1}
 h:{lim:10; exec px from t where px<lim}
 k:{[sym] select from (select from t) where sym=sym}
 
+=== clean | a parameter read in a nested query over a table without that column (q 5: f`a gives the a row and f`b the b row, #2691)
+t:([]sym:`a`b;px:1 2)
+t2:([]q:`a`b)
+f:{[sym] select from t where sym in exec q from t2 where q=sym}
+g:{[sym] r:select from t where sym in exec q from t2 where q=sym; r}
+
+=== QF020 QF023 QB001 | another lambda's local of the table's name leaves the global table known (q 5: h[] is 'nope, #2692)
+t:([]sym:`a`b;px:1 2)
+f:{[n] t:n; t}
+h:{[] select nope from t}
+g:{[sym] select from t where sym=sym}
+
+=== QF020 QF023 QB001 | a select or exec over the table by symbol changes nothing (q 5: h[] is 'nope after select from `t, #2693)
+t:([]sym:`a`b;px:1 2)
+r:select from `t
+s:exec px from `t
+h:{[] select nope from t}
+g:{[sym] select from t where sym=sym}
+
+=== clean | but an update or delete by symbol may add a column (#756, #2693)
+t:([]sym:`a`b;px:1 2)
+update nope:1 from `t
+h:{[] select nope from t}
+
 === QF004 profile: general | a builtin assigned inside an expression (q 5: 'assign, #2231)
 a:count:1
 

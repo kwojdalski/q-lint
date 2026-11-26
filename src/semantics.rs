@@ -1421,7 +1421,7 @@ pub fn index(code: &str, raw: &str) -> crate::FileIndex {
     // take it: with b.q's `update c:0 from `t` loaded, a.q's
     // `f:{select c from t}` runs (q 5, #756), and after `` `a xkey `k ``
     // there, `x lj k` joins (#757).
-    for m in re!(IN_PLACE).captures_iter(code) {
+    for m in in_place(code) {
         let at = m.get(0).unwrap().start();
         let ns = &namespaces[namespaces
             .partition_point(|(p, _)| *p <= at)
@@ -3939,6 +3939,46 @@ const LOAD: &str = r"\br?load\s*\[?\s*`:?(?:[^\s;\]\[()`]*/)?([A-Za-z][A-Za-z0-9
 /// a dictionary, and `` 0!`k `` takes keys away (#588).
 const IN_PLACE: &str = r"(?:\bfrom\s*|[!.@]\s*\[\s*|\b(?:xkey|xasc|xdesc|xcols|xcol)\s*(?:\[[^;\[\]]*;\s*)?|(?m:^|[;:(\[{])[ \t]*[1-9]\d*\s*!\s*)`(\.?[A-Za-z][A-Za-z0-9_.]*)";
 
+/// Each match of `IN_PLACE` that changes its table: `` from `t `` only in an
+/// update or a delete, since `` select from `t `` and `` exec a from `t ``
+/// read it and change nothing (#2693).
+fn in_place(code: &str) -> impl Iterator<Item = regex::Captures<'_>> {
+    re!(IN_PLACE).captures_iter(code).filter(move |m| {
+        let at = m.get(0).unwrap().start();
+        !code[at..].starts_with("from") || {
+            // The template's keyword: the nearest one before `from` at its
+            // own bracket depth, in the same statement.
+            let b = code.as_bytes();
+            let mut depth = 0i32;
+            let mut i = at;
+            let mut keyword = None;
+            while i > 0 {
+                i -= 1;
+                match b[i] {
+                    b')' | b']' | b'}' => depth += 1,
+                    b'(' | b'[' | b'{' => depth -= 1,
+                    b';' if depth == 0 => break,
+                    b'\n' if depth == 0 && !b.get(i + 1).is_some_and(u8::is_ascii_whitespace) => {
+                        break;
+                    }
+                    _ => {}
+                }
+                if depth < 0 {
+                    break;
+                }
+                if depth == 0
+                    && boundary(code, i)
+                    && let Some(k) = re!(r"^(?:select|exec|update|delete)\b").find(&code[i..])
+                {
+                    keyword = Some(k.as_str());
+                    break;
+                }
+            }
+            !matches!(keyword, Some("select" | "exec"))
+        }
+    })
+}
+
 /// What a global holds, when the file assigns it once, at the top level, to
 /// a literal. Anything else - assigned twice, amended, `set`, assigned to an
 /// expression - is unknown, and the rules below say nothing about it.
@@ -4241,6 +4281,14 @@ fn named_values(
             continue;
         }
         writes.entry(m.get(1).unwrap().as_str()).or_default().push(whole.start());
+        // A plain `name:` inside a lambda binds a local, and leaves the
+        // global of that name as it was: `f:{[n] t:n; t}` does not make the
+        // file's `t` unknown (#2692).
+        if scope_at(scopes, whole.start()).is_some()
+            && re!(r"^[A-Za-z][A-Za-z0-9_]*\s*:$").is_match(whole.as_str())
+        {
+            continue;
+        }
         // A namespace indexed by literal symbols writes just those members:
         // `.cfg[`a]:v` is `.cfg.a`, and leaves `.cfg.b` alone.
         let name = key(m.get(1).unwrap().as_str(), whole.start());
@@ -4304,7 +4352,7 @@ fn named_values(
     // after `` `a xkey `k `` joins), and its neighbours (#353), in the
     // bracket form too, and `` 1!`k `` (q 5: `xkey[`a;`k]` and `` 1!`k ``
     // return `` `k `` and key it) (#466).
-    for m in re!(IN_PLACE).captures_iter(code) {
+    for m in in_place(code) {
         let name = m.get(1).unwrap().as_str();
         writes.entry(name).or_default().extend([0, 0]);
         exact
@@ -4441,10 +4489,13 @@ fn named_values(
         foreign_calls.get(i).is_some_and(|&c| c < to)
     };
     let phrases = qsql_phrases(code);
-    // The first phrase, in `qsql_phrases`' order, around each offset: asking
-    // the list for every name read was quadratic in a file of queries
-    // (#709). Each phrase claims the offsets no earlier one has, skipping
-    // claimed runs through `next`.
+    // The innermost phrase around each offset: asking the list for every
+    // name read was quadratic in a file of queries (#709). Each phrase
+    // claims the offsets no later-starting one has, skipping claimed runs
+    // through `next` - so a nested query's where phrase owns its reads, and
+    // `q=sym` in `where sym in exec q from t2 where q=sym` is judged against
+    // `t2` (#2691). Of two phrases starting at one offset, the nested
+    // query's own, later in the list, wins.
     let owner: Vec<u32> = {
         let n = code.len();
         let mut owner = vec![u32::MAX; n];
@@ -4456,7 +4507,10 @@ fn named_values(
             }
             i
         }
-        for (index, &(a, b, _)) in phrases.iter().enumerate() {
+        let mut order: Vec<usize> = (0..phrases.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse((phrases[i].0, i)));
+        for index in order {
+            let (a, b, _) = phrases[index];
             let b = b.min(n);
             let mut i = find(&mut next, a.min(n));
             while i < b {
@@ -5389,6 +5443,13 @@ fn qsql_phrases(code: &str) -> Vec<Phrase> {
                 && let Some((end, later)) = read.get(&i)
             {
                 for &w in later {
+                    // The phrase before it ends where it starts, rather than
+                    // at the end of the file.
+                    if let Some(last) = own.last_mut()
+                        && last.1 == usize::MAX
+                    {
+                        last.1 = w;
+                    }
                     wheres.push(w);
                     let table = own.last().and_then(|p| p.2);
                     own.push((w, usize::MAX, table));
