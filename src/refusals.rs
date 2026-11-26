@@ -1378,9 +1378,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         let rest = &comments[i + 1..];
         // `#:a`: the k form, a glyph and a colon, applied to an operand
         // written straight after it.
+        // Past a blank too: q 5 refuses `a:#: y` and `b:-: y` (#2853).
         let colon = rest.starts_with(':')
-            && rest[1..].starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
-            || rest.starts_with(":-") && rest[2..].starts_with(|c: char| c.is_ascii_digit())
+            && continued(&rest[1..])
+                .starts_with(|c: char| c.is_ascii_alphanumeric() || "`(\".{".contains(c))
+            || rest.starts_with(':')
+                && re!(r"^-\.?\d").is_match(continued(&rest[1..]))
             // And with `::`, before any operand, past a blank too: q 5
             // refuses `-::a` with '-::, `,::"a"` with ',::, and `-:: a` (#661).
             || rest.starts_with("::")
@@ -1402,14 +1405,28 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
         let pair = !spaced
             && matches!(
                 (g, next.as_bytes().first()),
-                (b'<', Some(b'=' | b'>')) | (b'>', Some(b'='))
+                (b'<', Some(b'=' | b'>')) | (b'>', Some(b'=' | b'>'))
             );
         // The pair is one operator, and it has no monadic form either: q 5
         // refuses `a:<>0`, `f[<>0;1]` and `<=x` with the pair (#2230), and
-        // takes `(<>)` and `x<>0`.
+        // takes `(<>)` and `x<>0`. `>>` is one too: q 5 reads `(>>)` as a
+        // value and `3>>3` as 0b (#2855). Like a glyph, it is no operand for
+        // another to be applied to: q 5 refuses `(<=>)`, `(>=<)` and
+        // `f[<>,;1]` with the pair - but for `<>=`, `<>>`, `>>=` and `>>>`,
+        // which it parses.
         if pair && !colon {
             let expression = line_start + expression_start(&source[line_start..]);
-            if starts_operand(continued(&next[1..]))
+            let after = continued(&next[1..]);
+            let glyph_after = after
+                .starts_with(|c: char| GLYPHS.contains(&(c as u8)) || "_.".contains(c))
+                && !comments
+                    .get(i..i + 3)
+                    .is_some_and(|t| matches!(t, "<>=" | "<>>" | ">>=" | ">>>"))
+                && {
+                    let rest = continued(&after[1..]);
+                    rest.is_empty() || rest.starts_with([')', ']', '}', ';', '\r', '\n'])
+                };
+            if (starts_operand(after) || glyph_after)
                 && opens_expression(code, source, comments, i, expression)
             {
                 let digraph = &comments[i..i + 2];
@@ -1499,7 +1516,12 @@ fn monadic_glyph(path: &str, source: &str, code: &str, comments: &str, out: &mut
             } else {
                 (g as char).to_string()
             };
-            format!("`{glyph}` has no monadic form in q 5: q refuses this line with '{glyph}")
+            // With a blank before its operand q 5 names no token: `a:#: y` is '.
+            if colon && rest[1..].starts_with([' ', '\t', '\r', '\n']) {
+                format!("`{glyph}` has no monadic form in q 5: q refuses this line")
+            } else {
+                format!("`{glyph}` has no monadic form in q 5: q refuses this line with '{glyph}")
+            }
         });
         finding.end_column = finding.column.map(|c| c + if colon { 2 } else { 1 });
         out.push(finding);
@@ -2075,8 +2097,12 @@ fn monadic_keyword(
             continue;
         }
         let next = continued(&comments[m.end()..]);
+        // A qSQL `from` or `by` ends the column phrase, leaving the keyword
+        // a value: q 5 parses `select in from t`, `exec fby from t` and
+        // `select a,mod from t` (#2849).
         if !starts_operand(next)
             || re!(r"^(?:each|peach|over|scan|prior)(?:[^A-Za-z0-9_.]|$)").is_match(next)
+            || re!(r"^(?:from|by)(?:[^A-Za-z0-9_.]|$)").is_match(next)
         {
             continue;
         }

@@ -2490,3 +2490,32 @@ d:select[;;] from t
 e:select[;>a;>b] from t
 f:select[2;] from t
 g:select[2;>a] from t
+
+=== clean profile: general | an infix keyword straight before a qSQL from or by is a value (#2849; q 5 parses each)
+a:select in from t
+b:exec fby from t
+c:select a,mod from t
+d:select a by in from t
+
+=== QE008 profile: general | a k-form monadic glyph with a blank before its operand (#2853; q 5: ')
+a:#: y
+b:-: y
+c:x+ -: y
+
+=== clean profile: general | while the k form after an operand, or with nothing after it, is fine (#2853; q 5 parses each)
+e:x#: y
+f:#:
+g:(#:) y
+
+=== clean profile: general | >> is one operator, and a value with nothing applied to it (#2855; q 5 parses each)
+a:(>>)
+f[x;>>]
+b:3>>3
+c:(<>=)
+d:(>>=)
+
+=== QE008 profile: general | a pair applied to another glyph, or >> to an operand (#2855; q 5: '<=, '>=, '<>, '>>)
+a:(<=>)
+b:(>=<)
+c:f[<>,;1]
+d:>>x
