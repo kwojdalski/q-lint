@@ -27,7 +27,7 @@ tr.bad td { color: var(--vscode-errorForeground); }
 tr.dup td { color: var(--vscode-descriptionForeground); }
 button { margin-top: 8px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: none; padding: 4px 12px; }
 </style></head><body>
-<p>One process a line, <code>host:port[:label[:tags]]</code>, or CSV with a header row naming <code>host</code>, <code>port</code> and any of <code>label</code>, <code>tags</code>, <code>user</code>, <code>tls</code>. No passwords: each is asked for on connect.</p>
+<p>One process a line, <code>host:port[:label[:tags]]</code> (a q handle, <code>\`:host:port:user</code>, in q's order), or CSV with a header row naming <code>host</code>, <code>port</code> and any of <code>label</code>, <code>tags</code>, <code>user</code>, <code>tls</code>. No passwords: each is asked for on connect.</p>
 <textarea id="text" spellcheck="false" placeholder="localhost:5010:rdb:dev&#10;tick.example.com:5000:tp:prod,torq"></textarea>
 <div id="rows"></div>
 <button id="add">Add</button>

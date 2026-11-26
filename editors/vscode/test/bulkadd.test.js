@@ -29,6 +29,36 @@ test("host:port[:label[:tags]] lines, an IPv6 host in brackets", () => {
   assert.deepStrictEqual(rows.map((r) => r.line), [1, 5, 6]);
 });
 
+test("a q handle is read in q's order, its password never; a four-field line says how it was read (#3098)", () => {
+  assert.deepStrictEqual(colonParts("`:prodhost:5010:bob:hunter2"), { host: "prodhost", port: "5010", user: "bob", password: true });
+  assert.deepStrictEqual(colonParts(":prodhost:5010:bob"), { host: "prodhost", port: "5010", user: "bob" });
+  assert.deepStrictEqual(colonParts("`::5010"), { host: "localhost", port: "5010" });
+  assert.deepStrictEqual(colonParts("`:[::1]:5010::pw:with:colons"), { host: "[::1]", port: "5010", password: true });
+  assert.strictEqual(colonParts(""), undefined);
+  const rows = parseBulk("`:prodhost:5010:bob:hunter2\n:h2:5011:alice\n`::5012\n`:h:99999:bob:hunter3\nprodhost:5013:bob:hunter2\nh:5014:rdb", []);
+  assert.deepStrictEqual(rows.map((r) => r.process), [
+    { label: "prodhost:5010", host: "prodhost", port: 5010, user: "bob", tags: [] },
+    { label: "h2:5011", host: "h2", port: 5011, user: "alice", tags: [] },
+    { label: "localhost:5012", host: "localhost", port: 5012, tags: [] },
+    undefined,
+    { label: "bob", host: "prodhost", port: 5013, tags: ["hunter2"] },
+    { label: "rdb", host: "h", port: 5014, tags: [] },
+  ]);
+  assert.deepStrictEqual(rows.map(rowStatus), [
+    "added; its password was not read: it is asked for on connect",
+    "added",
+    "added",
+    "A port is between 1 and 65535.",
+    // The same line without its `: is a label and a tag, and says so.
+    "added; labelled bob, tagged hunter2",
+    "added",
+  ]);
+  // A handle's password is in no row, nor in the table, even of a line refused.
+  assert.deepStrictEqual([rows[0].text, rows[3].text], ["`:prodhost:5010:bob:***", "`:h:99999:bob:***"]);
+  assert.ok(!JSON.stringify(rows).includes("hunter3") && !rowsHtml(rows).includes("hunter3"));
+  assert.ok(!JSON.stringify(rows[0]).includes("hunter2"));
+});
+
 test("bad lines say why; duplicates of saved or earlier labels are skipped; a shared address is noted", () => {
   const rows = parseBulk("nohost\nh:99999\nh:5000:rdb\nh:5001:a\nh2:5002:a\nh1:5010:other", saved);
   assert.deepStrictEqual(rows.map(rowStatus), [
