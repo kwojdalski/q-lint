@@ -876,3 +876,24 @@ test("a connect after Disconnect has nothing of the process disconnected from: n
   assert.deepStrictEqual(stub.messages, []);
   assert.deepStrictEqual(live.history().map((e) => [e.process, e.code, e.outcome]), [["hdb", "2+2", "ok"]]);
 });
+
+// The status bar's item runs Connect ("Click to switch"): picking the
+// process already connected there closed the connection and opened it
+// again, and the query running on it was recorded as aborted.
+test("picking the connected process from Connect's list keeps the connection and the query running on it (#3030)", async (t) => {
+  let answer;
+  const a = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? new Promise((resolve) => (answer = resolve)) : 1));
+  t.after(() => a.close());
+  const { live, events } = await setUp(t, [proc("a", a.port), proc("b", a.port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const slow = live.run("slow");
+  await until(() => answer !== undefined);
+  stub.picks.push((options) => options.items.find((item) => item.label === "a"));
+  await stub.commands.get(live.status.command)();
+  assert.strictEqual(a.logins.length, 1, "connected once");
+  answer({ ok: true, type: -7, text: ["42"] });
+  await slow;
+  assert.deepStrictEqual(live.history().map((e) => [e.code, e.outcome]), [["slow", "ok"]]);
+  assert.deepStrictEqual(events, ["connected", "queried"]);
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: already connected to a."]]);
+});

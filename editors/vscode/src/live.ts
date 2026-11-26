@@ -2318,6 +2318,15 @@ export class Live {
 
   async connectTo(row?: ProcessArg): Promise<boolean> {
     const process = await this.toConnect(row);
+    // Picked from the list while connected to it - the status bar's "Click
+    // to switch" - it is switched to already: connecting again would drop
+    // the query running there as aborted (#3030). A row's own Connect, and
+    // a caller naming the process, connect again.
+    const at = this.activeProcess();
+    if (row === undefined && process !== undefined && at !== undefined && at.label === process.label && at.server === process.server && this.passwordKey(at) === this.passwordKey(process)) {
+      void window.showInformationMessage(plainMessage(`q-lint: already connected to ${process.label}.`));
+      return true;
+    }
     return process !== undefined && this.openChosen(process);
   }
 
