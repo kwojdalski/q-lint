@@ -54,9 +54,9 @@
       ]
     },
     "end-of-script": {
-      "comment": "A lone backslash outside a block ends the script; q reads nothing after it.",
+      "comment": "A lone backslash outside a block ends the script, and so does an exit, \\\\ - after a q) prompt or before a comment too; q reads nothing after either (#2786).",
       "name": "comment.block.end-of-script.q",
-      "begin": "^\\\\\\s*$",
+      "begin": "^(?:\\\\\\s*|(?:q\\))?\\\\\\\\(?:[ \\t].*)?)$",
       "end": "(?=A)(?!A)",
       "beginCaptures": {
         "0": {

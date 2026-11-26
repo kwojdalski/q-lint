@@ -140,6 +140,15 @@ test("a lone backslash ends the script, and what follows is comment", async () =
   assert.ok(scopes[0].startsWith("comment.block.end-of-script.q"), scopes[0]);
 });
 
+test("an exit, \\\\, ends the script too, after a q) prompt or before a comment, and what follows is comment (#2786)", async () => {
+  for (const exit of ["\\\\", "\\\\ / bye", "q)\\\\"]) {
+    const scopes = await scopesOf(`a:1\n${exit}\nb:12 / never read`, "b:12 / never read");
+    assert.ok(scopes.length === 1 && scopes[0].startsWith("comment.block.end-of-script.q"), `${exit}: ${scopes}`);
+  }
+  // \\d is a system command, not an exit.
+  assert.deepStrictEqual(await scopesOf("\\d .a\nb:1", "b:1"), []);
+});
+
 test("a p) block runs on past a blank line to the next indented one, and ends at column 0", async () => {
   const g = await grammar;
   let stack = tm.INITIAL;
