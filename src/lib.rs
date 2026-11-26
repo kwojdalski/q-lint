@@ -5673,6 +5673,17 @@ fn iterated_type(s: &str) -> bool {
 pub(crate) fn pattern_names(slot: &str) -> Vec<&str> {
     names_within(slot, 0)
 }
+/// The names the parameter slot `slot` of a signature binds, for whoever
+/// documents them: `x` for `` x:`j ``, a and b for `(a;b)`, and none for an
+/// empty slot or a pattern that only matches (#2778).
+pub fn slot_names(slot: &str) -> Vec<&str> {
+    pattern_names(slot)
+}
+/// The parameter slot `slot` without its type or filter, for whoever shows
+/// it at an argument: `x` of `` x:`j ``, `(a;b)` of `` (a;b):`j `` (#2778).
+pub fn slot_pattern(slot: &str) -> &str {
+    typed_at(slot).map_or(slot, |at| &slot[..at]).trim()
+}
 /// `pattern_names` at a nesting `depth`; past `MAX_NESTING` it binds nothing.
 fn names_within(slot: &str, depth: usize) -> Vec<&str> {
     if depth > MAX_NESTING {
@@ -9943,10 +9954,15 @@ fn lint_rules(
             add(
                 name.start(),
                 "QS007",
+                // The names its slots bind, not the slots: `` x:`j `` declares
+                // x (#2778).
                 format!(
                     "`@param {}` names a parameter this lambda does not take; it declares {:?}",
                     name.as_str(),
                     sig.slots
+                        .iter()
+                        .flat_map(|slot| pattern_names(slot))
+                        .collect::<Vec<_>>()
                 ),
             );
         }

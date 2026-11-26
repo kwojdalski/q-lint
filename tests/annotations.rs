@@ -606,6 +606,39 @@ fn an_empty_parameter_slot_is_neither_documented_nor_hinted() {
     assert_eq!(hints(&reply), [hint(1, 4, "a:")], "{reply}");
 }
 
+/// A typed slot is the name it binds, and a pattern the names in it: the
+/// type is no part of what is documented or hinted (#2778).
+#[test]
+fn a_typed_parameter_is_documented_and_hinted_by_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "f:{[x:`j;y:`J] x+y}\ng:{[(a;b):`j;c] a+b+c}\nr:f[1;2 3]\ns:g[1 2;3]\nt:f[x;4]\n";
+    let uri = server.open(dir.path(), "a.q", text);
+    let actions = actions_at(&mut server, &uri, 0, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri).unwrap().1,
+        "/ @param x\n/ @param y\n/ @return\n"
+    );
+    let actions = actions_at(&mut server, &uri, 1, 0, None);
+    assert_eq!(
+        qdoc(&actions, &uri).unwrap().1,
+        "/ @param a\n/ @param b\n/ @param c\n/ @return\n"
+    );
+    let reply = server.whole("textDocument/inlayHint", &uri, everything());
+    assert_eq!(
+        hints(&reply),
+        [
+            hint(2, 4, "x:"),
+            hint(2, 6, "y:"),
+            hint(3, 4, "(a;b):"),
+            hint(3, 8, "c:"),
+            // An argument that is the parameter's own name needs none.
+            hint(4, 6, "y:"),
+        ],
+        "{reply}"
+    );
+}
+
 #[test]
 fn generating_qdoc_can_be_turned_off() {
     let dir = tempfile::tempdir().unwrap();

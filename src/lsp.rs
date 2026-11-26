@@ -3014,13 +3014,14 @@ fn qdoc_action(params: &Value, docs: &Documents) -> Option<Value> {
     if above.contains("@param") || above.contains("@return") {
         return None;
     }
-    // An empty slot, the second of `{[a;] a}`, has no name to document
-    // (#2779).
+    // The names each slot binds: `` x:`j `` is x, and the pattern `(a;b)` a
+    // and b, as QS007 reads the block back (#2778). An empty slot, the
+    // second of `{[a;] a}`, has no name to document (#2779).
     let mut block: String = definition
         .params
         .iter()
-        .filter(|param| !param.is_empty())
-        .map(|param| format!("/ @param {param}\n"))
+        .flat_map(|param| q_lint_rs::slot_names(param))
+        .map(|name| format!("/ @param {name}\n"))
         .collect();
     block.push_str("/ @return\n");
     let at = lines.json(m.at);

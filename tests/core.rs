@@ -2131,6 +2131,25 @@ fn many_documented_functions_lint_in_linear_time() {
         "1000 documented functions took {small:?} and 8000 {large:?}"
     );
 }
+/// QS007 says what the lambda declares by the names its slots bind: a
+/// typed slot's name and a pattern's, not the slots as written (#2778).
+#[test]
+fn a_stale_param_is_told_the_names_the_signature_binds() {
+    let source = "/ @param zz nothing\nf:{[x:`j;(a;b);] x+a+b}\n";
+    let found = lint(source, "t.q", Profile::StyleQ);
+    let messages: Vec<&str> = found
+        .iter()
+        .filter(|f| f.code == "QS007")
+        .map(|f| f.detail.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "`@param zz` names a parameter this lambda does not take; it declares \
+          [\"x\", \"a\", \"b\"]"
+        ]
+    );
+}
 /// QB004 read on from each top-level signal to the next `;` or closer,
 /// which in a file of them is the end of the file (#2866).
 #[test]
