@@ -2738,6 +2738,18 @@ export class Live {
     );
   }
 
+  /// `process` as a reconnect is to find it: a saved one as saved now, and
+  /// one from a discovery server or the shared list as its list gives it
+  /// now - a process restarted on another port is what a list is for
+  /// (#3021). Undefined when it is listed no more.
+  private asListed(process: Process): Process | undefined {
+    if (process.server === undefined) {
+      return this.processes().find((p) => p.label === process.label);
+    }
+    const listed = findDiscovered([...this.discovery.discovered(), ...this.sharedList()], process.label);
+    return listed?.server === process.server ? listed : undefined;
+  }
+
   /// Reconnect to `process`, whose connection dropped, waiting longer before
   /// each try (`backoffDelay`), until it connects, the tries run out, or the
   /// user connects elsewhere or disconnects (#917).
@@ -2778,9 +2790,9 @@ export class Live {
       }
       tried = attempt;
       // Each try connects to it as it is now - renamed, tagged, given a
-      // connect script meanwhile - and a saved one as saved (#1699).
+      // connect script meanwhile - and as saved or listed now (#1699, #3021).
       const now = this.active ?? process;
-      const saved = now.server === undefined ? this.processes().find((p) => p.label === now.label) : now;
+      const saved = this.asListed(now);
       if (saved === undefined) {
         this.reconnecting = undefined;
         this.showStatus();
@@ -4239,10 +4251,10 @@ export class Live {
     // Not awaited: q runs one message at a time, so the new connection's
     // handshake waits until the process has finished the query it was left
     // with, and the command should not wait with it.
-    // To the process as saved, as an auto-reconnect is (#1699): one edited
+    // To the process as saved or listed, as an auto-reconnect is (#1699): one edited
     // to another address or user since it was connected has its password
     // stored for that one, never to be sent to where the connection was (#2124).
-    const again = process.server === undefined ? (this.processes().find((p) => p.label === process.label) ?? process) : process;
+    const again = this.asListed(process) ?? process;
     const disconnects = this.disconnects;
     // Started before "disconnected" is said, for what hears it to find the
     // reconnect under way (`reconnectingProcess`, #3018).

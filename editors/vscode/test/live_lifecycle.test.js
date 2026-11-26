@@ -915,3 +915,31 @@ test("Escape at a discovered process's password box leaves the automatic reconne
   await until(() => live.activeLabel() === "a", 3000);
   assert.strictEqual(live.activeLabel(), "a");
 });
+
+// A reconnect to a process from a discovery server dialed the address it
+// had at the first connect: one restarted on another port, which its server
+// now lists, was never reconnected to.
+test("a reconnect to a discovered process dials the address its server lists now (#3021)", async (t) => {
+  let answer;
+  const old = await fakeQ(() => 1);
+  const moved = await fakeQ((sent) => (JSON.stringify(sent).includes("slow") ? new Promise((resolve) => (answer = resolve)) : 1));
+  const again = await fakeQ(() => 1);
+  t.after(() => (old.close(), moved.close(), again.close()));
+  const { live } = await setUp(t, [], { "connection.autoReconnect.enable": true });
+  let listed = [proc("rdb", old.port)];
+  live.discovery.discovered = () => [{ server: { label: "disc", url: "http://x" }, state: { processes: listed, problems: [], loading: false } }];
+  assert.strictEqual(await live.connectTo("disc/rdb"), true);
+  listed = [proc("rdb", moved.port)];
+  old.drop();
+  await until(() => live.activeLabel() === undefined);
+  await until(() => live.activeLabel() === "disc/rdb", 3000);
+  assert.deepStrictEqual([live.activeProcess()?.port, moved.logins.length], [moved.port, 1]);
+  // Abort's reconnect too.
+  const slow = live.run("slow");
+  await until(() => answer !== undefined);
+  listed = [proc("rdb", again.port)];
+  await stub.commands.get("q-lint.abortQuery")();
+  await slow;
+  await until(() => live.activeLabel() === "disc/rdb");
+  assert.deepStrictEqual([live.activeProcess()?.port, again.logins.length], [again.port, 1]);
+});
