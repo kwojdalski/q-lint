@@ -2336,12 +2336,6 @@ export class Live {
   /// query's timeout counts (#3019).
   private async toConnect(row?: ProcessArg): Promise<Process | undefined> {
     const process = await this.chosen(row, "Connect to which q process?", true);
-    // A connect the user asks for stops an automatic reconnect, and the
-    // tries after its next drop start again.
-    if (process !== undefined) {
-      this.stopReconnecting();
-      this.reconnectTries = undefined;
-    }
     if (process === undefined) {
       return undefined;
     }
@@ -2362,6 +2356,11 @@ export class Live {
       // Kept, so deleting the server forgets it even after a reload.
       await this.discovery.passwordGiven(process.server!, process.label.slice(process.server!.length + 1));
     }
+    // A connect the user asks for stops an automatic reconnect, and the
+    // tries after its next drop start again. Once it is to be made: Escape
+    // at the password box above connects nowhere, and stops nothing (#3028).
+    this.stopReconnecting();
+    this.reconnectTries = undefined;
     return process;
   }
 

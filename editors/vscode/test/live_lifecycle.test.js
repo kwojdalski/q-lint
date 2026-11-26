@@ -897,3 +897,21 @@ test("picking the connected process from Connect's list keeps the connection and
   assert.deepStrictEqual(events, ["connected", "queried"]);
   assert.deepStrictEqual(stub.messages, [["info", "q-lint: already connected to a."]]);
 });
+
+// Connect stopped an automatic reconnect as soon as a process was chosen,
+// before a discovered process's password was asked for: Escape there
+// connected nowhere and left the dropped process disconnected for good.
+test("Escape at a discovered process's password box leaves the automatic reconnect under way (#3028)", async (t) => {
+  const a = await fakeQ(() => 1);
+  t.after(() => a.close());
+  const { live } = await setUp(t, [proc("a", a.port)], { "connection.autoReconnect.enable": true });
+  live.discovery.discovered = () => [{ server: { label: "disc", url: "http://x" }, state: { processes: [proc("rdb", a.port, { user: "u" })], problems: [], loading: false } }];
+  assert.strictEqual(await live.connectTo("a"), true);
+  a.drop();
+  await until(() => /reconnecting to a/.test(live.api().statusText()));
+  stub.inputs.push(undefined);
+  assert.strictEqual(await live.connectTo("disc/rdb"), false);
+  assert.match(live.api().statusText(), /reconnecting to a/);
+  await until(() => live.activeLabel() === "a", 3000);
+  assert.strictEqual(live.activeLabel(), "a");
+});
