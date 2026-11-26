@@ -123,6 +123,8 @@ export function changed(d: Dashboard, change: TileChange): Dashboard {
     case "remove":
       return { ...d, tiles: d.tiles.filter((t) => t.id !== change.id) };
     case "move": {
+      // A page's message: one place up or down, or nothing (#2664).
+      if (change.by !== -1 && change.by !== 1) return d;
       const at = d.tiles.findIndex((t) => t.id === change.id);
       const to = at + change.by;
       if (at < 0 || to < 0 || to >= d.tiles.length) return d;
