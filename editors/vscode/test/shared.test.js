@@ -505,6 +505,30 @@ test("several folders' lists are one: a label two of them name is qualified in e
   assert.deepStrictEqual(ports([b, holds]), { "rdb (B)": 2, "rdb (A)": 1, "rdb (B) (A)": 3 });
 });
 
+test("a shared process's credential command runs in the folder whose list names it (#3101)", { skip: process.platform === "win32" }, async (t) => {
+  const q = await someQ(t);
+  const dirs = ["a", "b"].map((n) => fs.mkdtempSync(path.join(os.tmpdir(), `qlint-shared-${n}-`)));
+  t.after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+  // Each folder has a creds.sh of its own, which says where it ran.
+  dirs.forEach((dir, i) => {
+    write(dir, { processes: [{ label: ["rdb", "hdb"][i], host: "127.0.0.1", port: q.port, tags: [], credentialCommand: "./creds.sh" }] });
+    fs.writeFileSync(path.join(dir, "creds.sh"), `#!/bin/sh\npwd -P > '${path.join(dir, "ran")}'\necho 'svc:${["first", "second"][i]}'\n`, { mode: 0o755 });
+  });
+  const ran = () => dirs.map((dir) => (fs.existsSync(path.join(dir, "ran")) ? fs.readFileSync(path.join(dir, "ran"), "utf8").trim() : undefined));
+  const saved = [{ label: "mine", host: "127.0.0.1", port: q.port, tags: [], credentialCommand: "./creds.sh" }];
+  const { live } = await setUp(t, dirs[0], { more: [dirs[1]], saved });
+  await sleep(50);
+  assert.strictEqual(await live.connectTo(".qlint/hdb"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [undefined, fs.realpathSync(dirs[1])]);
+  fs.rmSync(path.join(dirs[1], "ran"));
+  assert.strictEqual(await live.connectTo(".qlint/rdb"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [fs.realpathSync(dirs[0]), undefined]);
+  fs.rmSync(path.join(dirs[0], "ran"));
+  // A saved process is no folder's: the first one on disk, as before.
+  assert.strictEqual(await live.connectTo("mine"), true, JSON.stringify(stub.messages));
+  assert.deepStrictEqual(ran(), [fs.realpathSync(dirs[0]), undefined]);
+});
+
 test("in a multi-root workspace every folder's shared list is read and watched, and Add asks which (#1841)", async (t) => {
   const a = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-shared-"));
   const b = fs.mkdtempSync(path.join(os.tmpdir(), "qlint-sharedb-"));

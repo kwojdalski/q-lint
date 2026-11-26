@@ -2560,11 +2560,15 @@ export class Live {
       const password = process.user ? await this.context.secrets.get(this.passwordKey(process)) : undefined;
       return targetOf(process, password);
     }
+    // A shared process's command is its list's folder's: run in the first
+    // folder, the `./creds.sh` of a second folder's list was not found, or
+    // was the first folder's own, its output sent as the password (#3101).
+    const own = process.server === SHARED_SOURCE ? sharedFolders().find((f) => f.uri.toString() === this.sharedFolders.get(process.label))?.uri.fsPath : undefined;
     // Stopped with the connect it is for: by Disconnect, or a connect elsewhere (#2127).
     const output = await runCredentialCommand(process.credentialCommand, {
       signal,
       // A folder on disk: a virtual one's fsPath is no directory (#2514).
-      cwd: credentialCwd(workspace.isTrusted !== false, workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
+      cwd: credentialCwd(workspace.isTrusted !== false, own ?? workspace.workspaceFolders?.find((f) => f.uri.scheme === "file")?.uri.fsPath, os.homedir()),
       env: credentialEnv(process),
     });
     const given = parseCredentials(output, process.user);
