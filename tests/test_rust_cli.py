@@ -141,6 +141,65 @@ def test_lsp_server_modes(tmp_path, mode, exit_code):
         assert not result.stdout
 
 
+@pytest.mark.parametrize("mode", ["normal", "utf-8", "utf-16", "utf-32"])
+def test_qls_positions_are_read_in_the_encoding_the_server_counts_in(tmp_path, mode):
+    """A qls column was passed through as the server counted it (#2870).
+
+    qls names no encoding and counts bytes, so every column after a
+    character past ASCII was off, and by a BOM's three bytes on line 1. A
+    finding's column counts UTF-16 units, whatever the server counts.
+    """
+    server = tmp_path / "fake qls"
+    server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+    server.chmod(0o755)
+    qls = ("--backend", "qls", "--qls-executable", server, "--qls-timeout", "5", "--format", "json")
+    for source, column in [
+        ("a:1;WIDE", 5),
+        # `a:"` 3, the emoji 2 UTF-16 units, `é` 1, `";` 2.
+        ('a:"\U0001f600\u00e9";WIDE', 9),
+        # A BOM is no column to an editor, nor here.
+        ("\ufeffa:1;WIDE", 5),
+    ]:
+        result = run("-", *qls, source=source)
+        assert result.returncode == 1, result.stderr
+        finding = json.loads(result.stdout)[0]
+        assert (finding["line"], finding["column"], finding["end_column"]) == (
+            1,
+            column,
+            column + 4,
+        ), (mode, source)
+
+
+@pytest.mark.parametrize("mode", ["missing", "crash", "silent"])
+def test_backend_all_reports_the_builtin_findings_when_qls_fails(tmp_path, mode):
+    """A qls that is missing, crashing or slow ended the run with nothing shown.
+
+    The builtin findings were already computed, and under `--fix` the files
+    already rewritten (#2871).
+    """
+    server = tmp_path / "fake qls"
+    if mode != "missing":
+        server.write_text(f"#!{sys.executable}\nMODE={mode!r}\n" + SERVER)
+        server.chmod(0o755)
+    bad = tmp_path / "bad.q"
+    bad.write_text("f:{[x;y] x==y}\n")
+    qls = ("--isolated", "--backend", "all", "--qls-executable", server, "--qls-timeout", "0.5")
+    result = run(*qls, "--format", "json", bad)
+    assert result.returncode == 2, result.stderr
+    assert [f["code"] for f in json.loads(result.stdout)] == ["QE004"]
+    assert "reporting the builtin findings only" in result.stderr
+    baseline = tmp_path / "baseline.json"
+    result = run(*qls, "--write-baseline", baseline, bad)
+    assert result.returncode == 2 and not baseline.exists(), result.stderr
+    assert "qls reported nothing; no baseline written" in result.stderr
+    if mode == "missing":
+        # Asked before anything is written, so nothing is.
+        result = run(*qls, "--fix", bad)
+        assert result.returncode == 2, result.stderr
+        assert "Cannot start qls" in result.stderr and "nothing fixed" in result.stderr
+        assert bad.read_text() == "f:{[x;y] x==y}\n"
+
+
 @pytest.mark.skipif(not os.environ.get("Q_LINT_TEST_QLS"), reason="Optional real qls")
 def test_real_qls():
     result = run(

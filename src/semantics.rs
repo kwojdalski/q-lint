@@ -451,18 +451,21 @@ fn assigns_value(rest: &str) -> bool {
 /// groups go first, then any qSQL phrase through to the end of its statement.
 /// What is left is the assignments the lambda actually makes.
 fn statement_view(direct: &str) -> String {
-    let mut out = crate::flat_filter(direct).into_bytes();
+    // Searched as it was and blanked in a copy: a phrase is blanked up to
+    // its `;`, which no later match starts before or looks back past, so the
+    // text searched is the same - and read once, where checking the copy as
+    // UTF-8 for each phrase was quadratic in the queries of a scope (#2868).
+    let text = crate::flat_filter(direct);
+    let mut out = text.clone().into_bytes();
     let mut i = 0;
-    while let Some(m) =
-        re!(r"(?:select|exec|update|delete)\b").find(std::str::from_utf8(&out[i..]).unwrap_or(""))
-    {
+    while let Some(m) = re!(r"(?:select|exec|update|delete)\b").find(&text[i..]) {
         let start = i + m.start();
         // `1_update` is a query, `x_update` a name: `local_view`'s test (#301).
-        if !boundary(std::str::from_utf8(&out).unwrap_or(""), start) {
+        if !boundary(&text, start) {
             i += m.end();
             continue;
         }
-        let end = out[start..]
+        let end = text.as_bytes()[start..]
             .iter()
             .position(|&b| b == b';')
             .map_or(out.len(), |p| start + p);
@@ -3688,24 +3691,43 @@ pub fn check(
         // standing in for a function another file defines (#110).
         // It answers with the rank that lambda still takes, `None` when the
         // name holds no lambda there.
+        // Each name's root assignments, in order, gathered once and searched
+        // by bisection: gathered again for each use, a global assigned and
+        // read over and over took time quadratic in the file (#2869).
+        let root_writes: HashMap<&str, Vec<usize>> = globals
+            .iter()
+            .map(|(name, assignments)| {
+                let mut root: Vec<usize> = assignments
+                    .iter()
+                    .copied()
+                    .filter(|&a| scope_at(&scopes, a).is_none())
+                    .collect();
+                root.sort_unstable();
+                (name.as_str(), root)
+            })
+            .collect();
+        // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
+        // the `::` with nothing after it assigns nothing.
+        let valued_writes: HashMap<&str, Vec<usize>> = root_writes
+            .iter()
+            .map(|(&name, root)| {
+                let valued = root
+                    .iter()
+                    .copied()
+                    .filter(|&a| {
+                        let value = code[a..].trim_start_matches([' ', '\t']);
+                        !(value.is_empty() || value.starts_with([';', '\n', '\r', ')', ']', '}']))
+                    })
+                    .collect();
+                (name, valued)
+            })
+            .collect();
         let held_rank = |name: &str, at: usize, in_lambda: bool| {
-            let assignments = globals.get(name)?;
-            // `sqrt enorm2::` composes - psaris's funq defines `enorm` so - and
-            // the `::` with nothing after it assigns nothing.
-            let mut root: Vec<usize> = assignments
-                .iter()
-                .copied()
-                .filter(|&a| scope_at(&scopes, a).is_none())
-                .filter(|&a| {
-                    let value = code[a..].trim_start_matches([' ', '\t']);
-                    !(value.is_empty() || value.starts_with([';', '\n', '\r', ')', ']', '}']))
-                })
-                .collect();
-            root.sort_unstable();
+            let root = valued_writes.get(name)?;
             let live = if in_lambda {
                 root.last()
             } else {
-                root.iter().rev().find(|&&a| a < at)
+                root[..root.partition_point(|&a| a < at)].last()
             };
             match live {
                 Some(&a) => assigned_rank(code, raw, a),
@@ -3746,17 +3768,11 @@ pub fn check(
         // The columns of the table literal `table` holds where it is read at
         // `at`, by the same assignment-in-force rule as `held_rank`.
         let columns_of = |table: &str, at: usize, in_lambda: bool| -> Option<Vec<String>> {
-            let mut root: Vec<usize> = globals
-                .get(table)?
-                .iter()
-                .copied()
-                .filter(|&a| scope_at(&scopes, a).is_none())
-                .collect();
-            root.sort_unstable();
+            let root = root_writes.get(table)?;
             let &start = if in_lambda {
                 root.last()
             } else {
-                root.iter().rev().find(|&&a| a < at)
+                root[..root.partition_point(|&a| a < at)].last()
             }?;
             let (mut end, mut depth, bytes) = (start, 0i32, code.as_bytes());
             while end < bytes.len() {
@@ -5819,7 +5835,10 @@ fn char_column_patterns(
     if only_start != 0 && !code[..only_start].ends_with('\n') {
         return out;
     }
-    let value = crate::past_blanks(code, only_end + 1);
+    // Past the character after the name, which `\s` lets be a no-break
+    // space, two bytes wide.
+    let after = code[only_end..].chars().next().map_or(1, char::len_utf8);
+    let value = crate::past_blanks(code, only_end + after);
     let Some(inner) = re!(r"^\(\s*\[\s*\]").find(&code[value..]) else {
         return out;
     };

@@ -2605,8 +2605,10 @@ fn fix_with(finding: &Finding, source: &str, v: &Views, lines: &LineIndex) -> Op
                     b'}' => depth -= 1,
                     _ => {}
                 }
+                // On bytes: `i` may sit inside a character past ASCII - an
+                // NBSP, an `é` - which no slice of the text may start in.
                 let word = depth == 1
-                    && text[i..].starts_with(name.as_str())
+                    && bytes[i..].starts_with(name.as_bytes())
                     && (i == 0
                         || !(bytes[i - 1].is_ascii_alphanumeric()
                             || b"_.`".contains(&bytes[i - 1])))
@@ -3472,7 +3474,13 @@ fn empty_pattern(source: &str, code: &str, comments: &str, at: usize) -> bool {
 /// Where the next token after `at` starts, past the blanks of its statement
 /// (`blank!`): across a line break only into the indented line that continues
 /// it. Where the statement ends at a line break, the offset of a line break.
+/// An `at` inside a character - one past a name that a no-break space
+/// follows - is read as the end of that character.
 pub(crate) fn past_blanks(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at += 1;
+    }
     at + re!(concat!("^", blank!(), "*"))
         .find(&text[at..])
         .map_or(0, |m| m.end())
@@ -4167,14 +4175,47 @@ fn vector_items(arg: &str, literal: &str) -> Option<usize> {
         None
     }
 }
+/// A byte that is not UTF-8 - 0x80 or more, since an ASCII one always is -
+/// as the character a file read by its bytes carries it in: U+EF80 to
+/// U+EFFF, of the private use area. q reads bytes, and KX's own e/c.q is
+/// Latin-1, so a Latin-1 `"é"` is one byte to q; read as the replacement
+/// character U+FFFD it was three, and a string three times as long as q has
+/// it (#2862), in a file QE012 said held a U+FFFD it does not (#2861). One
+/// UTF-16 unit and three UTF-8 bytes, as U+FFFD is, so every column stays
+/// where it was.
+pub fn carried(byte: u8) -> char {
+    char::from_u32(0xEF00 + u32::from(byte)).unwrap_or('\u{FFFD}')
+}
+/// The byte `ch` carries, if it is one of `carried`'s.
+pub(crate) fn carried_byte(ch: char) -> Option<u8> {
+    ('\u{EF80}'..='\u{EFFF}')
+        .contains(&ch)
+        .then(|| (u32::from(ch) - 0xEF00) as u8)
+}
+/// `text` as a report shows it: each carried byte as the replacement
+/// character, which is what a terminal or an editor makes of it.
+pub fn shown(text: &str) -> Cow<'_, str> {
+    match text.contains(|ch| carried_byte(ch).is_some()) {
+        true => Cow::Owned(
+            text.chars()
+                .map(|ch| carried_byte(ch).map_or(ch, |_| '\u{FFFD}'))
+                .collect(),
+        ),
+        false => Cow::Borrowed(text),
+    }
+}
 /// The bytes q makes of a string literal's body, the text between its
 /// quotes. q strings are bytes, so `"é"` is two items, and an escape is the
-/// one byte it stands for: `\n`, `\"`, `\012` (#226).
+/// one byte it stands for: `\n`, `\"`, `\012` (#226). A byte that was not
+/// UTF-8 is the one byte it is (#2862).
 pub(crate) fn q_bytes(body: &str) -> Vec<u8> {
     let mut out = vec![];
     for m in re!(r"\\[0-7]{3}|\\.|[^\\]").find_iter(body) {
         match m.as_str().strip_prefix('\\') {
-            None => out.extend_from_slice(m.as_str().as_bytes()),
+            None => match m.as_str().chars().next().and_then(carried_byte) {
+                Some(byte) => out.push(byte),
+                None => out.extend_from_slice(m.as_str().as_bytes()),
+            },
             Some(octal) if octal.len() == 3 && octal.bytes().all(|b| b.is_ascii_digit()) => {
                 out.push(u32::from_str_radix(octal, 8).unwrap_or(0) as u8)
             }
@@ -5810,12 +5851,15 @@ fn problems(source: &str, v: &Views) -> Vec<(usize, String)> {
     let mut found = vec![];
     let mut stack: Vec<(u8, usize)> = vec![];
     let mut offset = 0;
-    for line in v.code.split_inclusive('\n') {
+    // The line's number is counted as the lines go by: counted from the
+    // start of the file for each unclosed bracket, a file of them - a bad
+    // paste or merge - took time quadratic in its length (#2867).
+    for (row, line) in v.code.split_inclusive('\n').enumerate() {
+        let row = row + 1;
         let raw = &source[offset..offset + line.len()];
         if let Some(&(c, at)) = stack.last()
             && begins(source, v, offset, line)
         {
-            let row = source[..offset].matches('\n').count() + 1;
             found.push((
                 at,
                 format!(
@@ -5859,7 +5903,6 @@ fn problems(source: &str, v: &Views) -> Vec<(usize, String)> {
                         Some((want, at)) if want != c => {
                             match stack.iter().rposition(|&(w, _)| w == c) {
                                 Some(outer) => {
-                                    let row = source[..offset].matches('\n').count() + 1;
                                     found.push((
                                         at,
                                         format!(
@@ -6566,7 +6609,10 @@ pub fn lint_selecting(
     ws: &Workspace,
     structure_selected: bool,
 ) -> Vec<Finding> {
-    lint_rules(source, path, profile, ws, structure_selected, false)
+    as_shown(
+        lint_rules(source, path, profile, ws, structure_selected, false),
+        source,
+    )
 }
 
 /// Every rule this binary has, the `opt-in` ones too: what a configuration
@@ -6579,7 +6625,48 @@ pub fn lint_every_rule(
     ws: &Workspace,
     structure_selected: bool,
 ) -> Vec<Finding> {
-    lint_rules(source, path, Profile::Uqf, ws, structure_selected, true)
+    as_shown(
+        lint_rules(source, path, Profile::Uqf, ws, structure_selected, true),
+        source,
+    )
+}
+
+/// `found` with the source text its messages quote as a report shows it:
+/// see `shown`.
+fn as_shown(mut found: Vec<Finding>, source: &str) -> Vec<Finding> {
+    if let Cow::Owned(_) = shown(source) {
+        for f in &mut found {
+            if let Cow::Owned(detail) = shown(&f.detail) {
+                f.detail = detail;
+            }
+        }
+    }
+    found
+}
+
+/// QE005 for a file saved as UTF-16, which starts FF FE or FE FF: an
+/// editor's "Unicode". q reads bytes and is 'char on the first line, and no
+/// other rule can say anything of text that is every other byte NUL (#2861).
+fn utf16(path: &str, source: &str) -> Option<Finding> {
+    let (ff, fe) = (carried(0xFF), carried(0xFE));
+    let mut start = source.chars();
+    let order = match (start.next()?, start.next()?) {
+        (a, b) if (a, b) == (ff, fe) => "little",
+        (a, b) if (a, b) == (fe, ff) => "big",
+        _ => return None,
+    };
+    let mut finding = Finding::at(
+        path,
+        source,
+        0,
+        "QE005",
+        format!(
+            "UTF-16 byte-order mark ({order}-endian): q reads bytes, reports 'char on the first \
+             line and will not load the file; save it as UTF-8 with no mark"
+        ),
+    );
+    finding.end_column = Some(3); // The mark's two bytes, a character each.
+    Some(finding)
 }
 
 fn lint_rules(
@@ -6592,6 +6679,9 @@ fn lint_rules(
 ) -> Vec<Finding> {
     let uqf = profile == Profile::Uqf;
     let _lines = LineScope::install(source);
+    if let Some(finding) = utf16(path, source) {
+        return vec![finding];
+    }
     let mut v = views(source);
     // The lines QE001 reports on, before a `noqa` takes any: QL003 asks.
     let mut structure_lines = vec![];
@@ -9244,6 +9334,17 @@ fn lint_rules(
     // than code because `code` has it blanked at the same offsets. `[ \t]`,
     // not `\s`: a match that starts on a blank line above the block reads
     // its run of `@param` lines as empty (#674).
+    // The parameter lists of the named lambdas with no `@param` block of
+    // their own above them, read once, at the first `@param`: read again for
+    // each, a file documented a function at a time took time quadratic in
+    // its length (#2865). By the set of names where a list repeats none,
+    // which is how a run is compared with it; as it is written where one
+    // does.
+    type Undocumented<'a> = (
+        std::collections::HashSet<std::collections::BTreeSet<&'a str>>,
+        Vec<Vec<&'a str>>,
+    );
+    let mut undocumented: Option<Undocumented> = None;
     for m in re!(r"(?m)^[ \t]*/+[ \t]*@param[ \t]+([A-Za-z][A-Za-z0-9_]*)").captures_iter(source) {
         let name = m.get(1).unwrap();
         if !code[name.start()..name.end()].trim().is_empty() {
@@ -9299,19 +9400,32 @@ fn lint_rules(
         // whose documentation is elsewhere - here. Lambdas sharing a
         // parameter list are common (KX ml's many `[config]` functions), and
         // each documented in place is not what a stray run describes.
-        let documents_another = code.match_indices('{').any(|(b, _)| {
-            let other = signature(code, source, b);
-            let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
-            let documented = source[..at]
-                .lines()
-                .rev()
-                .take_while(|l| l.trim_start().starts_with('/'))
-                .any(|l| re!(r"@param\b").is_match(l));
-            other.named
-                && !documented
-                && other.slots.len() == run.len()
-                && other.slots.iter().all(|p| run.contains(p))
+        let (sets, repeating) = undocumented.get_or_insert_with(|| {
+            let mut found = Undocumented::default();
+            for (b, _) in code.match_indices('{') {
+                let other = signature(code, source, b);
+                let at = source[..b].rfind('\n').map_or(0, |p| p + 1);
+                let documented = source[..at]
+                    .lines()
+                    .rev()
+                    .take_while(|l| l.trim_start().starts_with('/'))
+                    .any(|l| re!(r"@param\b").is_match(l));
+                if !other.named || documented {
+                    continue;
+                }
+                let set: std::collections::BTreeSet<&str> = other.slots.iter().copied().collect();
+                if set.len() == other.slots.len() {
+                    found.0.insert(set);
+                } else {
+                    found.1.push(other.slots);
+                }
+            }
+            found
         });
+        let documents_another = sets.contains(&run)
+            || repeating
+                .iter()
+                .any(|slots| slots.len() == run.len() && slots.iter().all(|p| run.contains(p)));
         if documents_another {
             continue;
         }
@@ -9717,6 +9831,21 @@ fn lint_rules(
         let (mut open, mut ends) = (0i32, vec![0; statements.len()]);
         let mut first = 0;
         for (n, &(start, end)) in statements.iter().enumerate() {
+            // A group at column 0 begins a statement whatever is open above
+            // it, which is QE001's to report and ends there: read as one
+            // statement to the end of the file, a file of statements left
+            // open was quadratic in its lines (#2867).
+            if open > 0
+                && begins(
+                    source,
+                    &v,
+                    start,
+                    code[start..end].lines().next().unwrap_or(""),
+                )
+            {
+                ends[first..n].fill(start);
+                open = 0;
+            }
             if open <= 0 {
                 first = n;
             }
@@ -9731,24 +9860,33 @@ fn lint_rules(
                 ends[first..=n].fill(end);
             }
         }
-        for (n, &(start, end)) in statements.iter().enumerate() {
-            let mut depth = code[start..end].bytes().fold(0i32, |d, b| match b {
-                b'(' | b'[' | b'{' => d + 1,
-                b')' | b']' | b'}' => d - 1,
-                _ => d,
-            });
-            depth = depth.max(0);
-            let rest = &code.as_bytes()[end..ends[n]];
-            for (i, &b) in rest.iter().enumerate() {
-                match b {
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' | b';' if depth == 0 => {
-                        ends[n] = end + i + 1;
-                        break;
-                    }
-                    b')' | b']' | b'}' => depth -= 1,
-                    _ => {}
+        // The first closer or `;` at the depth the group leaves off at, looked
+        // up among those at each depth rather than read on for: a file of
+        // statements left open read every group on to its end, quadratic in
+        // its lines (#2867).
+        let mut before = Vec::with_capacity(code.len() + 1);
+        let mut stops: std::collections::HashMap<i32, Vec<usize>> = Default::default();
+        let mut depth = 0i32;
+        for (i, b) in code.bytes().enumerate() {
+            before.push(depth);
+            match b {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    stops.entry(depth).or_default().push(i);
+                    depth -= 1;
                 }
+                b';' => stops.entry(depth).or_default().push(i),
+                _ => {}
+            }
+        }
+        before.push(depth);
+        for (n, &(start, end)) in statements.iter().enumerate() {
+            let level = before[end] - (before[end] - before[start]).max(0);
+            let stop = stops
+                .get(&level)
+                .and_then(|at| at.get(at.partition_point(|&i| i < end)));
+            if let Some(&stop) = stop.filter(|&&stop| stop < ends[n]) {
+                ends[n] = stop + 1;
             }
         }
         ends
@@ -10938,6 +11076,12 @@ fn lint_rules(
                     }
                     depth -= 1;
                 } else if c == ';' && depth == 0 {
+                    break;
+                } else if c == '\n' && chars.get(j + 1).is_some_and(|n| !n.1.is_whitespace()) {
+                    // A line at column 0 begins a statement of its own. Read
+                    // on past it, a top-level signal took in every string
+                    // down to the next `;`, and each read the rest of the
+                    // file (#2866).
                     break;
                 }
                 j += 1;

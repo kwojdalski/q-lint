@@ -12,7 +12,7 @@ key with nothing to say is `null`, never left out:
 <!-- finding-fields: tests/output_doc.rs checks this table against the serialiser -->
 | field | type | meaning |
 |---|---|---|
-| `path` | string | The file, as an absolute path with symbolic links resolved. Standard input is `<stdin>`, or the name `--stdin-filename` gives, as given. |
+| `path` | string | The file, as an absolute path with symbolic links resolved - but for a link that is the file itself, or a directory linked in from outside the directory holding it, which are named where they are. Standard input is `<stdin>`, or the name `--stdin-filename` gives, as given. |
 | `line` | integer | The line the finding is on, from 1. |
 | `rule` | string | The rule's name, `reserved-parameter`; for a qls finding, `qls/` and qls's own code. |
 | `detail` | string | What this finding is about, in this place: the names, the values or the construct involved. |

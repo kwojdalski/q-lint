@@ -82,9 +82,12 @@ pub fn build_from(
     let contexts = contexts(&loads, &tree, &modules);
     // A module's root names are its own context's, not the root's: no other
     // file reads them there unless it loads the module at its root with `\l`.
+    // Nor are a script's that every loader loads under a context: after
+    // `\d .a` / `\l lib/b.q`, b.q's `ff:42` is `.a.ff` and q 5 has no `ff`
+    // for a root `h:{ff}`, which the lint reports as undefined (#2876).
     let root = rooted(&loads, &tree, &contexts, &modules);
     for (d, read) in reads.iter().enumerate() {
-        if modules.is_module[d] && !root[d] {
+        if !root[d] {
             for name in &read.implicit_defines {
                 if let Some(defs) = definers.get_mut(name) {
                     defs.retain(|&x| x != d);
@@ -185,6 +188,27 @@ pub fn build_from(
     graph
 }
 
+/// What tells one file on disk from another, whatever name it is reached
+/// by: its device and inode, which a symlink resolves to and a hard link
+/// shares, where a hard link's canonical path is its own (#2859). Without
+/// those - on Windows, or for a path that names no file - the canonical
+/// path, or else the path as given.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum OnDisk {
+    Inode(u64, u64),
+    Path(PathBuf),
+}
+
+/// The file `path` is on disk.
+pub fn on_disk(path: &Path) -> OnDisk {
+    #[cfg(unix)]
+    if let Ok(found) = std::fs::metadata(path) {
+        use std::os::unix::fs::MetadataExt;
+        return OnDisk::Inode(found.dev(), found.ino());
+    }
+    OnDisk::Path(std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()))
+}
+
 /// The files of a graph, found by any name a load reaches them by.
 struct Tree<'a> {
     files: &'a [PathBuf],
@@ -213,15 +237,13 @@ impl<'a> Tree<'a> {
             }
         }
         // One file under two names is one file: neither name depends on the
-        // other, nor makes a name the file defines ambiguous (#527).
+        // other, nor makes a name the file defines ambiguous (#527). A hard
+        // link is such a name, with a real path of its own (#2859).
+        let mut first: HashMap<OnDisk, usize> = HashMap::new();
         let identity = files
             .iter()
-            .map(|p| {
-                std::fs::canonicalize(p)
-                    .ok()
-                    .and_then(|real| position.get(&real).copied())
-                    .unwrap_or(position[p])
-            })
+            .enumerate()
+            .map(|(i, p)| *first.entry(on_disk(p)).or_insert(i))
             .collect();
         // A directory loaded, `\l db`, runs the scripts directly in it (q 5's
         // `.Q.lo`), so it leads to each of them (#533).
@@ -548,9 +570,8 @@ impl Placement {
 
 /// Where each file at `paths`, with `reads` its `References`, puts
 /// its root definitions. The workspace index's counterpart of the contexts
-/// `build` gives the graph, which keeps every root name instead: an edge
-/// too many is a file rebuilt for nothing, a name too many is a read of a
-/// name q never creates passed as defined.
+/// `build` gives the graph: a name too many is a read of a name q never
+/// creates passed as defined.
 pub fn placements(paths: &[PathBuf], reads: &[&References], roots: &[PathBuf]) -> Vec<Placement> {
     let loads: Vec<_> = reads.iter().map(|r| r.loads.as_slice()).collect();
     let tree = Tree::new(paths, roots);

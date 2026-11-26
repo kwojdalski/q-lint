@@ -207,6 +207,25 @@ fn a_fix_after_a_multibyte_token_does_not_panic() {
     }
 }
 
+/// QF001's rename walked the lambda byte by byte and sliced the text at each:
+/// inside any character past ASCII - an `é`, a pasted no-break space - which
+/// ended `--fix` and `--diff` in exit 101, on the very file QE012 says to
+/// fix (#2863).
+#[test]
+fn a_rename_in_a_lambda_holding_a_multibyte_character_does_not_panic() {
+    use q_lint_rs::{Profile, fixes_for, lint};
+    for (source, renamed) in [
+        ("f:{[aj]\u{e9} aj}\n", "{[ajArg]\u{e9} ajArg}"),
+        ("f:{[aj] aj\u{a0}}\n", "{[ajArg] ajArg\u{a0}}"),
+        ("f:{[aj] aj,\u{2019}aj}\n", "{[ajArg] ajArg,\u{2019}ajArg}"),
+    ] {
+        let findings = lint(source, "probe.q", Profile::General);
+        let fixes = fixes_for(findings.iter().filter(|f| f.code == "QF001"), source);
+        assert_eq!(fixes.len(), 1, "{findings:?}");
+        assert_eq!(fixes[0].replacement, renamed, "{source:?}");
+    }
+}
+
 /// Nothing to rewrite outside the profile that asks for it. The CLI's own
 /// default is `uqf`; `general` is the one that answers only "would q refuse
 /// this", and juxtaposition is not something q refuses.

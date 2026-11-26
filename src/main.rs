@@ -90,7 +90,10 @@ struct Args {
     version: (),
     #[command(subcommand)]
     command: Option<Command>,
-    paths: Vec<String>,
+    // A path, not text: a file whose name is not UTF-8 is linted when a
+    // walk finds it, and clap refused every argument when one was named
+    // (#1194, #2872).
+    paths: Vec<PathBuf>,
     /// `text`, `json`, `sarif` (SARIF 2.1.0, for code scanning) or `github`
     /// (workflow commands, which a GitHub Actions run shows as annotations).
     #[arg(long,default_value="text",value_parser=["text","json","sarif","github"])]
@@ -104,7 +107,7 @@ struct Args {
     /// not, as in Ruff: an editor that pipes a buffer with it and no `-`
     /// wants that buffer linted, not the tree it runs in.
     #[arg(long)]
-    stdin_filename: Option<String>,
+    stdin_filename: Option<PathBuf>,
     /// Use this configuration for every file, instead of the nearest
     /// `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]`.
     #[arg(long, conflicts_with = "isolated")]
@@ -230,7 +233,7 @@ enum Analyze {
 
 #[derive(clap::Args)]
 struct GraphArgs {
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     /// `dependencies`: each file and the files it depends on. `dependents`:
     /// each file and the files that depend on it.
     #[arg(long, default_value = "dependencies", value_parser = ["dependencies", "dependents"])]
@@ -259,7 +262,12 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
     let selectors = |key: &str, list: &[String]| -> Result<Vec<String>, String> {
         list.iter().map(|s| config::selector(key, s)).collect()
     };
-    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    // Only `--exclude` is read from the current directory, which may be
+    // gone (#2873).
+    let cwd = match args.exclude.is_empty() {
+        true => PathBuf::new(),
+        false => config::absolute(&config::working_dir(None)?),
+    };
     Ok(Overrides {
         profile: args.profile.clone(),
         default_profile: match args.default_profile.as_deref() {
@@ -282,7 +290,7 @@ fn overrides(args: &Args) -> Result<Overrides, String> {
         exclude: args
             .exclude
             .iter()
-            .map(|p| config::excluding(&config::absolute(&cwd), p))
+            .map(|p| config::excluding(&cwd, p))
             .collect::<Result<_, _>>()
             .map_err(|e| format!("--exclude: {e}"))?,
         config: args.config.clone(),
@@ -328,6 +336,15 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Whether the directory `link` leads to is under `walked`, where the walk
+/// of `walked` comes to it by its own name.
+fn reached(walked: &Path, link: &Path) -> bool {
+    match (fs::canonicalize(walked), fs::canonicalize(link)) {
+        (Ok(walked), Ok(target)) => target.starts_with(walked),
+        _ => false,
+    }
+}
+
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -348,7 +365,7 @@ fn is_q_source(path: &Path) -> bool {
 /// one stale path in a pre-commit file list must not hide every finding in
 /// every other file - and the caller ends the run in 2.
 fn discover(
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     policy: &Policy,
     force_exclude: bool,
 ) -> Result<(BTreeSet<PathBuf>, bool), String> {
@@ -356,8 +373,8 @@ fn discover(
     let mut skipped = false;
     let mut skipped_not_q = false;
     let mut failed = false;
-    for name in paths {
-        let path = Path::new(&name);
+    for path in &paths {
+        let name = path.display();
         if let Err(e) = fs::metadata(path) {
             eprintln!("qlinter: {name}: {e}, skipped");
             failed = true;
@@ -414,6 +431,19 @@ fn discover(
             }
             if p.is_file() && is_q_source(p) {
                 files.insert(config::absolute(p));
+            } else if entry.path_is_symlink()
+                && p.is_dir()
+                && !reached(path, p)
+                && !paths.iter().any(|named| same_file(named, p))
+            {
+                // A link to a file is linted and one to a directory is not
+                // entered, as the language server's index has it - but
+                // saying nothing left `qlinter .` passing with that code
+                // unlinted, which naming the link lints (#2858).
+                eprintln!(
+                    "qlinter: {}: a link to a directory, which a walk does not enter; name it to lint the files under it",
+                    p.display()
+                );
             }
         }
     }
@@ -453,6 +483,26 @@ fn run(args: Args) -> Result<u8, String> {
     if args.rules || args.explain.is_some() {
         if args.fix || args.diff {
             return Err("--fix and --diff require q source paths, not --rules or --explain".into());
+        }
+        // Nor beside anything that lints or writes: dropped without a word,
+        // it left a hook that meant to lint, add `noqa` comments or write a
+        // baseline passing on a table of rules (#2856).
+        if args.rules && args.explain.is_some() {
+            return Err(
+                "--rules lists every rule and --explain describes one; give one of them".into(),
+            );
+        }
+        let lints = [
+            (!args.paths.is_empty(), "a q source path"),
+            (args.stdin_filename.is_some(), "--stdin-filename"),
+            (args.add_noqa, "--add-noqa"),
+            (args.write_baseline.is_some(), "--write-baseline"),
+            (args.statistics, "--statistics"),
+        ];
+        if let Some((_, given)) = lints.iter().find(|(set, _)| *set) {
+            return Err(format!(
+                "{given} lints, and --rules and --explain only describe the rules; give one or the other"
+            ));
         }
         if !matches!(args.format.as_str(), "text" | "json") {
             return Err(format!(
@@ -524,18 +574,17 @@ fn run(args: Args) -> Result<u8, String> {
     if args.show_settings {
         // The buffer an editor pipes is the file it asks about (#806),
         // named `-` or not, as Ruff's `--stdin-filename X -` names it.
-        let only_stdin = args.paths.is_empty() || args.paths == ["-"];
+        let only_stdin = args.paths.is_empty() || args.paths == [Path::new("-")];
         let paths = if let (true, Some(name)) = (only_stdin, &args.stdin_filename) {
             vec![name.clone()]
         } else if args.paths.is_empty() {
-            vec![".".to_string()]
+            vec![".".into()]
         } else {
             args.paths.clone()
         };
-        for name in paths {
+        for path in &paths {
             // A directory is described as a file inside it would be, so its
             // own configuration counts.
-            let path = Path::new(&name);
             let probe = if path.is_dir() {
                 path.join("*.q")
             } else {
@@ -545,8 +594,9 @@ fn run(args: Args) -> Result<u8, String> {
         }
         return Ok(0);
     }
-    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(|p| p == "-");
-    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(|p| p == "-");
+    let dash = |p: &PathBuf| p.as_os_str() == "-";
+    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(dash);
+    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(dash);
     let paths = if args.paths.is_empty() {
         vec![".".into()]
     } else {
@@ -574,19 +624,27 @@ fn run(args: Args) -> Result<u8, String> {
         if !only_stdin {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
-        let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        // Shown and configured by its name, lossily where that is not
+        // UTF-8, as a file a walk finds is.
+        let file = args.stdin_filename;
+        let name = match &file {
+            Some(file) => file.to_string_lossy().into_owned(),
+            None => "<stdin>".into(),
+        };
         // The file the buffer is linted as is the file an editor saves it
         // to: a report written there replaces it (#2116).
-        if name != "<stdin>" {
-            inputs.push(PathBuf::from(&name));
-        }
+        inputs.extend(file.clone());
         // Only q source, however the path arrived: a `.k` buffer is a
         // different language, refused as the same file named outright is
         // (#421).
-        if name != "<stdin>" && !is_q_source(Path::new(&name)) {
+        if file.as_deref().is_some_and(|file| !is_q_source(file)) {
             return Err(format!("--stdin-filename {name}: not a .q file"));
         }
-        if name == "<stdin>" || !args.force_exclude || !policy.force_excluded(Path::new(&name))? {
+        let excluded = match &file {
+            Some(file) if args.force_exclude => policy.force_excluded(file)?,
+            _ => false,
+        };
+        if !excluded {
             // Read as bytes and decoded as a file is: a buffer that is not
             // UTF-8 is still q, and is linted but never fixed (#417).
             let mut bytes = vec![];
@@ -609,7 +667,7 @@ fn run(args: Args) -> Result<u8, String> {
                     lossy_text(e.as_bytes())
                 }
             };
-            disk.push(PathBuf::from(&name));
+            disk.push(file.unwrap_or_else(|| PathBuf::from(&name)));
             sources.push((name, source));
         }
     } else {
@@ -693,11 +751,13 @@ fn run(args: Args) -> Result<u8, String> {
         .iter()
         .map(|(_, source)| q_lint_rs::references(source, false))
         .collect();
+    // What stands in for a current directory that is gone (#2873).
+    let first = sources.first().map(|(name, _)| PathBuf::from(name));
     let placed = if reads
         .iter()
         .any(|r| r.module || r.loads.iter().any(|(_, ns)| !ns.is_empty() && ns != "."))
     {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         let paths: Vec<_> = sources
             .iter()
             .map(|(name, _)| PathBuf::from(name))
@@ -714,7 +774,7 @@ fn run(args: Args) -> Result<u8, String> {
     let mut workspace = Workspace::default();
     let mut indexed = std::collections::HashSet::new();
     for (((_, source), file), placed) in sources.iter().zip(&disk).zip(placed) {
-        if indexed.insert(fs::canonicalize(file).unwrap_or_else(|_| file.clone())) {
+        if indexed.insert(q_lint_rs::graph::on_disk(file)) {
             let mut defined = index(source);
             if let Some((placement, implicit)) = placed {
                 placement.apply(&mut defined, &implicit);
@@ -728,6 +788,11 @@ fn run(args: Args) -> Result<u8, String> {
     if args.add_noqa {
         return add_noqa(&mut sources, &disk, &lossy, &policy, &workspace, failed);
     }
+    // Before `--fix` writes anything: a qls that cannot start would leave
+    // the files rewritten and what is left in them unreported (#2871).
+    if args.fix && args.backend == "all" && !sources.is_empty() {
+        qls::startable(&args.qls_executable).map_err(|e| format!("{e}; nothing fixed"))?;
+    }
     if args.fix || args.diff {
         let mut fixed = 0;
         let mut changed_files = 0;
@@ -739,8 +804,10 @@ fn run(args: Args) -> Result<u8, String> {
         // file it is: each name starts from what the one before it left, or
         // the second write would clobber the first and the second patch
         // would not apply after it (#761).
-        let mut current: std::collections::HashMap<PathBuf, String> = Default::default();
-        let canonical = |file: &PathBuf| fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+        // A hard link is one file under two names too, though each has a
+        // canonical path of its own (#2859).
+        let mut current: std::collections::HashMap<_, String> = Default::default();
+        let canonical = |file: &PathBuf| q_lint_rs::graph::on_disk(file);
         for ((path, source), file) in sources.iter_mut().zip(&disk) {
             if let Some(text) = current.get(&canonical(file)) {
                 source.clone_from(text);
@@ -821,12 +888,20 @@ fn run(args: Args) -> Result<u8, String> {
             findings.extend(policy.lint(source, path, &workspace)?);
         }
     }
+    // Under `all`, a qls that is missing, slow or crashing takes nothing
+    // from what the builtin rules found: its error is said, the findings
+    // are reported, and the run ends in 2 (#2871).
+    let mut silent = false;
     if args.backend != "builtin" {
-        findings.extend(qls::lint(
-            sources.clone(),
-            &args.qls_executable,
-            args.qls_timeout,
-        )?);
+        match qls::lint(sources.clone(), &args.qls_executable, args.qls_timeout) {
+            Ok(found) => findings.extend(found),
+            Err(e) if args.backend == "all" => {
+                eprintln!("qlinter: {e}; reporting the builtin findings only");
+                silent = true;
+                failed = true;
+            }
+            Err(e) => return Err(e),
+        }
     }
     // qls reports on its own; the configuration still decides what is shown.
     let mut kept = vec![];
@@ -846,7 +921,11 @@ fn run(args: Args) -> Result<u8, String> {
         // once it reads again: nothing is written, the old one kept (#2180).
         if failed {
             eprintln!(
-                "qlinter: an input could not be read; no baseline written, {} left as it was",
+                "qlinter: {}; no baseline written, {} left as it was",
+                match silent {
+                    true => "qls reported nothing",
+                    false => "an input could not be read",
+                },
                 file.display()
             );
             return Ok(2);
@@ -892,11 +971,11 @@ fn run(args: Args) -> Result<u8, String> {
     } else if args.format == "json" {
         out!("{}", serde_json::to_string(&shown).unwrap());
     } else if args.format == "sarif" {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         let report = report::sarif(&shown, &sources, &cwd);
         out!("{}", serde_json::to_string_pretty(&report).unwrap());
     } else if args.format == "github" {
-        let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+        let cwd = config::absolute(&config::working_dir(first.as_deref())?);
         for f in &shown {
             out!("{}", report::github(f, &cwd));
         }
@@ -911,7 +990,7 @@ fn run(args: Args) -> Result<u8, String> {
             };
             out!(
                 "{}:{}{}: {}: {} [{}/{}] {}\n    {}",
-                paint.bold(&f.path),
+                paint.bold(&printable(&f.path)),
                 f.line,
                 col,
                 severity,
@@ -1018,9 +1097,9 @@ fn add_noqa(
     let (mut added, mut changed, mut left, mut stale, mut undecoded) = (0, 0, 0, 0, 0);
     // Each file as it is on disk once its first name is done: a later name
     // is linted against that, not the text read before the write (#1199).
-    let mut written: std::collections::HashMap<PathBuf, String> = Default::default();
+    let mut written: std::collections::HashMap<_, String> = Default::default();
     for ((path, source), disk) in sources.iter_mut().zip(disk) {
-        let file = fs::canonicalize(disk).unwrap_or_else(|_| disk.clone());
+        let file = q_lint_rs::graph::on_disk(disk);
         if let Some(text) = written.get(&file) {
             source.clone_from(text);
             let found = policy.lint(source, path, workspace)?;
@@ -1095,15 +1174,38 @@ fn add_noqa(
     })
 }
 
-/// `bytes` as text, each byte that is not UTF-8 read as one replacement
-/// character, so every column after it stays where it was.
+/// A path as the text report prints it: a control character in a file's name
+/// is written as an escape, `\n` or `\x1b`, as git quotes one. Printed raw,
+/// a newline in a name forged a finding line and an escape sequence reached
+/// the terminal of whoever linted the tree (#2659).
+fn printable(path: &str) -> std::borrow::Cow<'_, str> {
+    if !path.contains(char::is_control) {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    let mut out = String::with_capacity(path.len() + 8);
+    for c in path.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\x{:02x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// `bytes` as text, each byte that is not UTF-8 read as one character, so
+/// every column after it stays where it was: the one that carries the byte,
+/// which the rules count as the one byte q reads and a report shows as the
+/// replacement character (#2861, #2862).
 /// `String::from_utf8_lossy` replaces a whole truncated sequence - `E2 82` -
 /// with one, which moves the rest of the line one column early.
 fn lossy_text(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len());
     for chunk in bytes.utf8_chunks() {
         text.push_str(chunk.valid());
-        text.extend(std::iter::repeat_n('\u{FFFD}', chunk.invalid().len()));
+        text.extend(chunk.invalid().iter().map(|&b| q_lint_rs::carried(b)));
     }
     text
 }
@@ -1112,7 +1214,8 @@ fn lossy_text(bytes: &[u8]) -> String {
 /// paths given, as JSON with sorted keys, so two runs over one tree print the
 /// same bytes. Reads every file and runs none.
 fn analyze_graph(args: GraphArgs) -> Result<u8, String> {
-    let cwd = config::absolute(&std::env::current_dir().map_err(|e| e.to_string())?);
+    let named = args.paths.first().map(Path::new);
+    let cwd = config::absolute(&config::working_dir(named)?);
     let overrides = Overrides {
         profile: None,
         default_profile: "uqf",
