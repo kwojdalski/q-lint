@@ -1900,6 +1900,25 @@ fn an_invalid_escape_names_a_non_ascii_char_whole() {
     assert_eq!(qe002.detail, "Invalid escape \\é");
 }
 
+/// And a line break after it in words: echoed, it split the finding over
+/// two lines of the text output (#2996).
+#[test]
+fn an_invalid_escape_at_a_line_end_is_named_in_words() {
+    for (source, named) in [
+        ("s:\"abc\\\n  def\"\n", "a backslash at the end of a line"),
+        (
+            "s:\"abc\\\r\n  def\"\r\n",
+            "a backslash at the end of a line",
+        ),
+        ("s:\"abc\\\tdef\"\n", "a backslash before a tab"),
+        ("s:\"abc\\\u{1}def\"\n", "a backslash before U+0001"),
+    ] {
+        let found = lint(source, "t.q", Profile::General);
+        let qe002 = found.iter().find(|f| f.code == "QE002").expect("QE002");
+        assert_eq!(qe002.detail, format!("Invalid escape: {named}"));
+    }
+}
+
 /// A typed slot binds its pattern's names: q 5 defines `{[a:`j] a}` and checks
 /// the type at the call, so `a` is a parameter, not body text (#304). A slot
 /// that is no pattern at all is still reported.

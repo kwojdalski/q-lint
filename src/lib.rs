@@ -11705,15 +11705,21 @@ fn lint_rules(
                 i,
                 "QE002",
                 // The whole char after the backslash, which may be more than
-                // one byte: `\é` is named as such, not half of it (#233).
-                format!(
-                    "Invalid escape \\{}",
-                    v.comments[i + 1..]
-                        .chars()
-                        .next()
-                        .map(String::from)
-                        .unwrap_or_default()
-                ),
+                // one byte: `\é` is named as such, not half of it (#233). A
+                // line break or another control character is named in
+                // words: written out it split the finding over two lines of
+                // the text output, and a CRLF file's held a bare CR (#2996).
+                match v.comments[i + 1..].chars().next() {
+                    Some('\n' | '\r') => {
+                        "Invalid escape: a backslash at the end of a line".to_string()
+                    }
+                    Some('\t') => "Invalid escape: a backslash before a tab".to_string(),
+                    Some(c) if c.is_control() => {
+                        format!("Invalid escape: a backslash before U+{:04X}", c as u32)
+                    }
+                    Some(c) => format!("Invalid escape \\{c}"),
+                    None => "Invalid escape \\".to_string(),
+                },
             );
             i += 2;
         }
