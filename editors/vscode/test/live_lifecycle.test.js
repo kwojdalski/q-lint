@@ -539,3 +539,41 @@ test("Load more while direct evaluation is on is later, not the end of the resul
   assert.match(page.later, /evaluated directly now/);
   assert.strictEqual(a.sent.length, sent);
 });
+
+// Disconnect waited for the running query, then showed its answer and
+// recorded it as run (#2556). q answers what it was sent after the client
+// half-closes, so this one does too.
+test("Disconnect while a query runs stops it at once: nothing shown, recorded as aborted", async (t) => {
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+    socket.on("error", () => {});
+    let shook = false;
+    socket.on("data", (chunk) => {
+      if (!shook) {
+        shook = true;
+        socket.write(Buffer.from([3]));
+        return;
+      }
+      const read = deserialize(chunk);
+      setTimeout(() => {
+        if (!socket.writable) return;
+        const out = serialize(JSON.stringify(read).includes("slowone") ? { ok: true, type: -7, text: ["1"] } : null);
+        out.writeUInt8(2, 1);
+        socket.write(out);
+        socket.end();
+      }, JSON.stringify(read).includes("slowone") ? 800 : 0);
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  t.after(() => server.close());
+  const { live } = await setUp(t, [proc("a", server.address().port)]);
+  assert.strictEqual(await live.connectTo("a"), true);
+  const running = live.run("slowone");
+  await until(() => live.isBusy());
+  const started = Date.now();
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.ok(Date.now() - started < 500, `Disconnect took ${Date.now() - started} ms`);
+  await running;
+  assert.strictEqual(live.activeLabel(), undefined);
+  assert.strictEqual(live.history()[0].code, "slowone");
+  assert.strictEqual(live.history()[0].outcome, "aborted");
+});

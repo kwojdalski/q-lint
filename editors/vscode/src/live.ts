@@ -2202,7 +2202,12 @@ export class Live {
         const old = this.connection;
         this.connection = undefined;
         this.aborted = this.running?.started;
-        await old.close();
+        // A query running on it is stopped, as at Disconnect (#2556).
+        if (old.isBusy) {
+          old.abort();
+        } else {
+          await old.close();
+        }
         // Said now, not on connecting: the new one may never come.
         this.changed.fire("disconnected");
       }
@@ -2692,10 +2697,16 @@ export class Live {
     this.stopConnect?.abort();
     const connection = this.connection;
     this.connection = undefined;
-    // A query running on it was stopped by the user, as Abort stops one.
+    // A query running on it was stopped by the user, as Abort stops one:
+    // closed at once, not after waiting for its answer, which would be
+    // shown and recorded as run (#2556).
     this.aborted = this.running?.started;
     this.running = undefined;
-    await connection?.close();
+    if (connection?.isBusy) {
+      connection.abort();
+    } else {
+      await connection?.close();
+    }
     this.showStatus();
     this.processesView.refresh();
     this.changed.fire("disconnected");
