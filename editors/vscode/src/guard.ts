@@ -2580,7 +2580,7 @@ function readStatement(statement: string, found: Set<string>): void {
     // `0("a:1")`, `0@"a:1"`, `0 . enlist "a:1"` (#1424) and `0["a:1"]` (#1724).
     // Read as `value` reads them: a list is a tree, `0(@;`b;0;:;9)`, and
     // a call, `0(value;"a:1")` (#1768), and a string that only reads, reads.
-    if (k.kind === "num" && /^-?0[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
+    if (k.kind === "num" && /^-?0+[ihj]?$/.test(k.text) && t[i - 1]?.kind !== "num") {
       const wrapped =
         (t[i - 1]?.text === "(" && next?.text === ")") ||
         (t[i - 2]?.text === "neg" && t[i - 1]?.text === "[" && next?.text === "]") ||

@@ -2050,3 +2050,10 @@ test("hopen of an http or https URL, as .Q.hg opens it, connects: no file is ope
   }
   assert.deepStrictEqual(writes("hopen `:http.txt"), ["opens the file `:http.txt with hopen"]);
 });
+
+test("handle 0 written with extra zeros is handle 0: the string is evaluated there (#2623)", () => {
+  for (const code of ['00"a:1"', '0000"a:1"', '00i"a:1"', '-00"a:1"', '(00)"a:1"', '00j@"a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  assert.deepStrictEqual(writes('00"count t"'), []);
+});
