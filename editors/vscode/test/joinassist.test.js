@@ -114,6 +114,17 @@ test("wj on a keyed left table unkeys it, and says so (#3046)", () => {
   assert.doesNotMatch(suggestJoins(trade, quote).find((x) => x.join === "wj").why, /unkeyed/);
 });
 
+// Keyed on the columns both share with none left over, the right table is
+// keys alone: q refuses lj and ij of it with 'type.
+test("lj and ij are not suggested on an unkeyed right table with no column of its own (#3048)", () => {
+  const t1 = shape("t1", ["sym", "qty", "px"], "sjf");
+  const t2 = shape("t2", ["sym", "qty", "px"], "sjf");
+  assert.deepStrictEqual(suggestJoins(t1, t2).map((x) => x.join), ["uj"]);
+  // One column of its own, and they are.
+  const t3 = shape("t3", ["sym", "qty", "lot"], "sjj");
+  assert.deepStrictEqual(suggestJoins(t1, t3).map((x) => [x.join, x.expression]).slice(0, 2), [["lj", "t1 lj `sym xkey `sym`lot#t3"], ["ij", "t1 ij `sym xkey `sym`lot#t3"]]);
+});
+
 // uj goes by name alone: `qty` long in one and int in the other came out
 // mixed, and the why said only "the rows of both".
 test("uj says which shared columns differ in type, and so come out mixed (#3049)", () => {

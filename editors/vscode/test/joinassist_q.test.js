@@ -138,3 +138,16 @@ test("a join of an expression that ends in a comment runs (#3047)", { skip }, as
     assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
   }
 });
+
+// Keyed on every column it shares with none of its own, the right table
+// is keys alone, which q refuses to lj or ij with 'type.
+test("every join suggested for two tables of the same columns runs (#3048)", { skip }, async (t) => {
+  const { connection } = await connect(t, "t1:([] sym:`a`b; qty:1 2; px:1 2f)\nt2:([] sym:`c`d; qty:3 4; px:3 4f)\n");
+  const shape = async (e) => readShape(await connection.call(TABLE_SHAPE, asCode(e)), e);
+  const joins = suggestJoins(await shape("t1"), await shape("t2"));
+  assert.deepStrictEqual(joins.map((s) => s.join), ["uj"]);
+  for (const s of joins) {
+    const answer = await connection.call("{[x] r:@[{(1b;value x)};x;{(0b;x)}]; $[r 0;98h=type 0!r 1;r 1]}", asCode(s.expression));
+    assert.strictEqual(answer, true, `${s.expression} => ${answer}`);
+  }
+});

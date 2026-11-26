@@ -145,13 +145,15 @@ export function suggestJoins(left: Shape, right: Shape): Suggestion[] {
     out.push({ join: "ij", expression: `${l} ij ${r}`, why: `Only the rows of ${left.expression.trim()} whose ${right.keys.join(", ")} ${right.keys.length === 1 ? "is" : "are"} in ${right.expression.trim()}.${onDisk(right)}` });
   } else if (right.keys.length === 0) {
     const keys = common.filter((c) => !TEMPORAL.has(type(right, c)) && !NUMERIC.has(type(right, c)) && type(right, c) !== "f");
-    if (keys.length > 0 && keys.length < right.columns.length) {
-      // A shared column left out of the keys would be overwritten in every
-      // row by the right table's: only its own columns are joined (#2408).
-      const own = right.columns.filter((c) => !common.includes(c));
+    // A shared column left out of the keys would be overwritten in every
+    // row by the right table's: only its own columns are joined (#2408).
+    // With none of its own there is nothing to join, and q refuses a keyed
+    // table of keys alone with 'type (#3048).
+    const own = right.columns.filter((c) => !common.includes(c));
+    if (keys.length > 0 && own.length > 0) {
       const dropped = common.filter((c) => !keys.includes(c));
       const keyed = `${symbols(keys)} xkey ${dropped.length > 0 ? `${symbols([...keys, ...own])}#${r}` : r}`;
-      const kept = dropped.length > 0 ? ` Only its own columns${own.length > 0 ? `, ${own.join(", ")},` : ""} are joined: a join on these keys would replace ${left.expression.trim()}'s ${dropped.join(", ")} with ${right.expression.trim()}'s.` : "";
+      const kept = dropped.length > 0 ? ` Only its own columns, ${own.join(", ")}, are joined: a join on these keys would replace ${left.expression.trim()}'s ${dropped.join(", ")} with ${right.expression.trim()}'s.` : "";
       out.push({ join: "lj", expression: `${l} lj ${keyed}`, why: `${right.expression.trim()} has no keys, so it is keyed on the columns both share, ${keys.join(", ")}; where a key repeats, lj takes the first row with it.${kept}${onDisk(right)}` });
       out.push({ join: "ij", expression: `${l} ij ${keyed}`, why: `Only the rows of ${left.expression.trim()} with a match on ${keys.join(", ")}.${kept}${onDisk(right)}` });
     }
