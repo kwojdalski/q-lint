@@ -10459,17 +10459,35 @@ fn lint_rules(
                 // and indexing it at `phrase`'s offsets panicked.
                 let groups = grouped(&query[w.end()..read_to]);
                 let mut reported = vec![];
-                for m in re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
+                // The literal on the left as well, starting its constraint:
+                // q 5 `select from t where 1 2=a` is 'length on three rows
+                // as `a=1 2` is (#2702). Read in `groups`, where a comma in
+                // brackets is not the one that starts a constraint.
+                let left: Vec<(usize, &str, bool)> = re!(r"(?:^|,)\s*(-?\d[A-Za-z0-9.]*(?:[ \t]+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)[ \t]*(=|<>)")
+                    .captures_iter(&groups)
+                    .filter(|_| qsql)
+                    .map(|c| {
+                        let lit = c.get(1).unwrap();
+                        (lit.start(), &phrase[lit.range()], &c[2] == "<>")
+                    })
+                    .collect();
+                let right = re!(r"(?:=|<>)\s*(?:-?\d[A-Za-z0-9.]*(?:\s+-?\d[A-Za-z0-9.]*)+|`[A-Za-z][A-Za-z0-9_.]*(?:`[A-Za-z0-9_.]*)+)")
                     .find_iter(&phrase)
                     // The `where` function is no filter: `where b=1 2 3` is
                     // the indices of a boolean vector, and q 5 runs it (#343).
                     .filter(|_| qsql)
-                {
-                    let rest = groups[m.end()..].trim_start();
-                    if !(rest.is_empty() || rest.starts_with([',', ';'])) {
-                        continue;
-                    }
-                    let at = match phrase[..m.start()].rfind(',') {
+                    .filter(|m| {
+                        let rest = groups[m.end()..].trim_start();
+                        rest.is_empty() || rest.starts_with([',', ';'])
+                    })
+                    .map(|m| {
+                        let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
+                        (m.start(), literal, m.as_str().starts_with("<>"))
+                    });
+                let mut found: Vec<(usize, &str, bool)> = right.chain(left).collect();
+                found.sort_by_key(|f| f.0);
+                for (start, literal, unequal) in found {
+                    let at = match phrase[..start].rfind(',') {
                         None => offset + w.start(),
                         Some(c) => {
                             let clause = &phrase[c + 1..];
@@ -10482,13 +10500,12 @@ fn lint_rules(
                     reported.push(at);
                     // Row by row, so q 5 runs it when the table has as many
                     // rows as the vector has items (#499).
-                    let literal = m.as_str().trim_start_matches(['=', '<', '>']).trim();
                     let n = if literal.starts_with('`') {
                         literal.matches('`').count()
                     } else {
                         literal.split_whitespace().count()
                     };
-                    let (op, meant) = if m.as_str().starts_with("<>") {
+                    let (op, meant) = if unequal {
                         ("<>", "`not` with `in` tests")
                     } else {
                         ("=", "`in` tests")

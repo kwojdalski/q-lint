@@ -257,6 +257,15 @@ select from t where px=1 2
 === QB008 | a symbol vector likewise
 select from t where sym=`a`b
 
+=== QB008 | a vector literal on the left of the comparison (q 5: where 1 2=a and where `x`y=s are 'length on three rows, #2702)
+r:select from t where 1 2=a
+s:select from t where `x`y=s
+u:select from t where a>0, 1 2<>a
+
+=== clean | a vector literal indexed or applied on the left is no comparison of it (#2702)
+r:select from t where 1 2 3[b]=a
+s:select from t where f[a,1 2]=b
+
 === QB008 | and one ending a clause before the next
 r:select from t where a=1 2, b>0
 
