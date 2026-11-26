@@ -10919,6 +10919,12 @@ fn lint_rules(
                     depth -= 1;
                 } else if c == ';' && depth == 0 {
                     break;
+                } else if c == '\n' && chars.get(j + 1).is_some_and(|n| !n.1.is_whitespace()) {
+                    // A line at column 0 begins a statement of its own. Read
+                    // on past it, a top-level signal took in every string
+                    // down to the next `;`, and each read the rest of the
+                    // file (#2866).
+                    break;
                 }
                 j += 1;
             }

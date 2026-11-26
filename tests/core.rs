@@ -2057,3 +2057,21 @@ fn many_documented_functions_lint_in_linear_time() {
         "1000 documented functions took {small:?} and 8000 {large:?}"
     );
 }
+/// QB004 read on from each top-level signal to the next `;` or closer,
+/// which in a file of them is the end of the file (#2866).
+#[test]
+fn many_top_level_signals_lint_in_linear_time() {
+    let time = |n: usize| {
+        let source: String = (0..n).map(|i| format!("a{i}:'\"x\"\n")).collect();
+        best_of_three(|| lint(&source, "t.q", Profile::Uqf))
+    };
+    time(2000); // warm the allocator and the regex caches
+    let (small, large) = (time(2000), time(16000));
+    eprintln!("2000 signals took {small:?} and 16000 {large:?}");
+    // Quadratic is 64 times; linear is 8. 16 still fails a quadratic walk by
+    // four times.
+    assert!(
+        large < small * 16,
+        "2000 signals took {small:?} and 16000 {large:?}"
+    );
+}
