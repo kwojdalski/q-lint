@@ -3099,6 +3099,19 @@ pub fn check(
             p = scopes[i].parent;
         }
     }
+    // Each lambda's multiple assignments, `(a;b):1 2`, by the lambda they
+    // bind locals of: the names they bind and the span of their target, to
+    // be read as assignments and not as reads (#2705).
+    let mut patterns: Vec<Vec<(usize, usize, Vec<&str>)>> = vec![vec![]; scopes.len()];
+    for (at, close, double) in pattern_targets(code) {
+        if let Some(si) = scope_at(&scopes, at).filter(|_| !double) {
+            let names = crate::pattern_names(&code[at..=close])
+                .into_iter()
+                .filter(|n| !n.contains('.'))
+                .collect();
+            patterns[si].push((at, close, names));
+        }
+    }
     for (si, scope) in scopes.iter().enumerate() {
         let direct = re!(r"`[A-Za-z0-9_./:]*")
             .replace_all(&scope.direct, |m: &regex::Captures| " ".repeat(m[0].len()));
@@ -3124,12 +3137,31 @@ pub fn check(
                     .or_insert(whole.start());
             }
         }
+        // A name a pattern binds, where the pattern names it.
+        let bound_at = |at: usize, name: &str| {
+            patterns[si]
+                .iter()
+                .any(|(a, c, names)| (*a..=*c).contains(&at) && names.contains(&name))
+        };
+        for (a, c, names) in &patterns[si] {
+            for name in names {
+                if let Some(m) = re!(r"[A-Za-z][A-Za-z0-9_]*")
+                    .find_iter(&code[*a..=*c])
+                    .find(|m| m.as_str() == *name && boundary(code, a + m.start()))
+                {
+                    assigned.entry(name).or_insert(a + m.start() - scope.body);
+                }
+            }
+        }
         if assigned.is_empty() {
             continue;
         }
         let mut read: HashSet<&str> = parse_tree_names(&scope.direct);
         for m in re!(r"[A-Za-z][A-Za-z0-9_]*").find_iter(&direct) {
-            if !boundary(&direct, m.start()) || direct[m.end()..].starts_with('.') {
+            if !boundary(&direct, m.start())
+                || direct[m.end()..].starts_with('.')
+                || bound_at(scope.body + m.start(), m.as_str())
+            {
                 continue;
             }
             // A name followed by `:` is being written, not read. `::` is a
