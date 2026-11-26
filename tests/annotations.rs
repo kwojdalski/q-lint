@@ -1315,6 +1315,43 @@ fn the_global_at_a_position_is_named_as_q_resolves_it() {
     assert_eq!(at(&mut server, 3, 3), Value::Null);
 }
 
+// #2958: a column was named as the global of its name, and the live value
+// hover then showed the process's `c` over the `c` of `select c from t`.
+#[test]
+fn a_name_in_a_query_phrase_is_no_global_to_ask_a_process_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut server = Server::start(dir.path(), &[]);
+    let text = "c:1\nt:([]c:1 2;s:`a`b)\n\
+                select c from t\n\
+                exec c by s from t\n\
+                select from t where c>1\n\
+                select from t where (c>1),s in `a\n\
+                select from t where c>.cfg.limit\n\
+                r:c+count t\n";
+    let uri = server.open(dir.path(), "main.q", text);
+    let mut names = |line: u64, character: u64| {
+        server.whole(
+            "q-lint/globalAt",
+            &uri,
+            json!({"position": {"line": line, "character": character}}),
+        )["result"]["names"]
+            .clone()
+    };
+    // In `select`, `by` and `where`, in parentheses too.
+    assert_eq!(names(2, 7), Value::Null);
+    assert_eq!(names(3, 5), Value::Null);
+    assert_eq!(names(3, 10), Value::Null);
+    assert_eq!(names(4, 20), Value::Null);
+    assert_eq!(names(5, 21), Value::Null);
+    // The table is a global, as is a name no column can have.
+    assert_eq!(names(2, 14), json!(["t"]));
+    assert_eq!(names(3, 17), json!(["t"]));
+    assert_eq!(names(6, 24), json!([".cfg.limit"]));
+    // And outside a query `c` is the global.
+    assert_eq!(names(7, 2), json!(["c"]));
+    assert_eq!(names(7, 10), json!(["t"]));
+}
+
 #[test]
 fn the_names_no_workspace_file_defines_are_listed_for_the_process() {
     let dir = tempfile::tempdir().unwrap();
