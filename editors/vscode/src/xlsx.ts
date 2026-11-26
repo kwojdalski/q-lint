@@ -297,6 +297,10 @@ export function toXlsx(payload: GridPayload, order: number[], rules: FormatRule[
     // The infinities among the rows written, which are text in the sheet.
     const raw = raws[c];
     return { pos: raw !== undefined && rows.some((r) => raw[r] === Infinity), neg: raw !== undefined && rows.some((r) => raw[r] === -Infinity) };
+  }, (c) => {
+    // A long Excel would round, which xlsxCell writes as its digits' text (#2459).
+    const raw = raws[c];
+    return raw !== undefined && rows.some((r) => raw[r] !== Infinity && raw[r] !== -Infinity && "t" in (xlsxCell(types[c], payload.cells[c][r] ?? "", raw[r]) ?? {}));
   });
   sheet.push("</sheetData>", ...formats.formatting, "</worksheet>");
   const xml = (lines: string[]) => Buffer.from(lines.join(""), "utf8");

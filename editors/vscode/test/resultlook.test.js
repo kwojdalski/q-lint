@@ -406,6 +406,29 @@ test("Excel colours the 0w and -0w cells the grid's rules colour, a top N of the
   assert.deepStrictEqual(formulas, ['OR(AND(ISNUMBER(A2),A2>1),A2="0w")', 'B2="0w"', 'OR(AND(ISNUMBER(A2),A2<=2),A2="-0w")', 'OR(AND(ISNUMBER(B2),B2<=2),B2="-0w")']);
 });
 
+test("Excel colours a long it holds as text, past 2^53, as the grid's rule does (#2459)", () => {
+  // ([] id:5 1700000000000000123 9007199254740993), id > 100 and id top 1.
+  const p = {
+    count: 3, keys: 0, names: ["id"], types: [7],
+    cells: [["5", "1700000000000000123", "9007199254740993"]],
+    raw: [[5, "1700000000000000123", "9007199254740993"]],
+    rank: [[0, 2, 1]],
+  };
+  const rules = [{ column: "id", op: ">", value: 100, style: { background: "red" } }, { column: "id", op: "top", value: 1, style: { bold: true } }];
+  const g = require("../out/grid.js").toGrid(p, -1);
+  assert.deepStrictEqual([...L.ruleStyles(g, rules.slice(0, 1))[0].keys()].sort(), [1, 2]);
+  const sheet = unzip(exportResult("xlsx", p, -1, undefined, rules).data)["xl/worksheets/sheet1.xml"];
+  assert.match(sheet, /<t xml:space="preserve">1700000000000000123<\/t>/);
+  const formulas = [...sheet.matchAll(/<formula>([^<]*)<\/formula>/g)].map((m) => m[1].replace(/&gt;/g, ">"));
+  assert.deepStrictEqual(formulas, [
+    "OR(AND(ISNUMBER(A2),A2>100),AND(ISTEXT(A2),IFERROR(VALUE(A2)>100,FALSE)))",
+    "OR(AND(ISNUMBER(A2),A2>=1700000000000000000),AND(ISTEXT(A2),IFERROR(VALUE(A2)>=1700000000000000000,FALSE)))",
+  ]);
+  // A column of longs Excel holds as numbers is as before.
+  const small = unzip(exportResult("xlsx", { ...p, cells: [["5", "6", "7"]], raw: [[5, 6, 7]] }, -1, undefined, rules.slice(0, 1)).data)["xl/worksheets/sheet1.xml"];
+  assert.match(small, /<formula>AND\(ISNUMBER\(A2\),A2&gt;100\)<\/formula>/);
+});
+
 test("correlation reads at most CORR_BUDGET row-pairs, over every step-th row past it, and says so (#1857)", () => {
   const columns = 20;
   const make = (rows) => ({
