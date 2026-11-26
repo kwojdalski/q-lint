@@ -737,3 +737,37 @@ test("the connect a query starts is its wait: shown waiting, stopped by Abort, e
   await sleep(50);
   assert.deepStrictEqual(live.history(), []);
 });
+
+// A query that waited for a connect went on, when the connect ended with
+// no connection, to ask "Connect to which q process?": of a user who had
+// pressed Disconnect, or had just been told the connect failed.
+test("a query that waited for a connect that was disconnected, or failed, is not run and asks for no process (#3015)", async (t) => {
+  const a = await fakeQ(() => 1, 1500);
+  t.after(() => a.close());
+  // A process that closes every connection before the handshake.
+  const refusing = net.createServer((socket) => socket.on("data", () => setTimeout(() => socket.destroy(), 100)).on("error", () => {}));
+  await new Promise((r) => refusing.listen(0, "127.0.0.1", r));
+  t.after(() => refusing.close());
+  const { live } = await setUp(t, [proc("a", a.port), proc("b", refusing.address().port)]);
+  const asked = [];
+  const pick = vscode.window.showQuickPick;
+  vscode.window.showQuickPick = async (_items, options) => void asked.push(options?.title);
+  t.after(() => (vscode.window.showQuickPick = pick));
+  const connect = live.connectTo("a");
+  await until(() => a.logins.length === 1);
+  const first = live.run("1+1");
+  await sleep(50);
+  await stub.commands.get("q-lint.disconnectProcess")();
+  assert.strictEqual(await connect, false);
+  await first;
+  assert.deepStrictEqual(stub.messages, [["info", "q-lint: the connect to a did not complete; the query was not run."]]);
+  stub.messages.length = 0;
+  const refused = live.connectTo("b");
+  await sleep(30);
+  const second = live.run("2+2");
+  assert.strictEqual(await refused, false);
+  await second;
+  assert.deepStrictEqual(stub.messages.map(([, m]) => m.replace(/\(.*$/, "")), ["q-lint: could not connect to b ", "q-lint: the connect to b did not complete; the query was not run."]);
+  assert.deepStrictEqual(asked, []);
+  assert.deepStrictEqual(live.history(), []);
+});

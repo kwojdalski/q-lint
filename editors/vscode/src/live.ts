@@ -3333,10 +3333,23 @@ export class Live {
     // A reconnect still under way (after an abort, or an automatic one
     // between its tries, #2132) is waited for, not replaced by asking which
     // process to connect to.
-    if (this.connection === undefined && this.reconnecting !== undefined && !(await wait(this.reconnectDone))) {
-      return undefined;
+    let waitedFor: string | undefined;
+    if (this.connection === undefined && this.reconnecting !== undefined) {
+      waitedFor = this.reconnecting.label;
+      if (!(await wait(this.reconnectDone))) {
+        return undefined;
+      }
     }
-    if (this.connection === undefined && this.connecting !== undefined && !(await wait(this.connecting))) {
+    if (this.connection === undefined && this.connecting !== undefined) {
+      waitedFor = this.connectingAs?.label ?? waitedFor;
+      if (!(await wait(this.connecting))) {
+        return undefined;
+      }
+    }
+    if (this.connection === undefined && waitedFor !== undefined) {
+      // The connect waited for was stopped by Disconnect, refused, or given
+      // up: the user is not asked where else the query should go (#3015).
+      void window.showInformationMessage(plainMessage(`q-lint: the connect to ${waitedFor} did not complete; the query was not run.`));
       return undefined;
     }
     if (this.connection === undefined) {
