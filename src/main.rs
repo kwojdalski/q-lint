@@ -90,7 +90,10 @@ struct Args {
     version: (),
     #[command(subcommand)]
     command: Option<Command>,
-    paths: Vec<String>,
+    // A path, not text: a file whose name is not UTF-8 is linted when a
+    // walk finds it, and clap refused every argument when one was named
+    // (#1194, #2872).
+    paths: Vec<PathBuf>,
     /// `text`, `json`, `sarif` (SARIF 2.1.0, for code scanning) or `github`
     /// (workflow commands, which a GitHub Actions run shows as annotations).
     #[arg(long,default_value="text",value_parser=["text","json","sarif","github"])]
@@ -104,7 +107,7 @@ struct Args {
     /// not, as in Ruff: an editor that pipes a buffer with it and no `-`
     /// wants that buffer linted, not the tree it runs in.
     #[arg(long)]
-    stdin_filename: Option<String>,
+    stdin_filename: Option<PathBuf>,
     /// Use this configuration for every file, instead of the nearest
     /// `.qlinter.toml`, `qlinter.toml` or `pyproject.toml` `[tool.qlinter]`.
     #[arg(long, conflicts_with = "isolated")]
@@ -230,7 +233,7 @@ enum Analyze {
 
 #[derive(clap::Args)]
 struct GraphArgs {
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     /// `dependencies`: each file and the files it depends on. `dependents`:
     /// each file and the files that depend on it.
     #[arg(long, default_value = "dependencies", value_parser = ["dependencies", "dependents"])]
@@ -353,7 +356,7 @@ fn is_q_source(path: &Path) -> bool {
 /// one stale path in a pre-commit file list must not hide every finding in
 /// every other file - and the caller ends the run in 2.
 fn discover(
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     policy: &Policy,
     force_exclude: bool,
 ) -> Result<(BTreeSet<PathBuf>, bool), String> {
@@ -361,8 +364,8 @@ fn discover(
     let mut skipped = false;
     let mut skipped_not_q = false;
     let mut failed = false;
-    for name in paths {
-        let path = Path::new(&name);
+    for path in &paths {
+        let name = path.display();
         if let Err(e) = fs::metadata(path) {
             eprintln!("qlinter: {name}: {e}, skipped");
             failed = true;
@@ -549,18 +552,17 @@ fn run(args: Args) -> Result<u8, String> {
     if args.show_settings {
         // The buffer an editor pipes is the file it asks about (#806),
         // named `-` or not, as Ruff's `--stdin-filename X -` names it.
-        let only_stdin = args.paths.is_empty() || args.paths == ["-"];
+        let only_stdin = args.paths.is_empty() || args.paths == [Path::new("-")];
         let paths = if let (true, Some(name)) = (only_stdin, &args.stdin_filename) {
             vec![name.clone()]
         } else if args.paths.is_empty() {
-            vec![".".to_string()]
+            vec![".".into()]
         } else {
             args.paths.clone()
         };
-        for name in paths {
+        for path in &paths {
             // A directory is described as a file inside it would be, so its
             // own configuration counts.
-            let path = Path::new(&name);
             let probe = if path.is_dir() {
                 path.join("*.q")
             } else {
@@ -570,8 +572,9 @@ fn run(args: Args) -> Result<u8, String> {
         }
         return Ok(0);
     }
-    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(|p| p == "-");
-    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(|p| p == "-");
+    let dash = |p: &PathBuf| p.as_os_str() == "-";
+    let stdin = args.stdin_filename.is_some() || args.paths.iter().any(dash);
+    let only_stdin = args.paths.len() <= 1 && args.paths.iter().all(dash);
     let paths = if args.paths.is_empty() {
         vec![".".into()]
     } else {
@@ -599,19 +602,27 @@ fn run(args: Args) -> Result<u8, String> {
         if !only_stdin {
             return Err("Stdin (- or --stdin-filename) must be the only input".into());
         }
-        let name = args.stdin_filename.unwrap_or_else(|| "<stdin>".into());
+        // Shown and configured by its name, lossily where that is not
+        // UTF-8, as a file a walk finds is.
+        let file = args.stdin_filename;
+        let name = match &file {
+            Some(file) => file.to_string_lossy().into_owned(),
+            None => "<stdin>".into(),
+        };
         // The file the buffer is linted as is the file an editor saves it
         // to: a report written there replaces it (#2116).
-        if name != "<stdin>" {
-            inputs.push(PathBuf::from(&name));
-        }
+        inputs.extend(file.clone());
         // Only q source, however the path arrived: a `.k` buffer is a
         // different language, refused as the same file named outright is
         // (#421).
-        if name != "<stdin>" && !is_q_source(Path::new(&name)) {
+        if file.as_deref().is_some_and(|file| !is_q_source(file)) {
             return Err(format!("--stdin-filename {name}: not a .q file"));
         }
-        if name == "<stdin>" || !args.force_exclude || !policy.force_excluded(Path::new(&name))? {
+        let excluded = match &file {
+            Some(file) if args.force_exclude => policy.force_excluded(file)?,
+            _ => false,
+        };
+        if !excluded {
             // Read as bytes and decoded as a file is: a buffer that is not
             // UTF-8 is still q, and is linted but never fixed (#417).
             let mut bytes = vec![];
@@ -634,7 +645,7 @@ fn run(args: Args) -> Result<u8, String> {
                     lossy_text(e.as_bytes())
                 }
             };
-            disk.push(PathBuf::from(&name));
+            disk.push(file.unwrap_or_else(|| PathBuf::from(&name)));
             sources.push((name, source));
         }
     } else {

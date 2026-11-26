@@ -1601,3 +1601,45 @@ fn an_invalid_byte_is_named_and_a_utf16_file_is_reported_as_one() {
         );
     }
 }
+
+/// A file whose name is not UTF-8 is linted when a walk finds it (#1194),
+/// and named on the command line - as pre-commit and `qlinter *` name it -
+/// clap refused every argument, so nothing was linted (#2872). It is one
+/// path among the others: read where the disk can hold such a name, and
+/// reported as missing where it cannot, with the rest still linted.
+#[cfg(unix)]
+#[test]
+fn a_path_argument_that_is_not_utf8_does_not_stop_the_others() {
+    use std::os::unix::ffi::OsStrExt;
+    let repo = Repo::new();
+    repo.write("ok.q", "f:{[x;y] x==y}\n");
+    let odd = std::ffi::OsStr::from_bytes(b"caf\xe9.q");
+    // APFS will not store the name; ext4 does.
+    let stored = fs::write(repo.path("").join(odd), "g:{[x;y] x==y}\n").is_ok();
+    let lint = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_qlinter"))
+            .current_dir(repo.path(""))
+            .args(["--isolated", "--format", "json", "--select", "QE004"])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let out = lint(&["ok.q".as_ref(), odd]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("invalid UTF-8"), "{stderr}");
+    let found: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(found.as_array().unwrap().len(), 1 + usize::from(stored));
+    assert_eq!(out.status.code(), Some(if stored { 1 } else { 2 }));
+    assert_eq!(stderr.contains("caf\u{fffd}.q: "), !stored, "{stderr}");
+    // And the name a buffer is linted as, or a graph is asked about.
+    let out = lint(&["--stdin-filename".as_ref(), odd]);
+    assert_eq!(out.status.code(), Some(0), "{:?}", out);
+    let out = Command::new(env!("CARGO_BIN_EXE_qlinter"))
+        .current_dir(repo.path(""))
+        .args(["analyze", "graph", "ok.q"])
+        .arg(odd)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\"ok.q\""), "{:?}", out);
+}
