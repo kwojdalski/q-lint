@@ -161,7 +161,10 @@ test("the explorer settings are read, and a preview limit that is not one is 5",
   const from = (values) => readExplorer((key, fallback) => (key in values ? values[key] : fallback));
   assert.deepStrictEqual(from({}), { excludedNamespaces: ["q", "Q", "h", "j", "o", "s"], previewLimit: 5, autoRefresh: false });
   assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": [".z", " a ", "", "b c"] }).excludedNamespaces, ["z", "a"]);
-  assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": "q" }).excludedNamespaces, []);
+  // #2525: a value that is not a list is the default, and non-strings are skipped.
+  assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": "q,Q,h,j,o,s" }).excludedNamespaces, ["q", "Q", "h", "j", "o", "s"]);
+  assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": null }).excludedNamespaces, ["q", "Q", "h", "j", "o", "s"]);
+  assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": ["q", null, {}, 7, "h"] }).excludedNamespaces, ["q", "h"]);
   // A namespace written as a symbol is its name: joined, a leading
   // backtick would be sent as a symbol atom, and the lambdas fail on it (#1965).
   assert.deepStrictEqual(from({ "processExplorer.excludedNamespaces": ["`zz", "`.q", "``Q", "`", "h"] }).excludedNamespaces, ["zz", "q", "Q", "h"]);
