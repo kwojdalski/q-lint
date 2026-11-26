@@ -336,18 +336,17 @@ export class EntryBuilder {
     private readonly fileProcess = processFromFile(file),
   ) {}
 
-  push(line: string): void {
+  /// The entry `line` starts; undefined where it continues the open one.
+  private starts(line: string): Entry | undefined {
     const p = parseLine(line);
     // `.lg.format` writes a message's newlines as they are, so in a TorQ
     // entry a line of no TorQ form and no time of its own - a trailing
     // "rolled back", a `'type` - is still that message (#2419).
     const torqOpen = this.current !== undefined && this.current.kind.startsWith("torq");
     if ((p.kind === "cont" || (torqOpen && p.kind === "q" && p.time === undefined)) && this.current !== undefined) {
-      this.current.lines.push(line);
-      return;
+      return undefined;
     }
-    this.flush();
-    this.current = {
+    return {
       lines: [line],
       process: p.process ?? this.fileProcess,
       file: this.file,
@@ -358,12 +357,38 @@ export class EntryBuilder {
       ...(p.timeSpan ? { timeSpan: p.timeSpan } : {}),
       ...(p.levelSpan ? { levelSpan: p.levelSpan } : {}),
     };
-    this.onStart?.(this.current);
+  }
+
+  push(line: string): void {
+    const entry = this.starts(line);
+    if (entry === undefined) {
+      this.current!.lines.push(line);
+      return;
+    }
+    this.flush();
+    this.current = entry;
+    this.onStart?.(entry);
   }
 
   /// The entry being built, which later lines may still continue.
   get open(): Entry | undefined {
     return this.current;
+  }
+
+  /// The entries not yet done, were `partial` the next line: the open one
+  /// with it, or the open one and then the entry it starts (`started`).
+  /// `partial` is what its file holds after the last newline - the last
+  /// line of a log that ends without one, as a process killed mid-write or
+  /// q's `1 "..."` leaves it, and often the line that says why. It may
+  /// still grow, so nothing of it is kept here (#3041).
+  pending(partial: string): { entries: Entry[]; started?: Entry } {
+    const line = partial.endsWith("\r") ? partial.slice(0, -1) : partial;
+    const open = this.current !== undefined ? [this.current] : [];
+    if (line === "") {
+      return { entries: open };
+    }
+    const started = this.starts(line);
+    return started !== undefined ? { entries: [...open, started], started } : { entries: [{ ...this.current!, lines: [...this.current!.lines, line] }] };
   }
 
   flush(): void {

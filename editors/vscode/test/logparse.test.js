@@ -211,3 +211,24 @@ test("a multi-line TorQ message is one entry, its unindented lines too (#2419)",
   const k = entries(["`hello", "2026.11.21D17:30:00.000000000|h|rdb|rdb1|ERROR|upd|x", "'2026.11.21T17:30:01.000 type"]);
   assert.deepStrictEqual(k.map((x) => x.lines.length), [1, 1, 1]);
 });
+
+// A file's last line with no newline after it is not pushed - it may still
+// grow - and was never shown: `pending` gives it as the entries it makes.
+test("a line not yet ended continues the open entry or starts one, and is not kept (#3041)", () => {
+  const done = [];
+  const b = new EntryBuilder("/l/out_rdb1.log", (e) => done.push(e));
+  assert.deepStrictEqual(b.pending(""), { entries: [] });
+  assert.deepStrictEqual(b.pending(TORQ_ERR).entries.map((e) => [e.level, e.process, e.lines]), [["ERROR", "rdb1", [TORQ_ERR]]]);
+  b.push(TORQ_INFO);
+  // A line that starts an entry: the open one, then it.
+  const two = b.pending(TORQ_ERR);
+  assert.deepStrictEqual(two.entries.map((e) => e.lines), [[TORQ_INFO], [TORQ_ERR]]);
+  assert.strictEqual(two.started, two.entries[1]);
+  assert.strictEqual(two.entries[0], b.open);
+  // One that continues it: the open entry with it, and none started. A
+  // carriage return whose newline is still to come is no part of the line.
+  const more = b.pending("  rolled back\r");
+  assert.deepStrictEqual([more.entries.map((e) => e.lines), more.started], [[[TORQ_INFO, "  rolled back"]], undefined]);
+  // Nothing was kept: the open entry is as it was, and none is done.
+  assert.deepStrictEqual([b.open.lines, done], [[TORQ_INFO], []]);
+});
