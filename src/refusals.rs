@@ -196,6 +196,31 @@ fn attributes(path: &str, source: &str, code: &str, comments: &str, out: &mut Ve
             ));
         }
     }
+    // An atom takes no attribute at all, `` `g# `` included: KDB-X
+    // `` `s#3 ``, `` `u#`a ``, `` `p#"a" `` and `` `g#1b `` are 'type, where
+    // `` `s#enlist 3 ``, `` `s#() `` and `` `s#"" `` are lists and run
+    // (#2891). A string is read from `comments` here too.
+    for m in re!(concat!(
+        r#"`([spug])#[ \t]*(-?\.?\d(?:e-|e\+\d|[A-Za-z0-9.:])*|`[A-Za-z0-9_.:]*|"(?:[^"\\]|\\.)")"#
+    ))
+    .captures_iter(comments)
+    {
+        let whole = m.get(0).unwrap();
+        if code.as_bytes()[whole.start()] != b'`'
+            || !boundary(code, whole.start())
+            || !operand_ends(code, comments, whole.end())
+            || !crate::semantics::infer::literal_type(&m[2]).is_some_and(|k| k < 0)
+        {
+            continue;
+        }
+        out.push(Finding::at(
+            path,
+            source,
+            whole.start(),
+            "QT024",
+            format!("`` `{}# `` on an atom: q raises 'type", &m[1]),
+        ));
+    }
 }
 
 #[derive(PartialEq, PartialOrd, Debug)]

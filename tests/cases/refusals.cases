@@ -1237,6 +1237,23 @@ b:`u#"aa"
 a:`s#"abc"
 b:`u#"ab"
 
+=== QT024 profile: general | an atom takes no attribute, the grouped one included (#2891; q 5: each is 'type)
+a:`s#3
+b:`u#`a
+c:`p#"a"
+d:`g#1b
+e:`s#2024.01.01
+f:(`s#-1.5;0)
+g:`s#0x01
+
+=== clean profile: general | while a list of one item, an empty list, or an atom that only starts a list takes one (#2891; q 5: each runs)
+a:`s#enlist 3
+b:`s#()
+c:`s#""
+d:`s#3,4
+e:`g#`a`b
+f:@[`t;`sym;`g#]
+
 === QT029 profile: general | hopen of a real, the empty symbol or the empty string (q 5: 'type)
 a:hopen 1.5e
 b:hopen `
