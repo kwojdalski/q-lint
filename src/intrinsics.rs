@@ -565,6 +565,33 @@ const LAMBDAS: &[&str] = &[
     "ssr", "aj", "aj0", "ajf", "ajf0", "ej", "wj", "wj1",
 ];
 
+/// The primitives KDB-X refuses where one is projected past its rank, with
+/// 'nyi: `count[1;]`, `first[;1]` and `neg[1;]` never become a function,
+/// while `sum[1;]`, `abs[;1]` and `last[1;]` do (#2948). By its name in `.q`
+/// each projects, `.q.count[1;]`, so only the bare word is refused.
+const NO_PROJECTION: &[&str] = &[
+    "count",
+    "distinct",
+    "first",
+    "flip",
+    "floor",
+    "get",
+    "group",
+    "hclose",
+    "inv",
+    "key",
+    "ltime",
+    "neg",
+    "not",
+    "null",
+    "reciprocal",
+    "reverse",
+    "string",
+    "type",
+    "value",
+    "where",
+];
+
 pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Finding> {
     let mut out = vec![];
     // A keyword the file redefines in `.q` calls the new definition from
@@ -612,10 +639,15 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
         let slots = slots(&code[open + 1..close - 1]);
         let given = slots.len();
         // An elided slot makes a projection, which q refuses where it is
-        // made only for a function it defines as a lambda: q 5 `xasc[a;b;]`
-        // is 'rank, while `bin[a;b;]` is a projection that fails when run.
+        // made for a function it defines as a lambda, and for the primitives
+        // in `NO_PROJECTION`: q 5 `xasc[a;b;]` is 'rank and `ltime[1;]`
+        // 'nyi, while `bin[a;b;]` is a projection that fails when run.
         let projection = slots.iter().any(|slot| slot.trim().is_empty());
-        if given > arity && (!projection || LAMBDAS.contains(&bare)) {
+        if given > arity
+            && (!projection
+                || LAMBDAS.contains(&bare)
+                || (bare == name && NO_PROJECTION.contains(&name)))
+        {
             out.push(Finding::at(
                 path,
                 source,
@@ -647,11 +679,14 @@ pub fn check(path: &str, source: &str, code: &str, comments: &str) -> Vec<Findin
             out.push(Finding::at(path, source, at, id, detail))
         };
         let max_arity = most_arguments(name).unwrap_or(arity);
-        // A projection is refused only by a builtin q defines as a lambda,
-        // which checks its slots where it is projected: q 5 `til[3;]`,
-        // `til[;3]` and `mavg[1;;]` are 'rank, while `sum[1;]` and
-        // `count[1;]` are not refused until they run, if then (#631).
-        if args.len() > max_arity && (!projection || LAMBDAS.contains(&name)) {
+        // A projection is refused by a builtin q defines as a lambda, which
+        // checks its slots where it is projected - q 5 `til[3;]`, `til[;3]`
+        // and `mavg[1;;]` are 'rank (#631) - and by the primitives KDB-X
+        // answers 'nyi for, `count[1;]` and `first[;1]` (#2948). `sum[1;]`
+        // and `abs[;1]` are not refused until they run, if then.
+        if args.len() > max_arity
+            && (!projection || LAMBDAS.contains(&name) || NO_PROJECTION.contains(&name))
+        {
             report(
                 &mut out,
                 "QA010",
