@@ -105,7 +105,7 @@
             "2": { "name": "punctuation.definition.parameters.begin.k" },
             "3": {
               "patterns": [
-                { "match": "[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.k" },
+                { "match": "[A-Za-z][A-Za-z0-9]*", "name": "variable.parameter.k" },
                 { "match": ";", "name": "punctuation.separator.parameters.k" }
               ]
             },
@@ -143,7 +143,7 @@
               "endCaptures": { "0": { "name": "punctuation.definition.parameters.end.k" } },
               "patterns": [
                 { "include": "#comment" },
-                { "match": "[A-Za-z][A-Za-z0-9_]*", "name": "variable.parameter.k" },
+                { "match": "[A-Za-z][A-Za-z0-9]*", "name": "variable.parameter.k" },
                 { "match": ";", "name": "punctuation.separator.parameters.k" }
               ]
             },
@@ -176,7 +176,7 @@
             { "include": "#number" },
             {
               "comment": "x, y and z are a lambda's implicit parameters.",
-              "match": "(?<![A-Za-z0-9.`])[xyz](?![A-Za-z0-9_])",
+              "match": "(?<![A-Za-z0-9.`])[xyz](?![A-Za-z0-9])",
               "name": "variable.language.implicit.k"
             },
             { "include": "#name" },
@@ -188,7 +188,7 @@
       ]
     },
     "number": {
-      "comment": "No literal holds an underscore and no name starts with one, so one after a literal or before a name is drop or cut: 1_x is 1, drop, x.",
+      "comment": "No literal and no name holds an underscore, so one after a literal or a name is drop or cut: 1_x is 1, drop, x.",
       "patterns": [
         {
           "comment": "Timestamp, datetime, date, month, timespan and time literals, each with the type letters q reads as part of it: 12:34:56.789p and 2024.01.02n are one literal. The hours after D or T are any digits, with a fraction, when no minutes follow (1970.01.01D0, 0D1.5); with minutes, two.",
@@ -219,7 +219,8 @@
       ]
     },
     "name": {
-      "match": "(?<![A-Za-z0-9.`])(\\.[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)(?![A-Za-z0-9_])",
+      "comment": "k has no underscore in a name: n_v is n, drop, v, and a_b:7 is refused ('a). So a name ends at one, which the verb rule then takes.",
+      "match": "(?<![A-Za-z0-9.`])(\\.[A-Za-z][A-Za-z0-9]*(?:\\.[A-Za-z0-9]+)*(?=\\.))?(\\.?[A-Za-z][A-Za-z0-9]*(?:\\.[A-Za-z0-9]+)*)(?![A-Za-z0-9])",
       "captures": {
         "1": { "name": "entity.name.namespace.k" },
         "2": { "name": "variable.other.k" }
