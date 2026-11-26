@@ -872,6 +872,83 @@ fn navigation_is_announced_and_can_be_turned_off() {
     assert_eq!(reply["result"], Value::Null, "{reply}");
 }
 
+/// A lambda left open ends where the next statement begins, at column 0:
+/// read to the end of the file, `new:{` typed above three definitions made
+/// them its body, and none of them was a definition any more (#2960).
+#[test]
+fn a_lambda_left_open_does_not_take_the_statements_after_it() {
+    let defined = |source: &str| -> Vec<(String, String)> {
+        mentions(source)
+            .into_iter()
+            .filter_map(|m| {
+                let d = m.definition?;
+                Some((m.name, source[d.start..d.end].to_string()))
+            })
+            .collect()
+    };
+    let is = |name: &str, statement: &str| (name.to_string(), statement.to_string());
+    let rest = [is("f", "f:{[a;b] a+b}"), is("g", "g:{[c] f[c;1]}")];
+    for open in ["new:{[a]\n  b:a+1;\n  {[c] c+", "new:(1;", "new:f[1;"] {
+        let source = format!("{open}\nf:{{[a;b] a+b}}\ng:{{[c] f[c;1]}}\n");
+        let mut all = vec![is("new", open)];
+        all.extend(rest.clone());
+        assert_eq!(defined(&source), all, "{open}");
+    }
+    // A line opening a string begins a statement too, and a comment at
+    // column 0 does not.
+    assert_eq!(
+        defined("new:{[a]\n\"abc\",a}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n")[1..],
+        rest
+    );
+    assert_eq!(
+        defined("new:{[a]\n/ note\n  a}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n"),
+        [
+            is("new", "new:{[a]\n/ note\n  a}"),
+            rest[0].clone(),
+            rest[1].clone()
+        ]
+    );
+    // A closer at column 0 still closes, as an older q read it.
+    assert_eq!(
+        defined("new:{[a]\n  a\n}\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n")[0],
+        is("new", "new:{[a]\n  a\n}")
+    );
+}
+
+/// The same from the server: the outline, the workspace's symbols and
+/// another file's Go to Definition keep what follows a lambda being typed.
+#[test]
+fn the_definitions_after_a_lambda_being_typed_are_still_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let text = "new:{\nf:{[a;b] a+b}\ng:{[c] f[c;1]}\n";
+    let mut server = Server::start(dir.path(), &[("lib.q", text)]);
+    let lib = server.open(dir.path(), "lib.q", text);
+    let reply = server.request(
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": lib}}),
+    );
+    let names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["new", "f", "g"], "{reply}");
+    let reply = server.request("workspace/symbol", json!({"query": ""}));
+    let mut names: Vec<&str> = reply["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["f", "g", "new"], "{reply}");
+    let main = "r:g 1\n";
+    let uri = server.open(dir.path(), "main.q", main);
+    let reply = server.ask("textDocument/definition", &uri, main, "g 1", 0, json!({}));
+    assert_eq!(places(&reply["result"]), [place("lib.q", 2, 0, 1)]);
+}
+
 #[test]
 fn a_definition_is_found_in_another_file_under_the_context_it_is_written_in() {
     let dir = tempfile::tempdir().unwrap();

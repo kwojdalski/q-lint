@@ -565,6 +565,12 @@ fn top_level_statements<'a>(code: &'a str, raw: &str) -> Vec<(usize, &'a str)> {
     let mut statements = vec![];
     let (mut start, mut at, mut depth) = (0, 0, 0);
     for line in code.split_inclusive('\n') {
+        // A bracket left open ends where the next statement begins, as the
+        // lambdas of `scopes` do: every statement after one being typed was
+        // part of it, and none of them had a lens (#2960).
+        if depth != 0 && begins_statement(line, &raw[at..at + line.len()]) {
+            depth = 0;
+        }
         if depth == 0 && !raw[at..].starts_with([' ', '\t']) {
             statements.push((start, &code[start..at]));
             start = at;
@@ -869,6 +875,20 @@ pub(crate) fn opens_later(code_line: &str, raw_line: &str) -> Vec<(usize, String
 pub(crate) fn contexts(code: &str, raw: &str) -> Vec<(usize, String)> {
     scopes(code, raw).1
 }
+/// Whether `line` of the code view, `raw` in the source, starts a statement
+/// whatever is open above it: one at column 0 does, as `crate::begins` has
+/// it for the structural check. A comment line is blank in the view and
+/// does not count; a `q)` prompt is a `;` there and does; and a line opening
+/// a string, or one in k, is blank there though it starts a statement, so
+/// the source is asked.
+///
+/// Not a line that starts with a closer, though q 5 refuses that one too
+/// (`f:{[y]` + `  y+1` + `}` is '{, as QE001 says): it is how a lambda was
+/// closed where an older q read the file, and nothing is being typed there.
+fn begins_statement(line: &str, raw: &str) -> bool {
+    let column_0 = |c: char| !c.is_ascii_whitespace() && !")]}".contains(c);
+    line.starts_with(column_0) || raw.starts_with('"') || raw.starts_with("k)")
+}
 /// Every lambda in the file, with what it binds, and the namespace in force
 /// at each line. Shared by the checks and by the editor's semantic tokens,
 /// which have to agree about what a name in a body refers to.
@@ -885,6 +905,18 @@ fn scopes(code: &str, raw: &str) -> (Vec<Scope>, Vec<(usize, String)>) {
     let mut namespaces = vec![];
     let mut offset = 0;
     for line in code.split_inclusive('\n') {
+        // A line at column 0 begins a statement, so a lambda still open
+        // there is never closed: q 5 refuses `new:{` and reads the next
+        // line as its own. Read to the end of the file instead, a lambda
+        // being typed took every definition below it for its body, and the
+        // outline, the lenses and other files' Go to Definition lost them
+        // (#2960). `problems` reports the brace, and ends it here too.
+        if !stack.is_empty() && begins_statement(line, &raw[offset..offset + line.len()]) {
+            for s in stack.drain(..) {
+                scopes[s].end = offset;
+            }
+            beyond = 0;
+        }
         if stack.is_empty()
             && let Some(ns) = opens(line, &raw[offset..offset + line.len()])
         {

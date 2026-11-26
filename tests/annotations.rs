@@ -429,6 +429,36 @@ fn a_top_level_function_has_a_run_lens_and_a_test_a_run_test_lens_too() {
     );
 }
 
+/// A lambda, a list or a call left open above them took every statement
+/// below for its own, and none of them had a lens (#2960).
+#[test]
+fn the_functions_after_a_statement_left_open_keep_their_lenses() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = json!({"codeLens": {"enable": true}});
+    let (mut server, _) = Server::over(dir.path(), &[], client(), options);
+    for (name, open) in [
+        ("brace.q", "new:{"),
+        ("paren.q", "k:(1;"),
+        ("call.q", "k:f[1;"),
+    ] {
+        let text = format!("{open}\nf:{{[a;b] a+b}}\ng:{{[c] f[c;1]}}\n");
+        let uri = server.open(dir.path(), name, &text);
+        let reply = server.whole("textDocument/codeLens", &uri, json!({}));
+        let after: Vec<_> = lenses(&reply, &uri)
+            .into_iter()
+            .filter(|(line, _, _)| *line > 0)
+            .collect();
+        assert_eq!(
+            after,
+            [
+                lens(1, "Run", "f:{[a;b] a+b}"),
+                lens(2, "Run", "g:{[c] f[c;1]}")
+            ],
+            "{open}: {reply}"
+        );
+    }
+}
+
 /// Hints and lenses over a file of N definitions, each calling the one
 /// before, take time in proportion to it: each read the whole file again
 /// for every definition, 63 s at 5,000 (#1216).
