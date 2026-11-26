@@ -64,7 +64,9 @@
 //   and applied after too, `` (?)[`sym] `x `` (#2188);
 // - a string or a list sent to handle 0 (`0"a:1"`, `neg[0]"a:1"`,
 //   `0(@;`b;0;:;9)`), or what a function gives, `0 raze("a:";"1")` (#2204),
-//   which the process evaluates itself as `value` would;
+//   which the process evaluates itself as `value` would - a handle computed
+//   of numbers alone too, `(1-1)"a:1"`, and one it cannot work out,
+//   `abs[0]"a:1"`, `(0 1)[0]"a:1"`, is taken for handle 0 (#2624);
 // - `-11!`, which replays a log through `upd`, except `-11!(-1;..)` and
 //   `-11!(-2;..)`, which only count and check one; `-19!`, which
 //   compresses a file into another - each also spaced or with the number
@@ -496,6 +498,60 @@ function constant(t: Token[], from: number, to: number): number | undefined {
   if (to - from > 16) return undefined;
   const read = value(from, to);
   return read !== undefined && read[1] === to ? read[0] : undefined;
+}
+
+/// The builtins that, given numbers, give numbers: in a handle computed of
+/// numbers alone, `abs[0]`, `first[0]` (#2624).
+const NUMERIC = new Set(["abs", "neg", "first", "last", "min", "max", "sum", "prd", "avg", "floor", "ceiling", "signum", "reverse", "distinct", "til", "count", "div", "mod", "xbar"]);
+
+/// What the noun that ends at the close `t[end]` - in parentheses, `(1-1)`,
+/// or indexed, `abs[0]`, `(0 1)[0]`, `0 1[0]` - comes to as a handle when it
+/// is computed of numbers alone (#2624): "zero" for handle 0, "unread" for
+/// one the guard cannot work out, undefined for one it shows is not 0 and
+/// for anything holding a name, a symbol, a string or a lambda, which is not
+/// read for a handle - a name alone is the value it holds.
+function numericHandle(t: Token[], end: number): "zero" | "unread" | undefined {
+  const opening = (close: number): number => {
+    let open = close;
+    for (let depth = 0; open >= 0; open--) {
+      if (t[open].kind === "close") depth++;
+      else if (t[open].kind === "open" && --depth === 0) break;
+    }
+    scanned(close - open);
+    return open;
+  };
+  let p = end;
+  while (t[p]?.kind === "close" && t[p].text === "]") {
+    const open = opening(p);
+    // A projection, `mod[;2]`, is a function, not a handle.
+    if (open < 0 || items(t, open).some(([a, b]) => a === b)) return undefined;
+    p = open - 1;
+  }
+  const indexed = p < end;
+  let start: number;
+  if (t[p]?.kind === "close" && t[p].text === ")") {
+    start = opening(p);
+    // Not indexed, it is one item, not a list, `(2;2)`, a vector, `(0 1)`,
+    // or a projection or composition, `(0;)`, `(-1_1_)`.
+    if (!indexed && start >= 0 && (items(t, start).length > 1 || t[p - 1]?.kind === "op" || (t.slice(start + 1, p).every((k) => k.kind === "num") && constant(t, start + 1, p) === undefined))) return undefined;
+  } else if (t[p]?.kind === "name" && indexed) {
+    start = p;
+  } else if (t[p]?.kind === "num" && indexed) {
+    for (start = p; t[start - 1]?.kind === "num"; start--);
+  } else {
+    return undefined;
+  }
+  if (start < 0 || end - start > 64) return undefined;
+  const inside = t.slice(start, end + 1);
+  // Whole numbers only: a boolean, `(10b)`, a float or a char is no handle.
+  if (
+    !inside.some((k) => k.kind === "num") ||
+    inside.some((k) => k.kind === "sym" || k.kind === "str" || k.text === "{" || (k.kind === "num" && !/^-?\d+[ihj]?$/.test(k.text)) || (k.kind === "name" && !NUMERIC.has(unqualified(k.text))))
+  ) {
+    return undefined;
+  }
+  const value = constant(t, start, end + 1);
+  return value === undefined ? "unread" : value === 0 ? "zero" : undefined;
 }
 
 /// Where the items of the bracket or parenthesis that opens at `t[open]`
@@ -2111,6 +2167,24 @@ function readStatement(statement: string, found: Set<string>): void {
       if (kind === "lambda") {
         locals.pop();
         held.pop();
+      }
+      // A handle computed of numbers, `(1-1)"a:1"`, `abs[0]"a:1"`,
+      // `(0 1)[0]"a:1"`, applied to a string or a list as handle 0 is: one
+      // that comes to 0 is the process itself, and one the guard cannot
+      // work out may be (#2624).
+      const applied =
+        next !== undefined &&
+        (next.kind === "str" ||
+          (next.kind === "open" && next.text === "(") ||
+          (next.kind === "op" && ["@", "."].includes(next.text)) ||
+          (next.kind === "name" && (!INFIX.has(next.text) || next.text === "each" || next.text === "peach")));
+      const handle = applied && k.text !== "}" ? numericHandle(t, i) : undefined;
+      if (handle !== undefined) {
+        const what = evaluates(t, i, true);
+        // (Said once: a 0 picked from a list, `(0;::)[0]"a:1"`, is read as handle 0 already.)
+        if (what !== undefined && !found.has(`evaluates ${what.reason} on handle 0`)) {
+          found.add(`evaluates ${what.reason} on ${handle === "zero" ? "handle 0" : "a handle the guard cannot read"}`);
+        }
       }
       continue;
     }

@@ -2155,3 +2155,20 @@ test("a function named by a symbol cast from a string made at run time, applied,
     assert.deepStrictEqual(writes(code), [], code);
   }
 });
+
+test("a handle computed of numbers and applied to a string or a list is read as handle 0 may be (#2624)", () => {
+  // One that comes to 0 is handle 0.
+  for (const code of ['(1-1)"a:1"', '(0-0)@"a:1"', '(neg 1-1) raze("a:";"1")', '(1-1) each enlist "a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on handle 0"], code);
+  }
+  assert.deepStrictEqual(writes("(1-1)(@;`b;0;:;9)"), ["evaluates an amend on handle 0"]);
+  // One the guard cannot work out may be.
+  for (const code of ['abs[0]"a:1"', 'first[0]"a:1"', '(0 1)[0]"a:1"', '0 1[0]"a:1"', '(abs 0)"a:1"']) {
+    assert.deepStrictEqual(writes(code), ["evaluates a string on a handle the guard cannot read"], code);
+  }
+  // A string that only reads, a handle shown not to be 0, a name (the value
+  // it holds), a list, a projection and a vector are not read as handle 0.
+  for (const code of ['(1-1)"count t"', 'abs[0]"count t"', '(1+1)"a:1"', 'neg[1]"a:1"', 'h"a:1"', '(h)"a:1"', 'h[0]"a:1"', '(hopen 5000)"a:1"', 'f[x]"a:1"', 'ssr[;"a";"b"]"a:1"', 'mod[;2]"a:1"', '(2;2)"a:1"', '(-1_1_)"a:1"', '(10b)"a:1"', '(1-1) in "a:1"']) {
+    assert.deepStrictEqual(writes(code), [], code);
+  }
+});
