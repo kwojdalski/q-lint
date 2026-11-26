@@ -164,6 +164,14 @@ export interface Captured {
   statements: BodyStatement[];
 }
 
+/// The locals of a call that has assigned none yet: a dictionary whose one
+/// entry, under the null symbol, is the generic null. With it the values
+/// stay a general list whatever is kept beside it; one started empty takes
+/// the type of the first atom kept, and keeping a local of another type
+/// then fails with 'type inside the function looked into (#2968). RESTORE
+/// leaves the entry out.
+const NO_LOCALS = "(enlist`)!enlist(::)";
+
 /// `text` (a lambda) made to keep, each time it is called, its arguments in
 /// `.qlint.err.d.args`, the index of the statement it is on in
 /// `.qlint.err.d.at`, and each local a statement assigns at the top of its
@@ -180,7 +188,7 @@ export function localsText(text: string): Captured | undefined {
   const args =
     params.length === 0 ? "(`$())!()" : params.length === 1 ? `(enlist\`${params[0]})!enlist ${params[0]}` : `${params.map((p) => "`" + p).join("")}!(${params.join(";")})`;
   const at: { offset: number; text: string }[] = [
-    { offset: lambda.bodyStart, text: `.qlint.err.d.args:${args};.qlint.err.d.locals:(\`$())!();.qlint.err.d.at:0N;` },
+    { offset: lambda.bodyStart, text: `.qlint.err.d.args:${args};.qlint.err.d.locals:${NO_LOCALS};.qlint.err.d.at:0N;` },
   ];
   statements.forEach((s, k) => {
     at.push({ offset: s.start, text: `.qlint.err.d.at:${k};` });
@@ -205,7 +213,7 @@ export function restoreExpression(ns: "cov" | "err"): string {
     ` s:@[get;\`${n}.saved;()!()];i:@[get;\`${n}.inst;()!()];d:@[get;\`${n}.d;{::}];`,
     // The locals go back as text, as the console prints each on one line,
     // but to 2000 characters whatever its width (#1870).
-    ...(ns === "err" ? [` d:@[{@[x;\`args\`locals;{{2000 sublist ${FULL_TEXT}[2000;x]}each x}]};d;{::}];`] : []),
+    ...(ns === "err" ? [` d:@[{@[x;\`args\`locals;{{2000 sublist ${FULL_TEXT}[2000;x]}each x}]};@[{@[x;\`locals;(enlist\`)_]};d;{::}];{::}];`] : []),
     " kept:{[nm;old;new]$[new~@[get;nm;{::}];[nm set old;0b];1b]}'[key s;value s;i key s];",
     ` .qlint:(enlist\`${ns})_.qlint;`,
     " `kept`d!((`$()),key[s] where kept;d)}[]",
@@ -224,7 +232,7 @@ export function installLambda(ns: "cov" | "err"): string {
   return [
     "{[nms;was;src;d]",
     ` ${n}.saved:(\`$())!();${n}.inst:(\`$())!();`,
-    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}];x+1};' : " .qlint.err.d:`args`locals`at!((`$())!();(`$())!();0N);",
+    ns === "cov" ? ' .qlint.cov.d:("j"$d)#0j;.qlint.cov.hit:{@[{.qlint.cov.d[x]+:1};x;{}];x+1};' : ` .qlint.err.d:\`args\`locals\`at!((\`$())!();${NO_LOCALS};0N);`,
     " r:{[nm;w;s]",
     "  nm:`$nm;old:@[get;nm;{::}];",
     "  if[not 100h=type old;:\"missing\"];",

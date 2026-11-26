@@ -137,6 +137,30 @@ test("the locals capture keeps the arguments and locals up to the error", { skip
   assert.deepStrictEqual(await value(c, "(`ns~first(value .ns.m)3;key[`.qlint]~enlist`)"), [true, true]);
 });
 
+// The locals were kept in a dictionary started empty, which took the type of
+// the first atom kept: a local of another type then failed with 'type
+// inside the function, in place of the error being looked into (#2968).
+test("the locals capture keeps locals of different types, and one assigned again with another (#2968)", { skip }, async (t) => {
+  const { connection: c } = await connect(t, "m:{[x] n:count x; s:`$string n; n:`again; s+1}\nfine:{[x] p:x; q:\"ab\"; p}\n");
+  const capture = async (name, call) => {
+    const was = await value(c, `last value ${name}`);
+    assert.deepStrictEqual(readInstalled(await c.call(installLambda("err"), [name], [was], [localsText(was).text], 0), 1), ["ok"]);
+    const answer = readAnswer(await c.call(RUN, [call], [25, 80]));
+    return { answer, d: readRestored(await c.call(restoreExpression("err"))).d };
+  };
+  const failed = await capture("m", "m 1 2 3");
+  // The function's own error, at its own statement.
+  assert.strictEqual(failed.answer.error, "type");
+  assert.strictEqual(Number(failed.d.at), 3);
+  assert.deepStrictEqual(failed.d.locals, { n: "`again", s: "`3" });
+  const ran = await capture("fine", "fine 5");
+  assert.strictEqual(ran.answer.ok, true, ran.answer.error);
+  assert.deepStrictEqual(ran.d.locals, { p: "5", q: '"ab"' });
+  // A call that assigned nothing has no locals.
+  const none = await capture("fine", "1+1");
+  assert.deepStrictEqual(none.d.locals, {});
+});
+
 // A typed parameter list is the one q reads: the capture goes after it, and
 // keeps each name it binds. Before, the instrumented lambda failed with 'a
 // and captured nothing (#2332).
