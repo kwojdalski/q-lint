@@ -8,10 +8,17 @@ import type { BodyStatement } from "./instrument";
 export const CAPTURE_LOCALS = "q-lint.captureLocals";
 
 /// The functions a backtrace names, innermost first, each once, with where
-/// the frame says it is.
+/// the frame says it is. A frame whose code after `name:` is no lambda - the
+/// failed query's own `res:f 1`, a caller's `r:.Q.trp[...]` - names what
+/// was assigned, not a function (#2412). A lambda's is `{`, or nothing when
+/// q prints it from its second line.
 export function namedFrames(trace: string): { name: string; where: string }[] {
   const out: { name: string; where: string }[] = [];
   for (const frame of parseBacktrace(trace)) {
+    const after = frame.name === undefined ? "" : (frame.code[0] ?? "").replace(/^[^:]*:/, "").trim();
+    if (after !== "" && !after.startsWith("{")) {
+      continue;
+    }
     if (frame.name !== undefined && !out.some((f) => f.name === frame.name)) {
       out.push({ name: frame.name, where: frame.file === undefined ? "" : `${frame.file}:${frame.line}` });
     }

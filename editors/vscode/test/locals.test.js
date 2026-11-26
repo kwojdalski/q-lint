@@ -12,6 +12,14 @@ const { RUN } = require("../out/query.js");
 
 const TRACE = "  [5]  /w/lib.q:5: .ns.m:\n  c:a+b;\n  d+`x}\n   ^\n  [4]  /w/lib.q:9: run:{.ns.m[1;2]}\n            ^\n  [3]  (.Q.trp)\n";
 
+// The failed query's own statement frames name what it assigned: `res` of
+// `res:f 1`, and a caller's `r` of `r:.Q.trp[...]`, are no functions (#2412).
+test("a frame assigning no lambda is not offered as a function (#2412)", () => {
+  assert.deepStrictEqual(namedFrames("  [2]  f:{[x] x+`a}\n             ^\n  [1]  res:f 1\n           ^\n  [0]  res:f 1\n           ^\n"), [{ name: "f", where: "" }]);
+  const trace = "  [5]  /w/lib.q:4: .ns.f:\n  b:a+1;\n  c:b+`x;\n     ^\n  c}\n  [4]  /w/bt.q:2: {.ns.f 1}\n                   ^\n  [3]  (.Q.trp)\n\n  [2]  /w/bt.q:2: r:.Q.trp[{.ns.f 1};::;{.Q.sbt y}];\n                    ^\n";
+  assert.deepStrictEqual(namedFrames(trace), [{ name: ".ns.f", where: "/w/lib.q:4" }]);
+});
+
 test("a backtrace's named functions, and what is shown of a capture", () => {
   assert.deepStrictEqual(namedFrames(TRACE), [
     { name: ".ns.m", where: "/w/lib.q:5" },
