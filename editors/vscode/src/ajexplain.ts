@@ -52,29 +52,36 @@ export interface AjCall {
 }
 
 /// The top-level arguments of a bracketed call starting at `open`, or
-/// undefined when its brackets do not close.
-function args(code: string, open: number): { parts: string[]; end: number } | undefined {
+/// undefined when its brackets do not close. `kinds` is `charKinds(code)`:
+/// a `;` or a bracket in a string or in a comment on one of the call's
+/// lines is not the call's, and a comment is not part of an argument
+/// (#2982).
+function args(code: string, kinds: string, open: number): { parts: string[]; end: number } | undefined {
   const parts: string[] = [];
   let depth = 0;
   let start = open + 1;
+  const part = (end: number) => {
+    let text = "";
+    for (let i = start; i < end; i++) {
+      text += kinds[i] === "m" ? "" : code[i];
+    }
+    return text.trim();
+  };
   for (let i = open; i < code.length; i++) {
     const c = code[i];
-    if (c === '"') {
-      for (i++; i < code.length && code[i] !== '"'; i++) {
-        if (code[i] === "\\") {
-          i++;
-        }
-      }
-    } else if (c === "[" || c === "(" || c === "{") {
+    if (kinds[i] !== "c") {
+      continue;
+    }
+    if (c === "[" || c === "(" || c === "{") {
       depth++;
     } else if (c === "]" || c === ")" || c === "}") {
       depth--;
       if (depth === 0) {
-        parts.push(code.slice(start, i).trim());
+        parts.push(part(i));
         return { parts, end: i };
       }
     } else if (c === ";" && depth === 1) {
-      parts.push(code.slice(start, i).trim());
+      parts.push(part(i));
       start = i + 1;
     }
   }
@@ -82,8 +89,8 @@ function args(code: string, open: number): { parts: string[]; end: number } | un
 }
 
 /// The first `aj[cols;left;right]` or `aj0[...]` call in `code`, its
-/// arguments as written; undefined when there is none. One written in a
-/// comment or a string is not a call (#1914).
+/// arguments as written, less their comments; undefined when there is
+/// none. One written in a comment or a string is not a call (#1914).
 export function findAj(code: string): AjCall | undefined {
   const kinds = charKinds(code);
   for (const m of code.matchAll(/(?:^|[^A-Za-z0-9_.`])(aj0?)\s*\[/g)) {
@@ -91,7 +98,7 @@ export function findAj(code: string): AjCall | undefined {
     if (kinds[open] !== "c") {
       continue;
     }
-    const got = args(code, open);
+    const got = args(code, kinds, open);
     if (got !== undefined && got.parts.length === 3 && got.parts.every((p) => p !== "")) {
       return { fn: m[1] as AjCall["fn"], columns: got.parts[0], left: got.parts[1], right: got.parts[2] };
     }
