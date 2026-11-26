@@ -1610,6 +1610,29 @@ fn a_long_loop_body_lints_in_bounded_time() {
         "a 2000-line loop body took {small:?} and a 16000-line one {large:?}"
     );
 }
+/// A long loop body inside a lambda: the body is one statement, and each
+/// read was placed in the order it runs by walking from that statement's
+/// start, so the loop took time quadratic in its length - 64 s for 16000
+/// lines in a debug build, against 1.6 s for the same loop outside a lambda
+/// (#1010).
+#[test]
+fn a_long_loop_body_in_a_lambda_lints_in_bounded_time() {
+    let time = |n: usize| {
+        let body: String = (0..n).map(|i| format!("    a{i}:x+y*{i};\n")).collect();
+        let source = format!("f:{{[x;y]\n  do[3;\n{body}  ]}}\n");
+        best_of_three(|| lint(&source, "t.q", Profile::Style))
+    };
+    time(1000); // warm the allocator and the regex caches
+    let (small, large) = (time(1000), time(8000));
+    eprintln!("a 1000-line loop in a lambda took {small:?} and an 8000-line one {large:?}");
+    // Quadratic is 64 times; linear is 8. Linear measures 9.0 here (173 ms
+    // and 1.55 s), the walk 34 (332 ms and 11.4 s). 16 still fails a
+    // quadratic walk by four times.
+    assert!(
+        large < small * 16,
+        "a 1000-line loop in a lambda took {small:?} and an 8000-line one {large:?}"
+    );
+}
 /// Many where phrases on one line: each captured, and copied, the rest of
 /// the line, so a line of statements took time quadratic in their number -
 /// 25 s for 8000 in a release build (#1205).
