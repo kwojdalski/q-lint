@@ -8447,7 +8447,14 @@ fn lint_rules(
     // `x**2`, `x=>y`, `x=<y`, `x<<2`, `x|>f`, `x->y`, `x:=1`, `x%%y`,
     // `x<=>y`, `x+++y`. Only before an operand - `a++` and `a**` with nothing
     // after them parse, as compositions, and `x>>2` parses too.
-    for m in re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(code) {
+    //
+    // Read with symbols blanked: a colon is a symbol's own character, so
+    // `` `a:=`b `` compares `` `a: `` with `` `b `` (q 5 gives 0b), and in
+    // `` `a:==b `` the pair q refuses is the `==` after the symbol (#2850).
+    let symbols_blank = unsymbolled(code);
+    for m in
+        re!(r"<=>|\*\*|=>|=<|<<|\|>|->|:=|%%|\+\+|==|!=|&&|\|\||[+\-*]=").find_iter(&symbols_blank)
+    {
         // An `=` applied with brackets is its own token: `c:=[`a;`b]` assigns
         // an equality, and q 5 parses `x+=[1;1]`, `x==[1;1]` and `x:= [1;1]`
         // too - only without the brackets is the pair refused.
