@@ -47,6 +47,10 @@ export interface Parsed {
   process?: string;
   /// Milliseconds since the epoch, the time on the line read as UTC.
   time?: number;
+  /// The time as the line writes it, read as UTC, where that is not `time`:
+  /// a KDB-X error's stamp, which is local. A time filter's bounds are read
+  /// off the line, so they are compared with this (#3043).
+  written?: number;
   /// Where the timestamp is on the line, for colouring.
   timeSpan?: [number, number];
   /// Where the level word is on the line, for colouring.
@@ -174,7 +178,9 @@ export function parseLine(line: string): Parsed {
   }
   m = KDBX_ERROR.exec(line);
   if (m !== null) {
-    return { kind: "q", level: "ERROR", time: localTimeOf(m[1]), timeSpan: [1, 1 + m[1].length], levelSpan: [0, line.length] };
+    const time = localTimeOf(m[1]);
+    const written = timeOf(m[1]);
+    return { kind: "q", level: "ERROR", time, ...(written !== time ? { written } : {}), timeSpan: [1, 1 + m[1].length], levelSpan: [0, line.length] };
   }
   if (line.startsWith("'")) {
     return { kind: "q", level: "ERROR", levelSpan: [0, line.length] };
@@ -229,6 +235,8 @@ export interface Entry {
   level?: Level;
   process: string;
   time?: number;
+  /// The time as its first line writes it, where that is not `time` (#3043).
+  written?: number;
   /// The file it is from.
   file: string;
   kind: Parsed["kind"];
@@ -238,7 +246,8 @@ export interface Entry {
 
 /// What a log view shows: entries of these levels and processes (empty: any),
 /// at or after `from` and at or before `to` (each a full time or a time of
-/// day), and with `text` in a line.
+/// day, held against the time each entry's line writes: a KDB-X error's in
+/// local time, as it is stamped, #3043), and with `text` in a line.
 export interface Filter {
   levels: Level[];
   processes: string[];
@@ -293,7 +302,7 @@ export function matches(entry: Entry, filter: Filter): boolean {
     if (entry.time === undefined) {
       return false;
     }
-    const c = compare(entry.time, bound);
+    const c = compare(entry.written ?? entry.time, bound);
     if (c !== undefined && (after ? c < 0 : c > 0)) {
       return false;
     }
@@ -345,6 +354,7 @@ export class EntryBuilder {
       kind: p.kind === "cont" ? "q" : p.kind,
       ...(p.level ? { level: p.level } : {}),
       ...(p.time !== undefined ? { time: p.time } : {}),
+      ...(p.written !== undefined ? { written: p.written } : {}),
       ...(p.timeSpan ? { timeSpan: p.timeSpan } : {}),
       ...(p.levelSpan ? { levelSpan: p.levelSpan } : {}),
     };

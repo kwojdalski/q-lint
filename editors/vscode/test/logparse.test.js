@@ -75,6 +75,29 @@ test("KDB-X's error stamp is read as local time, beside TorQ's UTC lines (#2595)
   assert.strictEqual(parseLine("'2026.07.01T12:00:00.000 type").time, Date.UTC(2026, 6, 1, 16));
 });
 
+// The bounds are the times the user reads off the lines, and were held
+// against the error's time in UTC: "16:00 to 17:00" hid the 16:24 error.
+test("a time filter's bounds are held against the time a KDB-X error's line writes, its local time (#3043)", (t) => {
+  const tz = process.env.TZ;
+  t.after(() => (tz === undefined ? delete process.env.TZ : (process.env.TZ = tz)));
+  process.env.TZ = "America/New_York";
+  const out = [];
+  const b = new EntryBuilder("/l/err_rdb1.log", (e) => out.push(e));
+  ["2026.11.25D21:24:18.241112000|mac.lan|rdb|rdb1|ERR|init|about to fail", "'2026.11.25T16:24:19.278 type", "  [0] f 1"].forEach((l) => b.push(l));
+  b.flush();
+  const pass = (filter) => out.filter((x) => matches(x, { levels: [], processes: [], ...filter })).map((x) => x.lines[0].slice(0, 12));
+  assert.deepStrictEqual(pass({ from: "16:00", to: "17:00" }), ["'2026.11.25T"]);
+  assert.deepStrictEqual(pass({ to: "2026.11.25D16:30" }), ["'2026.11.25T"]);
+  assert.deepStrictEqual(pass({ from: "2026.11.25D16:24:19", to: "2026.11.25D16:24:20" }), ["'2026.11.25T"]);
+  // TorQ's line is UTC as written, and is filtered as it reads.
+  assert.deepStrictEqual(pass({ from: "21:00", to: "22:00" }), ["2026.11.25D2"]);
+  // The entries are still ordered by when they happened.
+  assert.deepStrictEqual(out.map((x) => [x.time, x.written]), [[Date.UTC(2026, 10, 25, 21, 24, 18, 241), undefined], [Date.UTC(2026, 10, 25, 21, 24, 19, 278), Date.UTC(2026, 10, 25, 16, 24, 19, 278)]]);
+  // Where local time is UTC the line's time is the time: nothing more is kept.
+  process.env.TZ = "UTC";
+  assert.strictEqual("written" in parseLine("'2026.11.25T16:24:19.278 type"), false);
+});
+
 test("times and times of day", () => {
   assert.strictEqual(timeOf("2026.11.21"), Date.UTC(2026, 10, 21));
   assert.strictEqual(timeOf("2026-11-21 08:09"), Date.UTC(2026, 10, 21, 8, 9));
