@@ -2042,7 +2042,7 @@ pub fn load_paths(code: &str, raw: &str) -> Vec<Range<usize>> {
 /// The places a name is reached by a value computed at run time, which no
 /// amount of reading resolves: `value "..."`, `get` of anything but a
 /// literal, a name built with `` ` sv ``, `set` into a computed name, and a
-/// load whose path is concatenated. `view` is the code view with system
+/// load whose path is concatenated or that `value` runs from a string. `view` is the code view with system
 /// commands blanked; `raw` says whether a blank was a string. `call_time`
 /// holds the literal symbols `call_time` says are resolved where the lambda
 /// is called, and the `value`s of a symbol `value_of_symbols` finds, both
@@ -2066,10 +2066,13 @@ fn dynamic(
     }
     let next = |at: usize| view[at..].trim_start_matches([' ', '\t']);
     // Bracketed or parenthesised too: q 5 `value("e5")` is e5 (#538).
+    // The string a `\l`, it is a load no edge follows: KDB-X runs lib.q
+    // for `value "\\l lib.q"` (#2810).
     for m in re!(r"\bvalue\b").find_iter(view) {
-        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(&raw[m.end()..])
-        {
-            push(m.start(), "value");
+        let after = &raw[m.end()..];
+        if boundary(view, m.start()) && re!(r#"^[ \t]*(?:[\[(][ \t]*)?""#).is_match(after) {
+            let loads = re!(r#"^[ \t]*(?:[\[(][ \t]*)?"\\\\l[ \t]"#).is_match(after);
+            push(m.start(), if loads { "load" } else { "value" });
         }
     }
     // `eval` and `reval` run a parse tree, whose names reading cannot see:

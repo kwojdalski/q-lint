@@ -290,7 +290,8 @@ each line where a name is reached by a value computed at run time, which no
 amount of reading resolves: `value` of a string, `get` of anything but a
 literal, `eval` or `reval` of a parse tree, a name built with `` ` sv ``,
 `set` into a computed name, and a
-concatenated `system "l ",path`. `value` is the same function as `get` (q 5:
+concatenated `system "l ",path` or a `value "\\l lib.q"`, both listed as
+`load`. `value` is the same function as `get` (q 5:
 `get~value` is 1b), but it is listed only where the source shows its argument
 is a symbol - `` value `$x ``, `value .Q.dd[...]`, or `value nm` where the
 scope assigns `nm` nothing but a symbol atom - because `value` of a
@@ -1000,8 +1001,8 @@ in the answer is the sent files the index holds, each once; `unindexed` is
 the sent `.q` files it does not hold - deleted, excluded, outside the
 workspace - whose dependents cannot be followed, so a client can say the
 list is short; `dynamic` is the test files not listed that load by a path
-computed at run time (`system "l ",p`), which may run a changed file all the
-same. A test file is a `.q` file named `test_*` or `*_test`, or
+computed at run time (`system "l ",p`) or from a string (`value "\\l lib.q"`),
+or reach a file that does, which may run a changed file all the same. A test file is a `.q` file named `test_*` or `*_test`, or
 under a directory named `test` or `tests` below its workspace folder, which
 is wide on purpose: a helper listed with the tests costs a glance, a test
 left out costs a regression. The limits are the graph's: an edge through a

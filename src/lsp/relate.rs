@@ -149,7 +149,9 @@ fn file_graph(params: &Value, sources: &Sources) -> Value {
 /// cannot be followed: a client says so, where a list that looked complete
 /// would not. `dynamic` is each test file not listed that loads by a path
 /// computed at run time, `system "l ",p`: it has no edge to follow, so it
-/// may run a changed file all the same (#1364). What is not a `.q` file is
+/// may run a changed file all the same (#1364) - and each that reaches a
+/// file loading so, a helper it `\l`s, since what the helper may run the
+/// test runs (#2810). What is not a `.q` file is
 /// passed over, a change to it being nothing this server reads.
 fn affected_tests(params: &Value, sources: &Sources) -> Value {
     let graph = graph_of(sources);
@@ -178,15 +180,16 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
         .collect();
     let reached = graph::reaching(&graph, &changed);
     let is_test = |file: &Path| graph::is_test(&in_workspace(&roots, file));
+    let loading = loading_unseen(&graph);
     let dynamic: Vec<String> = graph
-        .iter()
-        .filter(|(file, node)| {
+        .keys()
+        .filter(|file| {
             !(spelled.is_empty() && unindexed.is_empty())
                 && !reached.contains_key(*file)
-                && node.dynamic.iter().any(|d| d.kind == "load")
+                && loading.contains(file.as_path())
                 && is_test(file)
         })
-        .map(|(file, _)| uri_of(sources, file))
+        .map(|file| uri_of(sources, file))
         .collect();
     let tests: Vec<Value> = reached
         .iter()
@@ -200,6 +203,32 @@ fn affected_tests(params: &Value, sources: &Sources) -> Value {
         })
         .collect();
     json!({"tests": tests, "changed": spelled, "unindexed": unindexed, "dynamic": dynamic})
+}
+
+/// Each file of `graph` that may run one the graph has no edge to: one that
+/// loads by a path computed at run time, and every file reaching one of
+/// those along the edges, each walked once.
+fn loading_unseen(graph: &BTreeMap<PathBuf, Node>) -> HashSet<&Path> {
+    let mut dependents: HashMap<&Path, Vec<&Path>> = HashMap::new();
+    for (file, node) in graph {
+        for dependency in &node.dependencies {
+            dependents.entry(dependency).or_default().push(file);
+        }
+    }
+    let mut pending: Vec<&Path> = graph
+        .iter()
+        .filter(|(_, node)| node.dynamic.iter().any(|d| d.kind == "load"))
+        .map(|(file, _)| file.as_path())
+        .collect();
+    let mut seen: HashSet<&Path> = pending.iter().copied().collect();
+    while let Some(file) = pending.pop() {
+        for &dependent in dependents.get(file).into_iter().flatten() {
+            if seen.insert(dependent) {
+                pending.push(dependent);
+            }
+        }
+    }
+    seen
 }
 
 /// `file` as `graph::is_test` wants it: below the workspace folder it is in,
