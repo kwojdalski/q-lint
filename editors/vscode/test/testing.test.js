@@ -373,9 +373,14 @@ test("a failed before row's q error reaches the output terminal with CRLF line e
   vscode.workspace.fs = { readFile: async () => Buffer.from(csv) };
   const live = fakeLive();
   const run = live.runOnActive;
+  const failing = (answer) => (answer.ok ? answer : { ok: false, failed: true, text: "no db at /data/hdb\nload it first\u001b[2J" });
   live.runOnActive = (code, query) =>
     run.call(live, code, (connection) =>
-      query({ call: async (...args) => ((await connection.call(...args)).ok ? { ok: true, failed: false, text: "1b" } : { ok: false, failed: true, text: "no db at /data/hdb\nload it first\u001b[2J" }) }),
+      query({
+        ...connection,
+        call: async (...args) => failing(await connection.call(...args)),
+        guarded: async (...args) => failing(await connection.guarded(...args)),
+      }),
     );
   const explorer = registerTestExplorer(stub.newContext(), live, () => undefined);
   await explorer.discover();
