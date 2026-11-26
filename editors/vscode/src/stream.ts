@@ -34,11 +34,15 @@ export function readStream(get: <T>(key: string, fallback: T) => T): StreamSetti
 
 /// What subscribes to one table: the table's name back, its columns and
 /// their types.
-export const SUBSCRIBE = "{r:.u.sub[x;`]; (r 0; cols r 1; exec t from meta r 1)}";
+/// TorQ's STP refuses a table it does not publish by answering its reason
+/// as the schema, a string, which is signalled (#2586).
+export const SUBSCRIBE = "{r:.u.sub[x;`]; if[10h=type last r;'last r]; (r 0; cols r 1; exec t from meta r 1)}";
 
 /// What lists the tables a tickerplant publishes: an expression, sent as a
-/// string for the process to evaluate.
-export const TABLES = "$[`t in key `.u; .u.t; tables`.]";
+/// string for the process to evaluate. TorQ's STP and chained tickerplant
+/// keep theirs in pubsub.q's `.stpps.t`, not among their own tables such as
+/// the STP's `currlog` (#2586).
+export const TABLES = "$[`t in key `.u; .u.t; `t in key `.stpps; (),.stpps.t; tables`.]";
 
 /// The rows an update of `table` carries, each a row of q's text of its
 /// cells in `columns` order, or undefined when `q` is not an update of
