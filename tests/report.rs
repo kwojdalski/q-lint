@@ -309,6 +309,28 @@ fn output_file_is_never_written_by_a_refused_run_or_over_an_input() {
     assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), TWO);
 }
 
+/// `--output-file a.q b.q` is `--output-file` with a path to lint taken for
+/// its value: `a.q` is no input, so nothing refused it and the report on
+/// `b.q` replaced it (#2764). A name that looks like source is refused, as
+/// `--write-baseline` refuses one, and nothing is written.
+#[test]
+fn output_file_is_never_named_as_q_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::write(d.join("a.q"), "f:{x+1}\n").unwrap();
+    fs::write(d.join("b.q"), TWO).unwrap();
+    let (status, _, err) = run(d, &["--output-file", "a.q", "b.q"]);
+    assert_eq!(status, Some(2), "{err}");
+    assert!(err.contains("a report is not q source"), "{err}");
+    assert_eq!(fs::read_to_string(d.join("a.q")).unwrap(), "f:{x+1}\n");
+    for name in ["new.q", "new.K", "new.qnb"] {
+        let (status, _, err) = run(d, &["--output-file", name, "b.q"]);
+        assert_eq!(status, Some(2), "{name}: {err}");
+        assert!(err.contains("a report is not q source"), "{name}: {err}");
+        assert!(!d.join(name).exists(), "{name}");
+    }
+}
+
 /// An editor, and GitHub's file view, hide a leading BOM and count no column
 /// for it, so every report places line 1 as it does: `{` of `f:{[count] 1}`
 /// at column 3 and `==` at 16-18, with or without a BOM before them. QE005,

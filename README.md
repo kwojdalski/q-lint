@@ -232,7 +232,10 @@ the one the run would give without it, and messages still go to standard
 error. Text written to a file is never coloured. A file the run reads is
 never the one it writes: one reached through a symlink or a hard link, or by
 another case of its name on a disk that ignores case, and the file
-`--stdin-filename` names, are refused with exit 2 and left as they were.
+`--stdin-filename` names, are refused with exit 2 and left as they were. So
+is a name that ends `.q`, `.k` or `.qnb`, read or not: `--output-file a.q b.q`
+is a path to lint taken for the flag's value far more often than a report
+meant for `a.q`.
 
 ### The dependency graph: `qlinter analyze graph`
 

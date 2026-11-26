@@ -358,6 +358,14 @@ fn reached(walked: &Path, link: &Path) -> bool {
     }
 }
 
+/// Whether a file a flag writes is named as q source is: `.q`, `.k` or `.qnb`.
+/// A run never writes one, read or not - the name is far more often a path
+/// to lint that the flag took for its value than a file meant for it.
+fn named_as_source(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
 /// Whether a path names q source.
 ///
 /// The extension, and nothing else: this runs before the file is opened, and
@@ -736,13 +744,21 @@ fn run(args: Args) -> Result<u8, String> {
     }
     refuse_overwrite("--output-file", args.output_file.as_deref(), &inputs)?;
     refuse_overwrite("--write-baseline", args.write_baseline.as_deref(), &inputs)?;
-    if let Some(file) = &args.write_baseline
-        && file
-            .extension()
-            .is_some_and(|e| ["q", "k", "qnb"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    if let Some(file) = args
+        .write_baseline
+        .as_deref()
+        .filter(|f| named_as_source(f))
     {
         return Err(format!(
             "--write-baseline {}: a baseline is JSON, not q source; name it as one, such as qlinter-baseline.json",
+            file.display()
+        ));
+    }
+    // The same slip with `--output-file a.q b.q`: `a.q` is the flag's
+    // value, no input, and was replaced by the report on `b.q` (#2764).
+    if let Some(file) = args.output_file.as_deref().filter(|f| named_as_source(f)) {
+        return Err(format!(
+            "--output-file {}: a report is not q source; name it as one, such as report.txt",
             file.display()
         ));
     }
