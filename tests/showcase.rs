@@ -103,22 +103,22 @@ fn examples_cover_all_available_rules() {
 /// QF006 runs in a Python hook, and QLS001 comes only from qls.
 const NOT_SHOWN: [&str; 2] = ["QF006", "QLS001"];
 
-/// The README states how many codes the taxonomy holds and how many the
-/// examples cover. Counts nobody checks go stale: they said 88 and 86 while
+/// `docs/development.md` states how many codes the taxonomy holds and how
+/// many the examples cover. Counts nobody checks go stale: they said 88 and 86 while
 /// the taxonomy held 119 (#428).
 #[test]
-fn the_readme_rule_counts_match_the_taxonomy() {
-    let readme = include_str!("../README.md")
+fn the_documented_rule_counts_match_the_taxonomy() {
+    let readme = include_str!("../docs/development.md")
         .replace("\r\n", "\n")
         .replace('\n', " ");
     let count = |before: &str, after: &str| -> usize {
         let start = readme
             .find(before)
-            .unwrap_or_else(|| panic!("README lost `{before}`"));
+            .unwrap_or_else(|| panic!("docs/development.md lost `{before}`"));
         let rest = &readme[start + before.len()..];
         let end = rest
             .find(after)
-            .unwrap_or_else(|| panic!("README lost `{after}`"));
+            .unwrap_or_else(|| panic!("docs/development.md lost `{after}`"));
         rest[..end].trim().parse().unwrap()
     };
     assert_eq!(count("The taxonomy contains", "codes."), RULES.len());
@@ -136,7 +136,7 @@ fn the_readme_rule_counts_match_the_taxonomy() {
     let word = ["no", "one", "two", "three", "four", "five", "six"][companions];
     assert!(
         readme.contains(&format!("the {word} companion examples")),
-        "README should say `the {word} companion examples`"
+        "docs/development.md should say `the {word} companion examples`"
     );
     let excluded = NOT_SHOWN.join(" and ");
     assert!(

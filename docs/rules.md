@@ -30,7 +30,7 @@ against real q and refused, with the numbers.
 
 | profile | reports |
 |---|---|
-| `general` | only what q refuses to run |
+| `general` | only what q refuses to parse or run |
 | `style` | `general`, plus q that runs and is wrong |
 | `styleq` | `style`, plus the published style-guide conventions |
 | `uqf` | every rule a profile turns on - the default |

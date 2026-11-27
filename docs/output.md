@@ -69,5 +69,5 @@ line, with an object for each path in the order they were given:
 `--format sarif` and `--format github` report findings, and are refused here
 as `--rules` and `--explain` refuse them.
 
-`--format sarif` and `--format github` are described in the README's
-[Reports for CI](../README.md#reports-for-ci).
+`--format sarif` and `--format github` are described in
+[cli.md](cli.md#output).

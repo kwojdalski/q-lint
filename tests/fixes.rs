@@ -337,7 +337,7 @@ fn a_file_whose_structure_does_not_close_is_not_fixed() {
 }
 
 /// Each rule's rewrite: the code, a source, what its fix leaves, and
-/// whether `--fix` applies it unattended. The README's two lists of fixes
+/// whether `--fix` applies it unattended. The two lists of fixes in `docs/cli.md`
 /// are checked against it, and it against the rules that have a fix.
 const FIX_CASES: &[(&str, &str, &str, bool)] = &[
     (
@@ -2557,12 +2557,12 @@ fn rules_with_a_fix() -> std::collections::BTreeSet<String> {
     rules
 }
 
-/// The rule codes the README names in the paragraph that begins `opening`.
+/// The rule codes `docs/cli.md` names in the paragraph that begins `opening`.
 fn readme_codes(opening: &str) -> std::collections::BTreeSet<String> {
-    let readme = include_str!("../README.md").replace("\r\n", "\n");
+    let readme = include_str!("../docs/cli.md").replace("\r\n", "\n");
     let from = readme
         .find(opening)
-        .unwrap_or_else(|| panic!("README lost `{opening}`"));
+        .unwrap_or_else(|| panic!("docs/cli.md lost `{opening}`"));
     let paragraph = &readme[from..from + readme[from..].find("\n\n").unwrap()];
     regex::Regex::new(r"\bQ[A-Z]\d{3}\b")
         .unwrap()
@@ -2571,13 +2571,13 @@ fn readme_codes(opening: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-/// The README's two lists of fixes are what `--fix` and the editor do: a
+/// The two lists of fixes in `docs/cli.md` are what `--fix` and the editor do: a
 /// rule is in "Batch fixing handles" when a fix of its is batch-safe, and in
 /// the editor-only list when one is not - QR003's, once listed as batch,
 /// has been editor-only since #1201 (#2260). And every rule with a fix has
 /// a row in `FIX_CASES`, so neither list can leave one out unseen.
 #[test]
-fn the_readme_lists_each_fix_where_fix_applies_it() {
+fn the_cli_doc_lists_each_fix_where_fix_applies_it() {
     use std::collections::BTreeSet;
     let rules = rules_with_a_fix();
     let tested: BTreeSet<String> = FIX_CASES.iter().map(|c| c.0.to_string()).collect();

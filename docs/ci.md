@@ -39,7 +39,8 @@ jobs:
 ```
 
 `paths` is space-separated and defaults to `.`; `args` takes any other
-option. The step fails when there are findings.
+option. `version`, the qlinter release to run, is required. The step fails
+when there are findings.
 
 ### Code scanning (SARIF)
 
@@ -117,7 +118,7 @@ job's exit code; the first only writes the report.
 
 The hooks lint the `.q` files a commit changes. `qlinter` builds the linter
 at `rev` with cargo, so it needs Rust; `qlinter-system` runs the `qlinter`
-already on `PATH`:
+already on `PATH`. `rev` is a release tag, v0.34.0 or later:
 
 ```yaml
 repos:
