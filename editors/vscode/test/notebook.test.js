@@ -468,7 +468,7 @@ test("export: a / and a no-break space or a form feed is a line comment, as q re
 });
 
 test("fields this extension does not know are kept on an output, an item and a run too", () => {
-  // Saved by a later q-lint, or another tool: the README promises a save of
+  // Saved by a later q-lint, or another tool: docs/vscode/notebooks.md promises a save of
   // what was opened writes the same file.
   const file = {
     qnb: 1,

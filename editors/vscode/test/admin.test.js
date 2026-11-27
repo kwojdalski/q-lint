@@ -1,7 +1,8 @@
 // The connection and process-admin switches (#1032-#1041) held against
-// package.json and the README: each feature's own enable setting, declared
-// with the default admin.ts reads, in the README's settings table, its
-// commands all declared, and none restarting the language server.
+// package.json and the docs: each feature's own enable setting, declared
+// with the default admin.ts reads, in the switch table of
+// docs/vscode/processes.md (which the README links), its commands all
+// declared, and none restarting the language server.
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
@@ -11,6 +12,7 @@ const { ADMIN_COMMANDS, ADMIN_SETTINGS, ADMIN_VIEWS, adminOff, readAdmin } = req
 const { needsRestart } = require("../out/settings.js");
 
 const section = pkg.contributes.configuration.find((c) => c.title === "q-lint: process admin");
+const doc = fs.readFileSync(path.join(__dirname, "..", "..", "..", "docs", "vscode", "processes.md"), "utf8");
 const readme = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
 
 test("each feature has its own boolean switch, declared with the default it is read with", () => {
@@ -32,9 +34,10 @@ test("each feature has its own boolean switch, declared with the default it is r
   assert.deepStrictEqual(readAdmin(() => "false"), readAdmin((_k, f) => f));
 });
 
-test("every setting is in the README's settings table, and none restarts the server", () => {
+test("every setting is in the process docs' switch table, which the README links, and none restarts the server", () => {
+  assert.ok(readme.includes("https://github.com/kwojdalski/q-lint/blob/master/docs/vscode/processes.md"), "the README does not link docs/vscode/processes.md");
   for (const key of Object.keys(section.properties)) {
-    assert.ok(readme.includes(`| \`${key}\` |`), `${key} is not in the README's settings table`);
+    assert.ok(doc.includes(`| \`${key}\` |`), `${key} is not in docs/vscode/processes.md's switch table`);
     const affects = (s) => key === s || key.startsWith(`${s}.`);
     assert.strictEqual(needsRestart(affects), false, key);
   }
