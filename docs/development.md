@@ -6,7 +6,7 @@
 cargo test                                            # unit, CLI, LSP and corpus suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
-cargo build --release                                 # the checks below need it
+cargo build --release                                 # target/release/qlinter; the checks below need it
 cargo test --release --test never_panic -- --ignored  # no panic on any mutated q in the tree
 uv run --with pytest --with pyyaml pytest tests       # black-box CLI and packaging checks
 python3 scripts/check_invariance.py target/release/qlinter examples tests/corpus tests/cases
