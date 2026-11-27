@@ -85,9 +85,17 @@ export const TREE_NODES = 2000;
 /// The name results cut at their limit are held under for paging (#922):
 /// a dictionary from each client's handle to the token of its last such
 /// result and the table, so a client pages only its own result, and only
-/// the one it was given the token for (#2128). Entries of handles closed
-/// since are dropped at each hold.
+/// the one it was given the token for (#2128). A handle's entry is dropped
+/// when it closes, by the `.z.pc` that `HELD_PC` names (#2531), and entries
+/// of handles closed since are dropped at each hold too.
 export const HELD = ".qlint.held";
+
+/// The `.z.pc` a hold installs, kept under this name so the next hold knows
+/// it is in place: it drops the closing handle's entry from `HELD`, then
+/// calls the `.z.pc` the process had, which it wraps rather than replaces.
+/// A `.z.pc` set since, by the process's own code, is wrapped in turn at
+/// the next hold (#2531).
+export const HELD_PC = ".qlint.heldpc";
 
 /// Whether `token` can be written into q as a string literal as it is: a
 /// result's hold token, which `newHoldToken` makes.
@@ -130,7 +138,8 @@ const COLUMN_LINES = [
 /// on, so nothing else sends its code. With `hold`, a token, a table cut
 /// at its limit is kept on the process in `HELD` for this client under
 /// that token, for `PAGE` to send more of, and this client's entry is
-/// dropped when it is not cut: only the result panel asks for that, while
+/// dropped when it is not cut or its connection closes (`HELD_PC`, which
+/// wraps the process's `.z.pc`): only the result panel asks for that, while
 /// `q-lint.results.paging.enable` is on. `readOnly`: the statements are
 /// evaluated under `reval` (`trapLines`); what shapes the value is not.
 export function gridLambda(tree: boolean, hold?: string, readOnly = false): string {
@@ -159,6 +168,7 @@ export function gridLambda(tree: boolean, hold?: string, readOnly = false): stri
     ? [
         `        h:@[value;\`${HELD};()!()];h:$[99h=type h;@[{(key[x] inter key .z.W)#x};h;h];()!()];`,
         `        ${HELD}:$[(n>0)&m>n;h,(enlist .z.w)!enlist(${holdLiteral(hold)};t);(enlist .z.w)_h];`,
+        `        if[(n>0)&m>n;o:@[value;\`.z.pc;{::}];if[not o~@[value;\`${HELD_PC};0b];.z.pc:${HELD_PC}:{[f;w]@[{${HELD}:(enlist x)_${HELD}};w;{}];f w}$[(::)~o;{};o]]];`,
       ]
     : []),
   "        y:$[p:1b~.Q.qp t;();type each $[count[cols t]=count distinct cols t;t cols t;value flip t]];",

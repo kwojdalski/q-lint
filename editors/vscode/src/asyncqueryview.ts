@@ -12,7 +12,7 @@ import { StatusBarAlignment, commands, window, workspace, type Disposable, type 
 import { ADMIN_COMMANDS, adminOff, readAdmin } from "./admin";
 import { ASYNC, ASYNC_READ_ONLY, readAsyncMessage, textPayload } from "./asyncquery";
 import { refusalReason } from "./guard";
-import { refusedByReval } from "./query";
+import { revalRefusal } from "./query";
 import { elapsedText } from "./progress";
 import type { Live } from "./live";
 import { readLive } from "./liveconfig";
@@ -186,8 +186,8 @@ export class AsyncQueries {
       // and Run Query is the way to be asked to run it anyway.
       void window.showWarningMessage(
         plainMessage(
-          p.guarded && refusedByReval(answer.error)
-            ? `q-lint: the asynchronous query was not run: ${refusalReason(p.process, answer.error)} Run Query asks whether to run it anyway.`
+          p.guarded && revalRefusal(answer.error, answer.trace) !== undefined
+            ? `q-lint: the asynchronous query was not run: ${refusalReason(p.process, revalRefusal(answer.error, answer.trace) ?? answer.error)} Run Query asks whether to run it anyway.`
             : `q-lint: the asynchronous query on ${p.process} failed: '${answer.error}`,
         ),
       );

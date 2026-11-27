@@ -232,3 +232,38 @@ test("! passed as a value with -11 or -19 is held, and replays or compresses onc
   await heldThenWrites(send, read, "!/[-11;`:lg]", "n=6");
   await heldThenWrites(send, read, ".[!;(-19;(`:lg;`:lgz;17;2;6))]", "`lgz in key `:.");
 });
+
+test("code whose own trap catches reval's refusal and fails in its handler is asked about with q's error, held when declined, and runs once let through (#3170)", { skip }, async (t) => {
+  const q = await startQ(t, "f:{value x}\n");
+  const { read } = await setUp(t, q.port);
+  const code = '.Q.trp[f;"k3:1";::]';
+  vscode.window.activeTextEditor = {
+    document: { uri: vscode.Uri.file("/w/a.q"), lineAt: () => ({ text: code }), getText: () => code },
+    selection: { active: { line: 0 }, isEmpty: true },
+  };
+  const refusal = /^Refused by the read-only evaluation of prod: 'type, raised where \.Q\.trp called the code's handler, as it does with what reval refuses\. Run it anyway\?$/;
+  for (const [answer, defined] of [[undefined, "0b"], ["Run Anyway", "1b"]]) {
+    stub.messages = [];
+    stub.picks.push(answer);
+    await stub.commands.get("q-lint.queryCurrentLine")();
+    stub.picks = [];
+    assert.ok(stub.messages.some(([kind, text]) => kind === "warning" && refusal.test(text)), JSON.stringify(stub.messages));
+    assert.strictEqual(await read("`k3 in key `."), defined);
+  }
+});
+
+test("a computed handle 0, a lambda a .Q function applies, and a lambda made of a string and applied are held, and write once let through (#2624, #2628, #2635)", { skip }, async (t) => {
+  const q = await startQ(t, "\n");
+  const { send, read } = await setUp(t, q.port);
+  // A handle computed of numbers (#2624).
+  await heldThenWrites(send, read, '(1-1)"h1:1"', "`h1 in key `.");
+  await heldThenWrites(send, read, 'abs[0]"h2:1"', "`h2 in key `.");
+  await heldThenWrites(send, read, '(0 1)[0]"h3:1"', "`h3 in key `.");
+  // A lambda .Q.trp, .Q.ts or .Q.sp applies to the data it is given (#2628).
+  await heldThenWrites(send, read, '.Q.trp[{value x};"k3:1";::]', "`k3 in key `.");
+  await heldThenWrites(send, read, '.Q.ts[{get x};enlist"k10:1"]', "`k10 in key `.");
+  await heldThenWrites(send, read, '.Q.sp[{value x};enlist"k4:1"]', "`k4 in key `.");
+  // A lambda in a string, made and applied (#2635).
+  await heldThenWrites(send, read, '(get"{.[x;();:;1]}")`z3', "`z3 in key `.");
+  await heldThenWrites(send, read, '(eval parse"{.[x;();:;1]}")`z4', "`z4 in key `.");
+});
