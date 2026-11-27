@@ -182,6 +182,14 @@ test("notebook cells against a real q process", { skip }, async (t) => {
     assert.deepStrictEqual((await data("([] s:(\"ab\";\"\u00e9\"))")).table.data, [["ab", "\u00e9"]]);
   });
 
+  await t.test("a column name with a byte past UTF-8 is its Latin-1 text, not U+FFFD (#2467)", async () => {
+    const answer = await data('flip (`$("a";"caf\\351";"\\303\\251t\\303\\251"))!(1 2;3 4;5 6)');
+    assert.deepStrictEqual(answer.table.columns, ["a", "caf\u00e9", "\u00e9t\u00e9"]);
+    assert.deepStrictEqual(answer.table.data, [["1", "2"], ["3", "4"], ["5", "6"]]);
+    // Plain names come as before.
+    assert.deepStrictEqual((await data("([] a:1 2; b:3 4)")).table.columns, ["a", "b"]);
+  });
+
   await t.test("a table with two columns of one name keeps both, as q shows them", async () => {
     // A keyed table may name a value column as its key column.
     const keyed = await data("([a:1 2] a:3 4)");

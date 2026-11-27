@@ -16,7 +16,7 @@ import * as tls from "node:tls";
 import { deserialize, serialize } from "node-q/lib/c.js";
 import { checkedBody } from "./qdecode";
 import { GRID, GRID_READ_ONLY, GRID_TREE, GRID_TREE_READ_ONLY, gridLambda, readGridAnswer, type GridAnswer } from "./grid";
-import { EVALUATE, EVALUATE_READ_ONLY, NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, refusedByReval, type Answer, type Evaluate } from "./query";
+import { EVALUATE, EVALUATE_READ_ONLY, NO_REVAL, RUN, RUN_READ_ONLY, readAnswer, revalRefusal, type Answer, type Evaluate } from "./query";
 
 /// The process answered with an error (`'msg`), as against the connection
 /// failing: the query ran, and this is what it gave.
@@ -49,6 +49,15 @@ export function directRefusal(mode: DirectMode): string {
 
 /// A call refused on a direct connection: nothing was sent.
 export class DirectRefused extends Error {}
+
+/// An answer the codec cannot make a value of: it holds a string past the
+/// longest V8 makes (0x1fffffe8 characters), which the codec makes of every
+/// char vector. The message is whole, and `evaluate` answers it with no
+/// codec value, for `qdecode.ts` to read: it keeps chars as bytes (#2583).
+export class TooLongForCodec extends Error {}
+
+/// Whether `error` is V8's refusal of a string too long to make.
+const stringTooLong = (error: unknown): boolean => error instanceof Error && (error as { code?: unknown }).code === "ERR_STRING_TOO_LONG";
 
 export interface Target {
   host: string;
@@ -327,7 +336,7 @@ export class QConnection {
   /// `reval` twin `readOnly`, and read the answer with `read`. A process
   /// without `reval` is sent `plain` instead, and `noReval` set; a refusal
   /// is kept in `refused`.
-  async trapped<T extends { ok: true } | { ok: false; error: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
+  async trapped<T extends { ok: true } | { ok: false; error: string; trace?: string }>(plain: string, readOnly: string, read: (raw: unknown) => T, ...args: unknown[]): Promise<T> {
     if (this.readOnly && !this.noReval) {
       let answer = read(await this.call(readOnly, ...args));
       // A partitioned table's first count caches into `.Q.PN`, which
@@ -342,7 +351,7 @@ export class QConnection {
       // so no error turns the backstop off (#2638).
       if (answer.ok || answer.error !== NO_REVAL || (await this.call("`reval in key`.q")) === true) {
         if (!answer.ok) {
-          this.noteRefusal(answer.error);
+          this.noteRefusal(answer.error, answer.trace);
         }
         return answer;
       }
@@ -389,10 +398,12 @@ export class QConnection {
   }
 
   /// Keep `error` in `refused` when it is `reval` refusing what `readOnly`
-  /// sent; the first one stays.
-  noteRefusal(error: string): void {
-    if (this.readOnly && this.refused === undefined && refusedByReval(error)) {
-      this.refused = error;
+  /// sent, by its text or, with its backtrace `trace`, by where it was
+  /// raised (`revalRefusal`); the first one stays.
+  noteRefusal(error: string, trace?: string): void {
+    const refused = this.readOnly && this.refused === undefined ? revalRefusal(error, trace) : undefined;
+    if (refused !== undefined) {
+      this.refused = refused;
     }
   }
 
@@ -400,7 +411,8 @@ export class QConnection {
   /// for the process to evaluate as its `.z.pg` does (`value`, unless it is
   /// set): nothing of ours runs there. Resolves with the value as the codec
   /// decodes it, its q type and the message it came in; rejects with a
-  /// `QError` for a q error.
+  /// `QError` for a q error. A value the codec cannot make, of a string
+  /// past V8's longest, is undefined, its message still there (#2583).
   async evaluate(text: string): Promise<{ value: unknown; type: number | undefined; message?: Buffer }> {
     const body = Buffer.from(text, "utf8");
     // A char vector (type 10, no attribute, its length), built here: the
@@ -412,7 +424,15 @@ export class QConnection {
     message.writeInt8(10, 8);
     message.writeUInt32LE(body.length, 10);
     body.copy(message, 14);
-    const value = await this.send(message);
+    let value: unknown;
+    try {
+      value = await this.send(message);
+    } catch (error) {
+      if (!(error instanceof TooLongForCodec)) {
+        throw error;
+      }
+      value = undefined;
+    }
     return { value, type: this.answerType, message: this.answerMessage };
   }
 
@@ -573,7 +593,15 @@ export class QConnection {
             : error instanceof Error
               ? error.message
               : String(error);
-        pending.reject(this.answerType === -128 ? new QError(text) : error instanceof Error ? error : new Error(text));
+        pending.reject(
+          this.answerType === -128
+            ? new QError(text)
+            : stringTooLong(error)
+              ? new TooLongForCodec(text)
+              : error instanceof Error
+                ? error
+                : new Error(text),
+        );
       }
     }
   }

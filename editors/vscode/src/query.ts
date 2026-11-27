@@ -99,6 +99,47 @@ export function refusedByReval(error: string): boolean {
   return /^(noupdate|access)\b/.test(error) || error === "sys" || error === "restricted";
 }
 
+/// The trap whose own frame tops `trace`, a failure's backtrace as
+/// `trapLines` answers it, when the error was raised there: `.Q.trp` or
+/// `.Q.trpd` (`  [6]  (.Q.trp)`), or `-105!` with the caret at its `!` -
+/// not `a-105!x`, a subtraction.
+/// Undefined otherwise.
+function trapAtTop(trace: string): string | undefined {
+  const [frame, caret] = trace.split("\n");
+  const at = /^\s*\[\d+\]\s+/.exec(frame ?? "");
+  if (at === null) {
+    return undefined;
+  }
+  const text = frame.slice(at[0].length);
+  const named = /^\((\.Q\.trpd?)\)\s*$/.exec(text);
+  if (named !== null) {
+    return named[1];
+  }
+  const col = caret === undefined ? -1 : caret.indexOf("^") - at[0].length;
+  return col >= 4 && text[col] === "!" && /(^|[^\w.)\]}])-105\s*$/.test(text.slice(0, col)) ? "-105!" : undefined;
+}
+
+/// What `reval` refused, from a statement's failure under it - its
+/// `error` and backtrace `trace` - or undefined for an error it did not
+/// cause: q's own refusal (`refusedByReval`), or an error raised by a trap
+/// in the code - `.Q.trp`, `.Q.trpd`, `-105!` - where it applied the code's
+/// handler (#3170). Such a trap catches `reval`'s refusal and gives its
+/// handler the error and the backtrace, so a handler of the wrong kind
+/// fails there - `::` with `'type`, `{x}` with `'rank` - where sent
+/// directly the code runs and the handler is never called. The trap cannot
+/// say what it caught, so a handler failing on an error of the code's own
+/// is taken for a refusal too: confirmed, it is sent once as it is and
+/// fails there the same way. The error is said as q raised it, with where.
+/// An error raised anywhere else - by code with no such trap - is the
+/// code's own and no refusal.
+export function revalRefusal(error: string, trace = ""): string | undefined {
+  if (refusedByReval(error)) {
+    return error;
+  }
+  const trap = trapAtTop(trace);
+  return trap === undefined ? undefined : `${error}, raised where ${trap} called the code's handler, as it does with what reval refuses`;
+}
+
 export type Answer =
   | { ok: true; type: number; text: string[] }
   | { ok: false; error: string; trace: string; context?: string };
