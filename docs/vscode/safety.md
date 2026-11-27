@@ -4,6 +4,24 @@ What the q-lint VS Code extension sends to a q process, and the controls
 around it. The [extension README](../../editors/vscode/README.md#safety)
 has the summary.
 
+## At a glance
+
+- **Read-only guard**: code sent to a process tagged `prod`, `prd` or
+  `production` (`q-lint.processes.readOnlyGuard.tags`) is read first, and a
+  modal asks before anything that would change the process. Code it reads
+  as read-only runs under q's `reval`, so a write it missed is refused.
+- **Wrapped and direct evaluation**: q-lint normally sends code inside a
+  small lambda, which gives backtraces, q's formatting and `reval`. For a
+  process that refuses a lambda, **Set Process Evaluation** to `direct`
+  (or **Toggle Unwrapped Query** for every process) sends plain strings.
+- **Restricted Mode**: in an untrusted folder, linting still works.
+  Settings that name a program, the server's arguments or the guard come
+  from your user settings only, the folder's `.env` and q binaries are
+  ignored, and git is not run.
+- **Feature switches**: every feature has its own `enable` setting. Off
+  means hidden, unregistered and sending nothing. Features that act on
+  their own are off by default.
+
 ## What is sent, and when
 
 - **The linter sends nothing.** Linting, Quick Fixes, navigation, hovers and

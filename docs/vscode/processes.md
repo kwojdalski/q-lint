@@ -2,8 +2,7 @@
 
 Reference for the q-lint VS Code extension's process list: the file format,
 discovery servers, the shared list, and how a connection is made. The
-[extension README](../../editors/vscode/README.md) covers what each command
-does.
+[queries page](queries.md) covers what each command does.
 
 ## The process list format
 

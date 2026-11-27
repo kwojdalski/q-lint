@@ -5,6 +5,27 @@ directives, the file format, running from a shell, and git. The
 [extension README](../../editors/vscode/README.md#notebooks) has the
 summary.
 
+## At a glance
+
+A `.qnb` file is a notebook of q and Markdown cells, run on the active
+connection. **New q Notebook** creates one.
+
+- Directives on a cell's first lines: `/ @grid`, `/ @chart line` (with
+  `/ @title` and `/ @height`), `/ @process <label>` and `/ @parameters`.
+  **Set Notebook Row Limit** caps what a grid or chart shows.
+- `{{q: expr}}` in Markdown shows a live value. The **Notebook Variables**
+  view lists the process's globals.
+- **Restart Notebook Process and Run All** restarts a process q-lint
+  started and runs every cell.
+- **Run Notebook with Parameters** writes a run to a new `.qnb`, HTML or
+  Jupyter file. `out/qnbrun.js` does the same from a shell.
+- **Export Notebook as HTML**, **Export Notebook as Jupyter Notebook**,
+  **Export Notebook as q Script** and
+  **Import Jupyter Notebook as q Notebook**.
+- **Compare Notebook Cells...** diffs cells without their outputs.
+  **Clear Notebook Outputs in File** and
+  **Set Up Git to Strip Notebook Outputs...** keep outputs out of commits.
+
 ## Running cells
 
 Cells run on the active connection, one at a time, in order; a run of

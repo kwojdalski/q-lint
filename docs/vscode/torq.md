@@ -5,6 +5,26 @@ How the q-lint VS Code extension works with
 queries, starting processes, logs and tickerplant tools. The
 [extension README](../../editors/vscode/README.md#torq) has the summary.
 
+## At a glance
+
+- **Gateway queries**: **Set Gateway Server Types** marks a gateway.
+  Queries to it go through `.gw.syncexec` to the server types named by
+  **Query Gateway on Server Types...**, else a file's
+  `/ @servertypes rdb hdb` line, else the process.
+- **Permissions**: a TorQ process with `.pm` on refuses q-lint's lambda;
+  use **Set Process Evaluation** to make it `direct`.
+- **Start Process** runs a TorQ process from a launch definition.
+- **Logs**: **Open Log File...** reads TorQ and q logs, merged by time and
+  followed live. Filter with **Filter Log by Level...**,
+  **Filter Log by Process...**, **Filter Log by Time...** and
+  **Filter Log by Text...**.
+- **Tickerplants**: **Stream Tickerplant Table** (off by default:
+  `q-lint.tickerplant.stream.enable`), the **Tickerplant Subscribers** view,
+  and **Open Tickerplant Log...** to inspect and replay a log in a separate
+  q.
+- The **Connected Clients**, **Timers** and **Process Monitor** views read
+  TorQ's `.clients` and `.timer.timer` where present.
+
 ## Gateway queries
 
 **Set Gateway Server Types**, on a process row, marks a process as a TorQ
