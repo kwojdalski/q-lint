@@ -76,6 +76,9 @@ framing, because the two things most likely to break an editor integration -
 the wire framing and the process not exiting - only exist once there is a
 process.
 
+`docs/README.md` indexes every docs page by what it covers and when to
+read it; start there to find the page a question belongs to.
+
 `docs/design.md` explains why there is no parser here and what that costs.
 Read it before adding a rule that wants one.
 `docs/ruff-applicability.md` is the survey of what a linter for another
