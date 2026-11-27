@@ -82,7 +82,7 @@ def main() -> int:
     print()
     print("| profile | reports |")
     print("|---|---|")
-    print("| `general` | only what q refuses to run |")
+    print("| `general` | only what q refuses to parse or run |")
     print("| `style` | `general`, plus q that runs and is wrong |")
     print("| `styleq` | `style`, plus the published style-guide conventions |")
     print("| `uqf` | every rule a profile turns on - the default |")
